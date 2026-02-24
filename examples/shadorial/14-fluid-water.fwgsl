@@ -1,0 +1,60 @@
+-- Shadorial Chapter 14: Fluid (Water)
+-- Water surface simulation with layered waves, Fresnel, caustics, and foam
+
+hash2d : Vec 2 F32 -> F32
+hash2d p = $fract ($sin ($dot p ($vec2 127.1 311.7)) * 43758.5453123)
+
+noise2d : Vec 2 F32 -> F32
+noise2d p = $mix ($mix a b ($vecX u)) ($mix c d ($vecX u)) ($vecY u)
+  where
+    i = $floor p
+    f = $fract p
+    u = f * f * ($vec2 3.0 3.0 - 2.0 * f)
+    a = hash2d i
+    b = hash2d (i + $vec2 1.0 0.0)
+    c = hash2d (i + $vec2 0.0 1.0)
+    d = hash2d (i + $vec2 1.0 1.0)
+
+waterHeight : Vec 2 F32 -> F32 -> F32
+waterHeight p t = h0 + h1 + h2 + h3 + h4 + h5
+  where
+    h0 = $sin ($vecX p * 1.5 + t * 0.8) * 0.3
+    h1 = $sin ($vecY p * 1.2 + t * 0.6) * 0.25
+    h2 = $sin ($dot p ($vec2 0.7 0.9) * 3.0 + t * 1.2) * 0.12
+    h3 = $sin ($dot p ($vec2 (0.0 - 0.5) 0.8) * 4.0 + t * 1.5) * 0.08
+    h4 = noise2d (p * 6.0 + $vec2 (t * 0.5) (t * 0.5)) * 0.1
+    h5 = noise2d (p * 12.0 - $vec2 (t * 0.7) (t * 0.7)) * 0.05
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+  where
+    uv    = fragCoord / resolution
+    p     = (uv - $vec2 0.5 0.5) * 4.0
+    h     = waterHeight p time
+    eps   = 0.01
+    hx    = waterHeight (p + $vec2 eps 0.0) time
+    hy    = waterHeight (p + $vec2 0.0 eps) time
+    nx    = (h - hx) / eps
+    ny    = (h - hy) / eps
+    normal = $normalize ($vec3 nx ny 1.0)
+    -- Sky reflection
+    viewDir   = $vec3 0.0 0.0 1.0
+    reflected = $reflect (negate viewDir) normal
+    skyColor  = $mix ($vec3 0.6 0.7 0.9) ($vec3 0.2 0.4 0.8) ($vecY reflected * 0.5 + 0.5)
+    -- Fresnel
+    fresnel   = $pow (1.0 - $max ($dot normal viewDir) 0.0) 4.0
+    waterCol  = $vec3 0.0 0.15 0.3
+    surface   = $mix waterCol skyColor (fresnel * 0.8)
+    -- Caustics
+    caustic   = noise2d (p * 8.0 + $vec2 (time * 0.3) (time * 0.3))
+              * noise2d (p * 12.0 - $vec2 (time * 0.2) (time * 0.2))
+    surface'  = surface + $vec3 0.2 0.3 0.4 * caustic * (1.0 - fresnel)
+    -- Specular sun
+    sunDir    = $normalize ($vec3 0.5 0.8 1.0)
+    specAngle = $max ($dot reflected sunDir) 0.0
+    specular  = $pow specAngle 128.0
+    surface'' = surface' + $vec3 1.0 0.95 0.8 * specular * 0.8
+    -- Foam at wave crests
+    foam      = $smoothstep 0.3 0.5 h
+    final     = $mix surface'' ($vec3 0.9 0.95 1.0) (foam * 0.4)

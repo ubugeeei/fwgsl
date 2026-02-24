@@ -1,0 +1,68 @@
+-- Shadorial Chapter 11: Animation
+-- 6 easing functions visualized as animated balls on tracks
+
+easeInQuad : F32 -> F32
+easeInQuad t = t * t
+
+easeOutQuad : F32 -> F32
+easeOutQuad t = t * (2.0 - t)
+
+easeInOutCubic : F32 -> F32
+easeInOutCubic t =
+  if t < 0.5
+    then 4.0 * t * t * t
+    else 1.0 - $pow (0.0 - 2.0 * t + 2.0) 3.0 / 2.0
+
+easeOutElastic : F32 -> F32
+easeOutElastic t =
+  if t == 0.0 then 0.0
+  else if t == 1.0 then 1.0
+  else $pow 2.0 (0.0 - 10.0 * t) * $sin ((t * 10.0 - 0.75) * (2.0 * 3.14159 / 3.0)) + 1.0
+
+easeOutBounce : F32 -> F32
+easeOutBounce t =
+  if t < 1.0 / 2.75
+    then 7.5625 * t * t
+    else if t < 2.0 / 2.75
+      then 7.5625 * t' * t' + 0.75
+        where t' = t - 1.5 / 2.75
+      else if t < 2.5 / 2.75
+        then 7.5625 * t' * t' + 0.9375
+          where t' = t - 2.25 / 2.75
+        else 7.5625 * t' * t' + 0.984375
+          where t' = t - 2.625 / 2.75
+
+circle : Vec 2 F32 -> Vec 2 F32 -> F32 -> F32 -> F32
+circle uv center radius pixelSize =
+  1.0 - $smoothstep (radius - pixelSize) (radius + pixelSize) ($length (uv - center))
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final'') ($vecY final'') ($vecZ final'') 1.0
+  where
+    uv     = (fragCoord - 0.5 * resolution) / $vecY resolution
+    period = 3.0
+    t      = $mod time period / period
+    r      = 0.03
+    startX = 0.0 - 0.4
+    endX   = 0.4
+    px     = 1.5 / $vecY resolution
+    x1     = $mix startX endX t
+    x2     = $mix startX endX (easeInQuad t)
+    x3     = $mix startX endX (easeOutQuad t)
+    x4     = $mix startX endX (easeInOutCubic t)
+    x5     = $mix startX endX (easeOutElastic t)
+    x6     = $mix startX endX (easeOutBounce t)
+    c1     = circle uv ($vec2 x1 0.30) r px
+    c2     = circle uv ($vec2 x2 0.18) r px
+    c3     = circle uv ($vec2 x3 0.06) r px
+    c4     = circle uv ($vec2 x4 (0.0 - 0.06)) r px
+    c5     = circle uv ($vec2 x5 (0.0 - 0.18)) r px
+    c6     = circle uv ($vec2 x6 (0.0 - 0.30)) r px
+    bgColor = $vec3 0.05 0.05 0.08
+    color   = $mix bgColor ($vec3 0.9 0.3 0.3) c1
+    color'  = $mix color ($vec3 0.9 0.6 0.2) c2
+    color'' = $mix color' ($vec3 0.3 0.9 0.3) c3
+    final   = $mix color'' ($vec3 0.3 0.6 0.9) c4
+    final'  = $mix final ($vec3 0.8 0.3 0.8) c5
+    final'' = $mix final' ($vec3 0.9 0.8 0.2) c6

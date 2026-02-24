@@ -1,0 +1,16 @@
+data ParticleState
+  = Active { position : Vec3F, velocity : Vec3F, life : F32 }
+  | Dead
+
+stepParticle : F32 -> ParticleState -> ParticleState
+stepParticle dt particle =
+  match particle
+    | Active { position, velocity, life } ->
+      if life - dt <= 0.0
+        then Dead
+        else Active
+          { position = position + velocity * dt
+          , velocity = velocity + gravity * dt
+          , life     = life - dt
+          }
+    | Dead -> Dead

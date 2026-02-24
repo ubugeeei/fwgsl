@@ -1,0 +1,8 @@
+[package]
+name = "fwgsl_hir"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+fwgsl_span = { workspace = true }
+fwgsl_typechecker = { workspace = true }

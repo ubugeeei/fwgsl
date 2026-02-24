@@ -1,0 +1,29 @@
+-- Shadorial Chapter 06: Pulse Wave
+-- Square/pulse wave with animated duty cycle
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+  where
+    uv        = fragCoord / resolution
+    x         = $vecX uv * 6.0 + time
+    y         = $vecY uv * 2.0 - 1.0
+    duty      = 0.5 + 0.3 * $sin (time * 0.8)
+    pulse     = $step ($fract x) duty * 2.0 - 1.0
+    lineWidth = 0.025
+    distH     = $abs (y - pulse * 0.4)
+    lineH     = 1.0 - $smoothstep 0.0 lineWidth distH
+    fractX    = $fract x
+    edgeRise  = if $abs fractX < 0.02 then 1.0 else 0.0
+    edgeFall  = if $abs (fractX - duty) < 0.02 then 1.0 else 0.0
+    vertLine  = (edgeRise + edgeFall) * $step ($abs y) 0.4
+    axis      = 1.0 - $smoothstep 0.0 0.005 ($abs y)
+    gridX     = 1.0 - $smoothstep 0.0 0.008 ($abs ($fract x - 0.5))
+    gridY     = 1.0 - $smoothstep 0.0 0.008 ($abs ($fract ($vecY uv * 4.0) - 0.5))
+    bgColor   = $vec3 0.05 0.05 0.05
+    color     = $mix bgColor ($vec3 0.1 0.1 0.1) ((gridX + gridY) * 0.3)
+    color'    = $mix color ($vec3 0.3 0.3 0.3) (axis * 0.5)
+    color''   = $mix color' ($vec3 0.9 0.3 0.6) lineH
+    color'''  = $mix color'' ($vec3 0.9 0.3 0.6) (vertLine * 0.9)
+    dutyBar   = $step ($vecY uv) 0.05 * $step ($vecX uv) duty
+    final     = $mix color''' ($vec3 0.45 0.15 0.3) dutyBar

@@ -1,0 +1,39 @@
+-- Shadorial Chapter 10: Light & Reflection
+-- Phong lighting model with Fresnel rim on a ray-traced sphere
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution =
+  if discriminant < 0.0
+    then $vec4 ($vecX bgColor) ($vecY bgColor) ($vecZ bgColor) 1.0
+    else $vec4 ($vecX color) ($vecY color) ($vecZ color) 1.0
+      where
+        t         = 0.0 - b - $sqrt discriminant
+        hitPoint  = rayOrigin + t * rayDir
+        normal    = $normalize (hitPoint - sphereCenter)
+        lightDir  = $normalize (lightPos - hitPoint)
+        viewDir   = $normalize (rayOrigin - hitPoint)
+        reflDir   = $reflect (negate lightDir) normal
+        matColor  = $vec3 0.3 0.5 0.8
+        lightCol  = $vec3 1.0 0.95 0.85
+        ambient   = 0.1 * lightCol * matColor
+        diff      = $max ($dot normal lightDir) 0.0
+        diffuse   = diff * lightCol * matColor
+        spec      = $pow ($max ($dot viewDir reflDir) 0.0) 64.0
+        specular  = 0.8 * spec * lightCol
+        fresnel   = $pow (1.0 - $max ($dot normal viewDir) 0.0) 3.0
+        fresnelC  = fresnel * $vec3 0.4 0.5 0.7 * 0.5
+        color     = ambient + diffuse + specular + fresnelC
+  where
+    uv           = (fragCoord - 0.5 * resolution) / $vecY resolution
+    sphereCenter = $vec3 0.0 0.0 0.0
+    sphereRadius = 0.35
+    lt           = time * 0.7
+    lightPos     = $vec3 (0.8 * $cos lt) (0.5 * $sin (lt * 0.8)) 1.0
+    rayOrigin    = $vec3 ($vecX uv) ($vecY uv) 2.0
+    rayDir       = $vec3 0.0 0.0 (0.0 - 1.0)
+    oc           = rayOrigin - sphereCenter
+    b            = $dot oc rayDir
+    c            = $dot oc oc - sphereRadius * sphereRadius
+    discriminant = b * b - c
+    bgColor      = $mix ($vec3 0.08 0.08 0.15) ($vec3 0.15 0.1 0.2) ($vecY uv + 0.5)

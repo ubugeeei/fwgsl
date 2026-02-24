@@ -1,0 +1,10 @@
+[package]
+name = "fwgsl_wgsl_codegen"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+fwgsl_mir = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

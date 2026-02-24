@@ -1,0 +1,9 @@
+[package]
+name = "fwgsl_mir"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+fwgsl_span = { workspace = true }
+fwgsl_hir = { workspace = true }
+fwgsl_typechecker = { workspace = true }

@@ -1,0 +1,57 @@
+---
+source: crates/fwgsl_parser/tests/snapshot.rs
+expression: program
+---
+Program {
+    decls: [
+        EntryPoint {
+            attributes: [
+                Attribute {
+                    name: "vertex",
+                    args: [],
+                    span: Span {
+                        start: 0,
+                        end: 8,
+                    },
+                },
+            ],
+            name: "main",
+            params: [
+                Var(
+                    "x",
+                    Span {
+                        start: 13,
+                        end: 14,
+                    },
+                ),
+            ],
+            body: Infix(
+                Var(
+                    "x",
+                    Span {
+                        start: 17,
+                        end: 18,
+                    },
+                ),
+                "+",
+                Lit(
+                    Int(
+                        1,
+                    ),
+                    Span {
+                        start: 21,
+                        end: 22,
+                    },
+                ),
+                Span {
+                    start: 17,
+                    end: 22,
+                },
+            ),
+            span: Span {
+                start: 0,
+                end: 22,
+            },
+        },
+    ],
+}

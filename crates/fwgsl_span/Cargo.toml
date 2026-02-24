@@ -1,0 +1,7 @@
+[package]
+name = "fwgsl_span"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+compact_str = { workspace = true }

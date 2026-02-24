@@ -1,0 +1,66 @@
+-- Shadorial Chapter 13: Particles
+-- GPU particle system with glow, lifecycle, and tone mapping
+
+hash : F32 -> F32
+hash n = $fract ($sin n * 43758.5453123)
+
+hash2 : F32 -> Vec 2 F32
+hash2 n = $vec2 (hash n) (hash (n + 57.0))
+
+hash3 : F32 -> Vec 3 F32
+hash3 n = $vec3 (hash n) (hash (n + 57.0)) (hash (n + 113.0))
+
+-- Compute a single particle's color contribution
+particle : Vec 2 F32 -> F32 -> F32 -> F32 -> Vec 3 F32
+particle uv id time aspect = glow * fade * pColor' * 0.02
+  where
+    basePos = hash2 (id * 17.31) * 2.0 - $vec2 1.0 1.0
+    bx      = $vecX basePos * aspect
+    speed   = 0.1 + hash (id * 7.13) * 0.3
+    size    = 0.004 + hash (id * 3.77) * 0.008
+    life    = $mod (time * speed + hash (id * 11.0) * 10.0) 2.0
+    px      = bx + $sin (time * 0.5 + id) * 0.05
+    py      = $mod ($vecY basePos + life - 1.0 + 0.6) 1.4 - 0.7
+    pos     = $vec2 px py
+    d       = $length (uv - pos)
+    glow    = $clamp (size / (d * d + 0.0001)) 0.0 3.0
+    fade    = $smoothstep 0.0 0.2 life * $smoothstep 2.0 1.5 life
+    pc      = hash3 (id * 31.17)
+    pColor  = $mix ($vec3 0.8 0.4 0.1) ($vec3 0.3 0.6 1.0) ($vecX pc)
+    pColor' = $mix pColor ($vec3 1.0 0.8 0.3) ($vecY pc * 0.3)
+
+-- NOTE: Full 80-particle loop requires loop support.
+-- Here we demonstrate with a representative subset.
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+  where
+    uv     = (fragCoord - 0.5 * resolution) / $vecY resolution
+    aspect = $vecX resolution / $vecY resolution
+    -- Sum particle contributions (representative sample)
+    color  = $vec3 0.02 0.02 0.05
+           + particle uv 0.0 time aspect
+           + particle uv 1.0 time aspect
+           + particle uv 2.0 time aspect
+           + particle uv 3.0 time aspect
+           + particle uv 4.0 time aspect
+           + particle uv 5.0 time aspect
+           + particle uv 6.0 time aspect
+           + particle uv 7.0 time aspect
+           + particle uv 8.0 time aspect
+           + particle uv 9.0 time aspect
+           + particle uv 10.0 time aspect
+           + particle uv 11.0 time aspect
+           + particle uv 12.0 time aspect
+           + particle uv 13.0 time aspect
+           + particle uv 14.0 time aspect
+           + particle uv 15.0 time aspect
+           + particle uv 16.0 time aspect
+           + particle uv 17.0 time aspect
+           + particle uv 18.0 time aspect
+           + particle uv 19.0 time aspect
+    -- Tone mapping: color / (color + 1)
+    mapped = color / (color + $vec3 1.0 1.0 1.0)
+    -- Vignette
+    vig    = fragCoord / resolution - $vec2 0.5 0.5
+    final  = mapped * (1.0 - 0.5 * $dot vig vig)

@@ -1,0 +1,49 @@
+-- Shadorial Chapter 09: Shapes & SDF
+-- Signed Distance Functions for circle, rounded rect, and triangle
+
+sdCircle : Vec 2 F32 -> F32 -> F32
+sdCircle p r = $length p - r
+
+sdRoundedRect : Vec 2 F32 -> Vec 2 F32 -> F32 -> F32
+sdRoundedRect p b r = $length ($max q ($vec2 0.0 0.0)) + $min ($max ($vecX q) ($vecY q)) 0.0 - r
+  where
+    q = $abs p - b + $vec2 r r
+
+sdTriangle : Vec 2 F32 -> F32 -> F32
+sdTriangle p r = 0.0 - $length p'' * $sign ($vecY p'')
+  where
+    k   = $sqrt 3.0
+    px  = $abs ($vecX p) - r
+    py  = $vecY p + r / k
+    p'  = if px + k * py > 0.0
+            then $vec2 ((px - k * py) / 2.0) ((0.0 - k * px - py) / 2.0)
+            else $vec2 px py
+    p'' = $vec2 ($vecX p' - $clamp ($vecX p') (0.0 - 2.0 * r) 0.0) ($vecY p')
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+  where
+    uv        = (fragCoord - 0.5 * resolution) / $vecY resolution
+    t         = time * 0.8
+    circlePos = $vec2 (0.0 - 0.35 + 0.03 * $sin t) (0.03 * $cos (t * 1.3))
+    rectPos   = $vec2 (0.03 * $cos (t * 0.9)) (0.03 * $sin (t * 1.1))
+    triPos    = $vec2 (0.35 + 0.03 * $sin (t * 1.2)) (0.03 * $cos (t * 0.7))
+    dCircle   = sdCircle (uv - circlePos) 0.15
+    dRect     = sdRoundedRect (uv - rectPos) ($vec2 0.12 0.10) 0.03
+    dTri      = sdTriangle (uv - triPos) 0.15
+    dUnion    = $min dCircle ($min dRect dTri)
+    bands     = 0.5 + 0.5 * $cos (dUnion * 80.0)
+    bgColor   = ($vec3 0.95 0.95 0.95 - $vec3 0.1 0.1 0.1 * $sign dUnion) * (0.8 + 0.2 * bands)
+    pixelSize = 1.5 / $vecY resolution
+    fillC     = 1.0 - $smoothstep 0.0 pixelSize dCircle
+    fillR     = 1.0 - $smoothstep 0.0 pixelSize dRect
+    fillT     = 1.0 - $smoothstep 0.0 pixelSize dTri
+    color     = $mix bgColor ($vec3 0.2 0.6 0.9) fillC
+    color'    = $mix color ($vec3 0.9 0.4 0.3) fillR
+    color''   = $mix color' ($vec3 0.3 0.8 0.4) fillT
+    outlineC  = $smoothstep pixelSize (pixelSize * 2.0) ($abs dCircle - 0.005)
+    outlineR  = $smoothstep pixelSize (pixelSize * 2.0) ($abs dRect - 0.005)
+    outlineT  = $smoothstep pixelSize (pixelSize * 2.0) ($abs dTri - 0.005)
+    outline   = $min outlineC ($min outlineR outlineT)
+    final     = color'' * (0.3 + 0.7 * outline)

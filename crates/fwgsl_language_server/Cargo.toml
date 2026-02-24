@@ -1,0 +1,24 @@
+[package]
+name = "fwgsl_language_server"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "fwgsl-lsp"
+path = "src/main.rs"
+
+[dependencies]
+fwgsl_parser = { workspace = true }
+fwgsl_typechecker = { workspace = true }
+fwgsl_semantic = { workspace = true }
+fwgsl_diagnostics = { workspace = true }
+fwgsl_span = { workspace = true }
+fwgsl_syntax = { workspace = true }
+
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+dashmap = "6"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

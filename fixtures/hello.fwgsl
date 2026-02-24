@@ -1,0 +1,6 @@
+-- Hello World
+add : I32 -> I32 -> I32
+add x y = x + y
+
+double : I32 -> I32
+double x = x * 2

@@ -1,0 +1,8 @@
+-- Shadorial Chapter 01: Hello Shader
+-- UV coordinates mapped to RGB color
+
+@fragment
+main : Vec 2 F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord resolution = $vec4 ($vecX uv) ($vecY uv) 0.5 1.0
+  where
+    uv = fragCoord / resolution

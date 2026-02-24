@@ -1,0 +1,19 @@
+---
+source: crates/fwgsl_parser/tests/snapshot.rs
+expression: layout_tokens
+---
+[
+    "LayoutBraceOpen at byte 0",
+    "LayoutSemicolon at byte 33",
+    "LayoutSemicolon at byte 33",
+    "LayoutSemicolon at byte 53",
+    "LayoutSemicolon at byte 116",
+    "LayoutSemicolon at byte 116",
+    "LayoutSemicolon at byte 140",
+    "LayoutSemicolon at byte 157",
+    "LayoutSemicolon at byte 157",
+    "LayoutSemicolon at byte 175",
+    "LayoutBraceOpen at byte 190",
+    "LayoutBraceClose at byte 204",
+    "LayoutBraceClose at byte 216",
+]

@@ -1,0 +1,56 @@
+-- Shadorial Chapter 17: Geometric
+-- Kaleidoscope patterns with domain repetition and SDF shapes
+
+hash2d : Vec 2 F32 -> F32
+hash2d p = $fract ($sin ($dot p ($vec2 127.1 311.7)) * 43758.5453123)
+
+rotate2d : F32 -> Vec 2 F32 -> Vec 2 F32
+rotate2d angle p = $vec2 ($vecX p * c - $vecY p * s) ($vecX p * s + $vecY p * c)
+  where
+    c = $cos angle
+    s = $sin angle
+
+sdBox : Vec 2 F32 -> Vec 2 F32 -> F32
+sdBox p b = $length ($max d ($vec2 0.0 0.0)) + $min ($max ($vecX d) ($vecY d)) 0.0
+  where
+    d = $abs p - b
+
+palette : F32 -> Vec 3 F32
+palette t = a + b * $cos (6.28318 * (c * t + d))
+  where
+    a = $vec3 0.5 0.5 0.5
+    b = $vec3 0.5 0.5 0.5
+    c = $vec3 1.0 1.0 1.0
+    d = $vec3 0.263 0.416 0.557
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+  where
+    uv   = (fragCoord - 0.5 * resolution) / $vecY resolution
+    -- Kaleidoscope: 8-fold symmetry
+    angle = $atan ($vecY uv) ($vecX uv)
+    r     = $length uv
+    kAngle = $mod angle (3.14159 / 4.0)
+    kAngle' = $abs (kAngle - 3.14159 / 8.0)
+    p     = $vec2 (r * $cos kAngle') (r * $sin kAngle')
+    -- Zoom animation
+    zoom  = 2.0 + $sin (time * 0.5) * 0.5
+    p'    = p * zoom
+    -- Domain repetition
+    cellId = $floor p'
+    cellP  = $fract p' - $vec2 0.5 0.5
+    -- Per-cell rotation
+    cellAngle = hash2d cellId * 6.28 + time
+    cellP'    = rotate2d cellAngle cellP
+    -- SDF shapes
+    boxD   = sdBox cellP' ($vec2 0.15 0.15)
+    circD  = $length cellP' - 0.12
+    d      = $min boxD circD
+    -- Color from palette
+    col    = palette (hash2d cellId + time * 0.3)
+    shape  = $smoothstep 0.02 0.0 d
+    color  = col * shape
+    -- Center glow
+    glow   = 0.02 / (r + 0.1)
+    final  = color + $vec3 0.3 0.5 0.8 * glow * 0.3

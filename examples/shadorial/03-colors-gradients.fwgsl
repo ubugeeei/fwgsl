@@ -1,0 +1,14 @@
+-- Shadorial Chapter 03: Colors & Gradients
+-- Animated 3-color gradient with sine wave distortion
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX color') ($vecY color') ($vecZ color') 1.0
+  where
+    uv     = fragCoord / resolution
+    colorA = $vec3 0.2 0.0 0.5
+    colorB = $vec3 1.0 0.4 0.0
+    colorC = $vec3 0.0 0.8 0.6
+    t      = $vecX uv + $sin ($vecY uv * 3.0 + time) * 0.2
+    color  = $mix colorA colorB ($smoothstep 0.0 0.5 t)
+    color' = $mix color  colorC ($smoothstep 0.5 1.0 t)

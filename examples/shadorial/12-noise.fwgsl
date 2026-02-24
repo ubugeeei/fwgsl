@@ -1,0 +1,50 @@
+-- Shadorial Chapter 12: Noise
+-- 2D value noise, FBM (6 octaves), and double domain warping
+
+hash2d : Vec 2 F32 -> F32
+hash2d p = $fract ($vecX p'' * $vecY p'')
+  where
+    p'  = $fract (p * $vec2 123.34 456.21)
+    p'' = p' + $vec2 ($dot p' (p' + $vec2 45.32 45.32)) ($dot p' (p' + $vec2 45.32 45.32))
+
+valueNoise : Vec 2 F32 -> F32
+valueNoise p = $mix ($mix a b ($vecX u)) ($mix c d ($vecX u)) ($vecY u)
+  where
+    i = $floor p
+    f = $fract p
+    u = f * f * ($vec2 3.0 3.0 - 2.0 * f)
+    a = hash2d (i + $vec2 0.0 0.0)
+    b = hash2d (i + $vec2 1.0 0.0)
+    c = hash2d (i + $vec2 0.0 1.0)
+    d = hash2d (i + $vec2 1.0 1.0)
+
+fbm : Vec 2 F32 -> F32
+fbm p = v0 + v1 + v2 + v3 + v4 + v5
+  where
+    v0 = 0.5 * valueNoise p
+    v1 = 0.25 * valueNoise (p * 2.0)
+    v2 = 0.125 * valueNoise (p * 4.0)
+    v3 = 0.0625 * valueNoise (p * 8.0)
+    v4 = 0.03125 * valueNoise (p * 16.0)
+    v5 = 0.015625 * valueNoise (p * 32.0)
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+  where
+    uv      = fragCoord / resolution
+    aspect  = $vecX resolution / $vecY resolution
+    uv'     = $vec2 ($vecX uv * aspect) ($vecY uv)
+    t       = time * 0.3
+    -- Domain warping: two layers of distortion
+    q       = $vec2 (fbm (uv' * 3.0 + $vec2 0.0 0.0 + $vec2 (t * 0.4) (t * 0.4)))
+                   (fbm (uv' * 3.0 + $vec2 5.2 1.3 + $vec2 (t * 0.3) (t * 0.3)))
+    r       = $vec2 (fbm (uv' * 3.0 + 4.0 * q + $vec2 1.7 9.2 + $vec2 (t * 0.15) (t * 0.15)))
+                   (fbm (uv' * 3.0 + 4.0 * q + $vec2 8.3 2.8 + $vec2 (t * 0.12) (t * 0.12)))
+    f       = fbm (uv' * 3.0 + 4.0 * r)
+    color   = $mix ($vec3 0.05 0.02 0.15) ($vec3 0.1 0.3 0.6) f
+    color'  = $mix color ($vec3 0.8 0.4 0.1) ($dot q q * 0.8)
+    color'' = $mix color' ($vec3 0.95 0.85 0.6) ($vecX r * $vecY r * 0.6)
+    center  = fragCoord / resolution - $vec2 0.5 0.5
+    vignette = 1.0 - 0.4 * $dot center center
+    final   = color'' * vignette

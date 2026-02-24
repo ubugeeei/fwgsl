@@ -1,0 +1,17 @@
+[package]
+name = "fwgsl_integration_tests"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+fwgsl_parser = { workspace = true }
+fwgsl_semantic = { workspace = true }
+fwgsl_ast_lowering = { workspace = true }
+fwgsl_typechecker = { workspace = true }
+fwgsl_hir = { workspace = true }
+fwgsl_mir = { workspace = true }
+fwgsl_wgsl_codegen = { workspace = true }
+fwgsl_diagnostics = { workspace = true }
+fwgsl_span = { workspace = true }
+fwgsl_syntax = { workspace = true }

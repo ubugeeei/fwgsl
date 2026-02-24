@@ -1,0 +1,14 @@
+[package]
+name = "fwgsl_parser"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+fwgsl_syntax = { workspace = true }
+fwgsl_span = { workspace = true }
+fwgsl_diagnostics = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+fwgsl_syntax = { workspace = true }
+fwgsl_span = { workspace = true }

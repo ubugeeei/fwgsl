@@ -1,0 +1,95 @@
+[tools]
+rust = "latest"
+node = "22"
+
+[tasks.fmt]
+description = "Format all Rust code"
+run = "cargo fmt --all"
+
+[tasks."fmt:check"]
+description = "Check formatting"
+run = "cargo fmt --all -- --check"
+
+[tasks.lint]
+description = "Run clippy lints"
+run = "cargo clippy --workspace -- -D warnings"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test --workspace"
+
+[tasks.build]
+description = "Build all crates"
+run = "cargo build --workspace"
+
+[tasks.release]
+description = "Build in release mode"
+run = "cargo build --workspace --release"
+
+[tasks.cli]
+description = "Build and install CLI to PATH"
+run = "cargo install --path crates/fwgsl_cli"
+
+[tasks.wasm]
+description = "Build WASM for playground"
+run = """
+cd crates/fwgsl_wasm
+wasm-pack build --target web --out-dir ../../playground/pkg
+"""
+
+[tasks.dev]
+description = "Start playground dev server (no WASM rebuild)"
+run = """
+cd playground
+echo "🚀 playground: http://localhost:3000"
+python3 -m http.server 3000
+"""
+
+[tasks.playground]
+description = "Build WASM and serve playground"
+depends = ["wasm"]
+run = """
+cd playground
+echo "🚀 playground: http://localhost:3000"
+python3 -m http.server 3000
+"""
+
+[tasks.check]
+description = "Run all checks (fmt, lint, test)"
+depends = ["fmt:check", "lint", "test"]
+
+[tasks."bump:alpha"]
+description = "Bump version to next alpha"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+current=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= "\\(.*\\)"/\\1/')
+echo "Current version: $current"
+# Simple alpha bump logic
+if [[ "$current" == *"-alpha."* ]]; then
+  base="${current%-alpha.*}"
+  num="${current##*-alpha.}"
+  next=$((num + 1))
+  new="${base}-alpha.${next}"
+else
+  new="${current}-alpha.1"
+fi
+echo "New version: $new"
+sed -i '' "s/^version = \"${current}\"/version = \"${new}\"/" Cargo.toml
+echo "Bumped to $new"
+"""
+
+[tasks."bump:release"]
+description = "Remove pre-release suffix for stable release"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+current=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= "\\(.*\\)"/\\1/')
+base="${current%-alpha.*}"
+if [ "$base" = "$current" ]; then
+  echo "Already a stable version: $current"
+  exit 0
+fi
+sed -i '' "s/^version = \"${current}\"/version = \"${base}\"/" Cargo.toml
+echo "Released $base"
+"""

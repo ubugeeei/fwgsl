@@ -1,0 +1,11 @@
+[package]
+name = "fwgsl_typechecker"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+fwgsl_span = { workspace = true }
+fwgsl_diagnostics = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

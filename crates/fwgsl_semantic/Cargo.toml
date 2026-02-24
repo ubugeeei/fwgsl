@@ -1,0 +1,13 @@
+[package]
+name = "fwgsl_semantic"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+fwgsl_span = { workspace = true }
+fwgsl_diagnostics = { workspace = true }
+fwgsl_typechecker = { workspace = true }
+fwgsl_parser = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

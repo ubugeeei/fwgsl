@@ -1,0 +1,25 @@
+-- Shadorial Chapter 19: Three.js Interactive
+-- Custom vertex/fragment shader with displacement and Fresnel rim
+-- Note: In the original this runs through Three.js ShaderMaterial
+--       with varyings from a custom vertex shader.
+
+@fragment
+main : Vec 3 F32 -> Vec 2 F32 -> F32 -> F32 -> Vec 4 F32
+main normal uv time displacement = $vec4 ($vecX color'') ($vecY color'') ($vecZ color'') 1.0
+  where
+    n         = $normalize normal
+    baseColor = n * 0.5 + $vec3 0.5 0.5 0.5
+    -- Animated color pulse
+    pulse     = $sin (time * 2.0) * 0.5 + 0.5
+    color1    = $vec3 0.2 0.5 1.0
+    color2    = $vec3 1.0 0.3 0.5
+    dynColor  = $mix color1 color2 pulse
+    color     = $mix baseColor dynColor 0.5
+    -- Displacement highlight
+    highlight = $smoothstep 0.0 0.3 displacement
+    color'    = color + $vec3 0.3 0.4 0.5 * highlight
+    -- Fresnel rim lighting
+    viewDir   = $vec3 0.0 0.0 1.0
+    rim       = 1.0 - $max ($dot n viewDir) 0.0
+    rim'      = $pow rim 3.0
+    color''   = color' + $vec3 0.4 0.6 1.0 * rim' * 0.6

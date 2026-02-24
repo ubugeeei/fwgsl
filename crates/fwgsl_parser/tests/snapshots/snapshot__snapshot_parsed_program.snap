@@ -1,0 +1,353 @@
+---
+source: crates/fwgsl_parser/tests/snapshot.rs
+expression: program
+---
+Program {
+    decls: [
+        DataDecl {
+            name: "Color",
+            type_params: [],
+            constructors: [
+                ConDecl {
+                    name: "Red",
+                    fields: Empty,
+                    span: Span {
+                        start: 13,
+                        end: 17,
+                    },
+                },
+                ConDecl {
+                    name: "Green",
+                    fields: Empty,
+                    span: Span {
+                        start: 19,
+                        end: 25,
+                    },
+                },
+                ConDecl {
+                    name: "Blue",
+                    fields: Empty,
+                    span: Span {
+                        start: 27,
+                        end: 32,
+                    },
+                },
+            ],
+            span: Span {
+                start: 0,
+                end: 32,
+            },
+        },
+        TypeSig {
+            name: "show",
+            ty: Arrow(
+                Con(
+                    "Color",
+                    Span {
+                        start: 40,
+                        end: 45,
+                    },
+                ),
+                Con(
+                    "I32",
+                    Span {
+                        start: 49,
+                        end: 52,
+                    },
+                ),
+                Span {
+                    start: 40,
+                    end: 52,
+                },
+            ),
+            span: Span {
+                start: 33,
+                end: 53,
+            },
+        },
+        FunDecl {
+            name: "show",
+            params: [
+                Var(
+                    "c",
+                    Span {
+                        start: 58,
+                        end: 59,
+                    },
+                ),
+            ],
+            body: Case(
+                Var(
+                    "c",
+                    Span {
+                        start: 68,
+                        end: 69,
+                    },
+                ),
+                [
+                    (
+                        Con(
+                            "Red",
+                            [],
+                            Span {
+                                start: 74,
+                                end: 80,
+                            },
+                        ),
+                        Lit(
+                            Int(
+                                0,
+                            ),
+                            Span {
+                                start: 83,
+                                end: 84,
+                            },
+                        ),
+                    ),
+                    (
+                        Con(
+                            "Green",
+                            [],
+                            Span {
+                                start: 89,
+                                end: 95,
+                            },
+                        ),
+                        Lit(
+                            Int(
+                                1,
+                            ),
+                            Span {
+                                start: 98,
+                                end: 99,
+                            },
+                        ),
+                    ),
+                    (
+                        Con(
+                            "Blue",
+                            [],
+                            Span {
+                                start: 104,
+                                end: 110,
+                            },
+                        ),
+                        Lit(
+                            Int(
+                                2,
+                            ),
+                            Span {
+                                start: 113,
+                                end: 114,
+                            },
+                        ),
+                    ),
+                ],
+                Span {
+                    start: 62,
+                    end: 115,
+                },
+            ),
+            where_binds: [],
+            span: Span {
+                start: 53,
+                end: 115,
+            },
+        },
+        TypeSig {
+            name: "add",
+            ty: Arrow(
+                Con(
+                    "I32",
+                    Span {
+                        start: 122,
+                        end: 125,
+                    },
+                ),
+                Arrow(
+                    Con(
+                        "I32",
+                        Span {
+                            start: 129,
+                            end: 132,
+                        },
+                    ),
+                    Con(
+                        "I32",
+                        Span {
+                            start: 136,
+                            end: 139,
+                        },
+                    ),
+                    Span {
+                        start: 129,
+                        end: 139,
+                    },
+                ),
+                Span {
+                    start: 122,
+                    end: 139,
+                },
+            ),
+            span: Span {
+                start: 116,
+                end: 140,
+            },
+        },
+        FunDecl {
+            name: "add",
+            params: [
+                Var(
+                    "x",
+                    Span {
+                        start: 144,
+                        end: 145,
+                    },
+                ),
+                Var(
+                    "y",
+                    Span {
+                        start: 146,
+                        end: 147,
+                    },
+                ),
+            ],
+            body: Infix(
+                Var(
+                    "x",
+                    Span {
+                        start: 150,
+                        end: 151,
+                    },
+                ),
+                "+",
+                Var(
+                    "y",
+                    Span {
+                        start: 154,
+                        end: 155,
+                    },
+                ),
+                Span {
+                    start: 150,
+                    end: 155,
+                },
+            ),
+            where_binds: [],
+            span: Span {
+                start: 140,
+                end: 156,
+            },
+        },
+        TypeSig {
+            name: "main",
+            ty: Arrow(
+                Con(
+                    "I32",
+                    Span {
+                        start: 164,
+                        end: 167,
+                    },
+                ),
+                Con(
+                    "I32",
+                    Span {
+                        start: 171,
+                        end: 174,
+                    },
+                ),
+                Span {
+                    start: 164,
+                    end: 174,
+                },
+            ),
+            span: Span {
+                start: 157,
+                end: 175,
+            },
+        },
+        FunDecl {
+            name: "main",
+            params: [
+                Var(
+                    "x",
+                    Span {
+                        start: 180,
+                        end: 181,
+                    },
+                ),
+            ],
+            body: Let(
+                [
+                    (
+                        "y",
+                        App(
+                            App(
+                                Var(
+                                    "add",
+                                    Span {
+                                        start: 194,
+                                        end: 197,
+                                    },
+                                ),
+                                Var(
+                                    "x",
+                                    Span {
+                                        start: 198,
+                                        end: 199,
+                                    },
+                                ),
+                                Span {
+                                    start: 194,
+                                    end: 199,
+                                },
+                            ),
+                            Lit(
+                                Int(
+                                    1,
+                                ),
+                                Span {
+                                    start: 200,
+                                    end: 201,
+                                },
+                            ),
+                            Span {
+                                start: 194,
+                                end: 201,
+                            },
+                        ),
+                    ),
+                ],
+                App(
+                    Var(
+                        "show",
+                        Span {
+                            start: 207,
+                            end: 211,
+                        },
+                    ),
+                    Con(
+                        "Red",
+                        Span {
+                            start: 212,
+                            end: 215,
+                        },
+                    ),
+                    Span {
+                        start: 207,
+                        end: 215,
+                    },
+                ),
+                Span {
+                    start: 186,
+                    end: 216,
+                },
+            ),
+            where_binds: [],
+            span: Span {
+                start: 175,
+                end: 216,
+            },
+        },
+    ],
+}

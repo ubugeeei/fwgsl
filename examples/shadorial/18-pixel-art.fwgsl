@@ -1,0 +1,65 @@
+-- Shadorial Chapter 18: Pixel Art
+-- Pixelation, Bayer dithering, parallax hills, star field
+
+hash : F32 -> F32
+hash n = $fract ($sin n * 43758.5453123)
+
+hash2d : Vec 2 F32 -> F32
+hash2d p = $fract ($sin ($dot p ($vec2 127.1 311.7)) * 43758.5453123)
+
+-- 4x4 Bayer dithering matrix value
+bayer4x4 : Vec 2 F32 -> F32
+bayer4x4 coord = $fract ($sin (idx * 0.7853) * 43758.5453) -- Approximation
+  where
+    x   = $mod ($vecX coord) 4.0
+    y   = $mod ($vecY coord) 4.0
+    idx = x + y * 4.0
+    -- Approximate Bayer matrix lookup using $step functions
+    -- (Full matrix: 0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5) / 16
+
+-- Hill function for parallax layers
+hill : F32 -> F32 -> F32 -> F32
+hill x offset height =
+  height * (0.5 + 0.3 * $sin (x * 1.5 + offset)
+              + 0.2 * $sin (x * 3.0 + offset * 2.0))
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX quantize) ($vecY quantize) ($vecZ quantize) 1.0
+  where
+    pixelSize = 4.0
+    -- Pixelation: snap to grid
+    pixCoord  = $floor (fragCoord / pixelSize) * pixelSize
+    uv        = pixCoord / resolution
+    -- Sky gradient
+    skyTop    = $vec3 0.05 0.05 0.2
+    skyBottom = $vec3 0.3 0.15 0.4
+    sky       = $mix skyBottom skyTop ($vecY uv)
+    -- Sun
+    sunPos    = $vec2 0.7 0.75
+    sunDist   = $length (uv - sunPos)
+    sunGlow   = $smoothstep 0.15 0.0 sunDist
+    sunColor  = $vec3 1.0 0.8 0.3
+    color     = sky + sunColor * sunGlow
+    -- Star field
+    starCoord = $floor (pixCoord / pixelSize)
+    starRand  = hash2d starCoord
+    starBright = $step 0.98 starRand
+    twinkle   = 0.5 + 0.5 * $sin (time * 3.0 + starRand * 100.0)
+    starMask  = starBright * twinkle * $step 0.5 ($vecY uv)
+    color'    = color + $vec3 starMask starMask starMask
+    -- Three layers of parallax hills
+    hx        = $vecX uv
+    hill1     = hill (hx * 4.0 + time * 0.02) 0.0 0.3
+    hill2     = hill (hx * 6.0 + time * 0.05) 2.0 0.2
+    hill3     = hill (hx * 8.0 + time * 0.1) 4.0 0.15
+    hillCol1  = $vec3 0.05 0.15 0.05
+    hillCol2  = $vec3 0.08 0.2 0.08
+    hillCol3  = $vec3 0.1 0.25 0.1
+    color''   = if $vecY uv < hill1 then hillCol1
+                else if $vecY uv < hill2 + 0.15 then hillCol2
+                else if $vecY uv < hill3 + 0.3 then hillCol3
+                else color'
+    -- Dithering: quantize colors to 5 levels
+    dither    = bayer4x4 (fragCoord / pixelSize)
+    quantize  = $floor (color'' * 5.0 + dither * 0.5) / 5.0

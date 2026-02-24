@@ -1,0 +1,60 @@
+---
+source: crates/fwgsl_parser/tests/snapshot.rs
+expression: program
+---
+Program {
+    decls: [
+        FunDecl {
+            name: "f",
+            params: [],
+            body: Lambda(
+                [
+                    Var(
+                        "x",
+                        Span {
+                            start: 5,
+                            end: 6,
+                        },
+                    ),
+                    Var(
+                        "y",
+                        Span {
+                            start: 7,
+                            end: 8,
+                        },
+                    ),
+                ],
+                Infix(
+                    Var(
+                        "x",
+                        Span {
+                            start: 12,
+                            end: 13,
+                        },
+                    ),
+                    "+",
+                    Var(
+                        "y",
+                        Span {
+                            start: 16,
+                            end: 17,
+                        },
+                    ),
+                    Span {
+                        start: 12,
+                        end: 17,
+                    },
+                ),
+                Span {
+                    start: 4,
+                    end: 17,
+                },
+            ),
+            where_binds: [],
+            span: Span {
+                start: 0,
+                end: 17,
+            },
+        },
+    ],
+}

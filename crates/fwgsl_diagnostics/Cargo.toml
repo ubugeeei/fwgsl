@@ -1,0 +1,9 @@
+[package]
+name = "fwgsl_diagnostics"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+fwgsl_span = { workspace = true }
+miette = { workspace = true }
+thiserror = { workspace = true }

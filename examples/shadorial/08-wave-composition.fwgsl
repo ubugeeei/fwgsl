@@ -1,0 +1,33 @@
+-- Shadorial Chapter 08: Wave Composition
+-- Additive synthesis with harmonic series (square wave approximation)
+
+drawLine : F32 -> F32 -> F32 -> F32
+drawLine y wave width =
+  1.0 - $smoothstep 0.0 width ($abs (y - wave))
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+  where
+    uv        = fragCoord / resolution
+    x         = $vecX uv * 8.0
+    y         = $vecY uv * 2.0 - 1.0
+    lineWidth = 0.025
+    h1        = $sin (x + time)
+    h3        = $sin (3.0 * x + time * 1.5) / 3.0
+    h5        = $sin (5.0 * x + time * 2.0) / 5.0
+    h7        = $sin (7.0 * x + time * 2.5) / 7.0
+    composite = (h1 + h3 + h5 + h7) * 0.5
+    lineH1    = drawLine y (h1 * 0.4) lineWidth
+    lineH3    = drawLine y (h3 * 0.4) (lineWidth * 0.7)
+    lineH5    = drawLine y (h5 * 0.4) (lineWidth * 0.7)
+    lineH7    = drawLine y (h7 * 0.4) (lineWidth * 0.7)
+    lineComp  = drawLine y composite lineWidth
+    axis      = 1.0 - $smoothstep 0.0 0.005 ($abs y)
+    bgColor   = $vec3 0.05 0.05 0.05
+    color     = $mix bgColor ($vec3 0.25 0.25 0.25) (axis * 0.5)
+    color'    = $mix color ($vec3 0.3 0.3 0.6) (lineH1 * 0.5)
+    color''   = $mix color' ($vec3 0.3 0.5 0.3) (lineH3 * 0.5)
+    color'''  = $mix color'' ($vec3 0.5 0.3 0.3) (lineH5 * 0.5)
+    color'''' = $mix color''' ($vec3 0.4 0.4 0.2) (lineH7 * 0.5)
+    final     = $mix color'''' ($vec3 1.0 0.8 0.3) lineComp

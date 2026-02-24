@@ -1,0 +1,49 @@
+-- Shadorial Chapter 16: Glitch
+-- RGB split, block displacement, scanlines, and noise overlay
+
+hash : F32 -> F32
+hash n = $fract ($sin n * 43758.5453123)
+
+hash2d : Vec 2 F32 -> F32
+hash2d p = $fract ($sin ($dot p ($vec2 127.1 311.7)) * 43758.5453123)
+
+-- Base pattern (gradient + shapes) that the glitch distorts
+basePattern : Vec 2 F32 -> F32 -> Vec 3 F32
+basePattern uv time = gradient + $vec3 stripe stripe stripe * 0.15
+  + $vec3 dots dots dots * 0.1
+  where
+    gradient = $mix ($vec3 0.1 0.2 0.4) ($vec3 0.4 0.1 0.3) ($vecY uv)
+    stripe   = $step 0.4 ($fract ($vecX uv * 8.0 + time * 0.5))
+    dotDist  = $length ($fract (uv * 4.0) - $vec2 0.5 0.5)
+    dots     = $smoothstep 0.3 0.25 dotDist
+
+@fragment
+main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+  where
+    uv = fragCoord / resolution
+    -- Glitch timing: trigger based on time
+    glitchTime  = $floor (time * 8.0)
+    glitchOn    = $step 0.7 (hash glitchTime)
+    -- Block displacement
+    blockY      = $floor ($vecY uv * 20.0) / 20.0
+    blockRand   = hash (blockY * 100.0 + glitchTime)
+    blockShift  = (blockRand - 0.5) * 0.1 * glitchOn
+    uvShifted   = $vec2 ($vecX uv + blockShift) ($vecY uv)
+    -- RGB channel split
+    splitAmount = 0.015 * glitchOn
+    rUv = $vec2 ($vecX uvShifted + splitAmount) ($vecY uvShifted)
+    bUv = $vec2 ($vecX uvShifted - splitAmount) ($vecY uvShifted)
+    rChannel = $vecX (basePattern rUv time)
+    gChannel = $vecY (basePattern uvShifted time)
+    bChannel = $vecZ (basePattern bUv time)
+    color    = $vec3 rChannel gChannel bChannel
+    -- Scanlines
+    scanline = 0.95 + 0.05 * $sin ($vecY uv * resolution.y * 3.14159)
+    color'   = color * scanline
+    -- Random noise overlay
+    noiseVal = hash2d (uv * resolution + $vec2 (time * 1000.0) (time * 1000.0))
+    color''  = $mix color' ($vec3 noiseVal noiseVal noiseVal) (0.05 * glitchOn)
+    -- Flash: occasional full-line brightness
+    lineFlash = $step 0.95 (hash (blockY * 50.0 + glitchTime * 3.0)) * glitchOn
+    final     = color'' + $vec3 lineFlash lineFlash lineFlash * 0.3

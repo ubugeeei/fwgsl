@@ -1,0 +1,71 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fwgsl_allocator",
+    "crates/fwgsl_span",
+    "crates/fwgsl_diagnostics",
+    "crates/fwgsl_syntax",
+    "crates/fwgsl_cst",
+    "crates/fwgsl_ast",
+    "crates/fwgsl_parser",
+    "crates/fwgsl_ast_lowering",
+    "crates/fwgsl_typechecker",
+    "crates/fwgsl_semantic",
+    "crates/fwgsl_hir",
+    "crates/fwgsl_mir",
+    "crates/fwgsl_wgsl_codegen",
+    "crates/fwgsl_cli",
+    "crates/fwgsl_wasm",
+    "crates/fwgsl_language_server",
+    "crates/fwgsl_integration_tests",
+]
+# fwgsl_wasm requires wasm32 target, so exclude it from default workspace operations
+default-members = [
+    "crates/fwgsl_allocator",
+    "crates/fwgsl_span",
+    "crates/fwgsl_diagnostics",
+    "crates/fwgsl_syntax",
+    "crates/fwgsl_cst",
+    "crates/fwgsl_ast",
+    "crates/fwgsl_parser",
+    "crates/fwgsl_ast_lowering",
+    "crates/fwgsl_typechecker",
+    "crates/fwgsl_semantic",
+    "crates/fwgsl_hir",
+    "crates/fwgsl_mir",
+    "crates/fwgsl_wgsl_codegen",
+    "crates/fwgsl_cli",
+    "crates/fwgsl_language_server",
+    "crates/fwgsl_integration_tests",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+fwgsl_allocator = { path = "crates/fwgsl_allocator" }
+fwgsl_span = { path = "crates/fwgsl_span" }
+fwgsl_diagnostics = { path = "crates/fwgsl_diagnostics" }
+fwgsl_syntax = { path = "crates/fwgsl_syntax" }
+fwgsl_cst = { path = "crates/fwgsl_cst" }
+fwgsl_ast = { path = "crates/fwgsl_ast" }
+fwgsl_parser = { path = "crates/fwgsl_parser" }
+fwgsl_ast_lowering = { path = "crates/fwgsl_ast_lowering" }
+fwgsl_typechecker = { path = "crates/fwgsl_typechecker" }
+fwgsl_semantic = { path = "crates/fwgsl_semantic" }
+fwgsl_hir = { path = "crates/fwgsl_hir" }
+fwgsl_mir = { path = "crates/fwgsl_mir" }
+fwgsl_wgsl_codegen = { path = "crates/fwgsl_wgsl_codegen" }
+fwgsl_language_server = { path = "crates/fwgsl_language_server" }
+
+bumpalo = { version = "3", features = ["collections"] }
+compact_str = "0.8"
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
+insta = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1

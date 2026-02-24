@@ -1,0 +1,4 @@
+[package]
+name = "fwgsl_ast"
+edition.workspace = true
+version.workspace = true

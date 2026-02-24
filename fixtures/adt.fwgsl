@@ -1,0 +1,8 @@
+-- ADT and Pattern Matching
+data Color = Red | Green | Blue
+
+show : Color -> I32
+show c = match c
+  | Red   -> 0
+  | Green -> 1
+  | Blue  -> 2
