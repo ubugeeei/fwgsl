@@ -1240,8 +1240,12 @@ function parseShadeSignature(wgslCode) {
     return { params };
 }
 
-function buildShadePreviewInvocation(signature) {
-    const params = signature.params.map((param) => param.type);
+function shadeParamTypes(signature) {
+    return signature.params.map((param) => param.type);
+}
+
+function buildFullscreenShadePreviewInvocation(signature) {
+    const params = shadeParamTypes(signature);
 
     if (params.length === 2 && params[0] === 'vec2<f32>' && params[1] === 'vec2<f32>') {
         return 'shade(position.xy, preview.resolution)';
@@ -1262,12 +1266,19 @@ function buildShadePreviewInvocation(signature) {
     return null;
 }
 
-function buildShadePreviewShader(wgslCode, signature) {
-    const invocation = buildShadePreviewInvocation(signature);
-    if (!invocation) {
-        return null;
-    }
+function isSurfaceMaterialShadeSignature(signature) {
+    const params = signature.params.map((param) => param.type);
 
+    return (
+        params.length === 4
+        && params[0] === 'vec3<f32>'
+        && params[1] === 'vec2<f32>'
+        && params[2] === 'f32'
+        && params[3] === 'f32'
+    );
+}
+
+function buildFullscreenShadePreviewShader(wgslCode, invocation) {
     return `${wgslCode}
 
 struct PreviewUniforms {
@@ -1302,6 +1313,100 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
   return ${invocation};
 }
 `;
+}
+
+function buildSurfaceMaterialPreviewShader(wgslCode) {
+    return `${wgslCode}
+
+const PREVIEW_PI: f32 = 3.14159265359;
+
+struct PreviewUniforms {
+  resolution: vec2<f32>,
+  mouse: vec2<f32>,
+  time: f32,
+  frame: f32,
+  padding: vec2<f32>,
+}
+
+@group(0) @binding(0) var<uniform> preview: PreviewUniforms;
+
+struct PreviewVertexOut {
+  @builtin(position) position: vec4<f32>,
+}
+
+fn preview_surface_uv(normal: vec3<f32>) -> vec2<f32> {
+  let u = atan2(normal.z, normal.x) / (2.0 * PREVIEW_PI) + 0.5;
+  let v = acos(clamp(normal.y, -1.0, 1.0)) / PREVIEW_PI;
+  return vec2<f32>(u, v);
+}
+
+fn preview_surface_displacement(uv: vec2<f32>, time: f32) -> f32 {
+  let wave_a = sin((uv.x * 11.0 + time * 0.55) * 2.0);
+  let wave_b = cos((uv.y * 9.0 - time * 0.35) * 2.8);
+  let ripple = sin((uv.x + uv.y + time * 0.18) * 18.0);
+  return wave_a * 0.18 + wave_b * 0.16 + ripple * 0.08;
+}
+
+fn preview_background(screen: vec2<f32>) -> vec3<f32> {
+  let horizon = clamp(screen.y * 0.5 + 0.5, 0.0, 1.0);
+  let vignette = smoothstep(1.7, 0.2, length(screen));
+  let top = vec3<f32>(0.07, 0.09, 0.14);
+  let bottom = vec3<f32>(0.02, 0.03, 0.05);
+  return mix(bottom, top, horizon) + vec3<f32>(0.03, 0.04, 0.06) * vignette;
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> PreviewVertexOut {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0, 1.0),
+    vec2<f32>(3.0, 1.0),
+  );
+  var out: PreviewVertexOut;
+  let pos = positions[vertex_index];
+  out.position = vec4<f32>(pos, 0.0, 1.0);
+  return out;
+}
+
+@fragment
+fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+  let resolution = max(preview.resolution, vec2<f32>(1.0, 1.0));
+  let frag = position.xy / resolution;
+  var screen = frag * 2.0 - vec2<f32>(1.0, 1.0);
+  screen.y = -screen.y;
+  screen.x *= resolution.x / resolution.y;
+
+  let radius = 0.82;
+  let r2 = dot(screen, screen);
+  let background = preview_background(screen);
+
+  if (r2 > radius * radius) {
+    return vec4<f32>(background, 1.0);
+  }
+
+  let z = sqrt(max(radius * radius - r2, 0.0));
+  let normal = normalize(vec3<f32>(screen / radius, z / radius));
+  let uv = preview_surface_uv(normal);
+  let displacement = preview_surface_displacement(uv, preview.time);
+  let material = shade(normal, uv, preview.time, displacement);
+  let edge = smoothstep(radius, radius - 0.03, sqrt(r2));
+  let lit = mix(background, material.rgb, edge);
+  return vec4<f32>(lit, material.a);
+}
+`;
+}
+
+function buildShadePreviewShader(wgslCode, signature) {
+    const fullscreenInvocation = buildFullscreenShadePreviewInvocation(signature);
+    if (fullscreenInvocation) {
+        return buildFullscreenShadePreviewShader(wgslCode, fullscreenInvocation);
+    }
+
+    if (isSurfaceMaterialShadeSignature(signature)) {
+        return buildSurfaceMaterialPreviewShader(wgslCode);
+    }
+
+    return null;
 }
 
 async function createCheckedShaderModule(code) {
@@ -1341,7 +1446,7 @@ async function runShaderPreview(wgslCode) {
 
     const wrappedShader = buildShadePreviewShader(wgslCode, signature);
     if (!wrappedShader) {
-        showPreviewMessage('Render preview supports fullscreen `shade` contracts with 2D fragCoord/time/resolution/mouse inputs.');
+        showPreviewMessage('Render preview supports fullscreen 2D `shade` contracts and surface material `shade(normal, uv, time, displacement)` previews.');
         return;
     }
 
