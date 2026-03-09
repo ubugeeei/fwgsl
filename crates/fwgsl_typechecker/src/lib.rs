@@ -113,6 +113,69 @@ impl Ty {
     }
 }
 
+fn normalized_type_constructor_name(name: &str) -> Option<&'static str> {
+    match name {
+        "Array" | "Tensor" | "Ten" => Some("Tensor"),
+        "Vec" | "Vector" => Some("Vec"),
+        "Mat" | "Matrix" => Some("Mat"),
+        "Sca" | "Scalar" => Some("Scalar"),
+        "Options" | "Option" => Some("Option"),
+        _ => None,
+    }
+}
+
+/// Normalize surface aliases into canonical internal type constructors.
+pub fn normalize_type_aliases(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Con(name) => Ty::Con(
+            normalized_type_constructor_name(name)
+                .unwrap_or(name.as_str())
+                .to_string(),
+        ),
+        Ty::App(f, arg) => {
+            let f = normalize_type_aliases(f);
+            let arg = normalize_type_aliases(arg);
+            match f {
+                Ty::Con(name) if name == "Scalar" => arg,
+                other => Ty::App(Box::new(other), Box::new(arg)),
+            }
+        }
+        Ty::Arrow(a, b) => Ty::Arrow(
+            Box::new(normalize_type_aliases(a)),
+            Box::new(normalize_type_aliases(b)),
+        ),
+        Ty::Forall(vars, body) => Ty::Forall(vars.clone(), Box::new(normalize_type_aliases(body))),
+        Ty::Var(_) | Ty::Nat(_) | Ty::Error => ty.clone(),
+    }
+}
+
+pub fn tensor_ty(dim: Ty, elem: Ty) -> Ty {
+    Ty::app(Ty::app(Ty::Con("Tensor".into()), dim), elem)
+}
+
+pub fn vector_ty(dim: u64, elem: Ty) -> Ty {
+    Ty::app(Ty::app(Ty::Con("Vec".into()), Ty::Nat(dim)), elem)
+}
+
+pub fn matrix_ty(rows: u64, cols: u64, elem: Ty) -> Ty {
+    Ty::app(
+        Ty::app(Ty::app(Ty::Con("Mat".into()), Ty::Nat(rows)), Ty::Nat(cols)),
+        elem,
+    )
+}
+
+pub fn option_ty(inner: Ty) -> Ty {
+    Ty::app(Ty::Con("Option".into()), inner)
+}
+
+pub fn result_ty(inner: Ty) -> Ty {
+    Ty::app(Ty::Con("Result".into()), inner)
+}
+
+pub fn pair_ty(left: Ty, right: Ty) -> Ty {
+    Ty::app(Ty::app(Ty::Con("Pair".into()), left), right)
+}
+
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -247,8 +310,8 @@ impl InferEngine {
 
     /// Unify two types.
     pub fn unify(&mut self, a: &Ty, b: &Ty, span: Span) {
-        let a = a.apply_subst(&self.subst);
-        let b = b.apply_subst(&self.subst);
+        let a = normalize_type_aliases(&a.apply_subst(&self.subst));
+        let b = normalize_type_aliases(&b.apply_subst(&self.subst));
 
         match (&a, &b) {
             (Ty::Error, _) | (_, Ty::Error) => {}
@@ -398,7 +461,9 @@ impl fmt::Display for WgslType {
 
 /// Convert high-level Ty to WgslType (after monomorphization).
 pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
-    match ty {
+    let ty = normalize_type_aliases(ty);
+
+    match &ty {
         Ty::Con(name) => match name.as_str() {
             "I32" => Ok(WgslType::I32),
             "U32" => Ok(WgslType::U32),
@@ -408,7 +473,7 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
             other => Ok(WgslType::Struct(other.to_string())),
         },
         Ty::App(f, arg) => {
-            // Handle Vec N Scalar, Mat N M Scalar, and Array N Elem
+            // Handle Vec N Scalar, Mat N M Scalar, and Tensor N Elem
             match f.as_ref() {
                 Ty::App(ff, n) => match (ff.as_ref(), n.as_ref()) {
                     // Mat N M Scalar
@@ -426,16 +491,16 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
                         let scalar = ty_to_wgsl(arg)?;
                         Ok(WgslType::Vec(*n as u8, Box::new(scalar)))
                     }
-                    // Array N Elem
-                    (Ty::Con(name), Ty::Nat(n)) if name == "Array" => {
+                    // Tensor N Elem
+                    (Ty::Con(name), Ty::Nat(n)) if name == "Tensor" => {
                         let elem = ty_to_wgsl(arg)?;
                         let len = u32::try_from(*n)
-                            .map_err(|_| format!("Array length out of range for WGSL: {}", n))?;
+                            .map_err(|_| format!("Tensor length out of range for WGSL: {}", n))?;
                         Ok(WgslType::Array(Box::new(elem), Some(len)))
                     }
                     _ => Err(format!("Cannot convert to WGSL: {}", ty)),
                 },
-                Ty::Con(name) if name == "Array" => {
+                Ty::Con(name) if name == "Tensor" => {
                     let elem = ty_to_wgsl(arg)?;
                     Ok(WgslType::Array(Box::new(elem), None))
                 }
@@ -648,8 +713,8 @@ mod tests {
     }
 
     #[test]
-    fn test_ty_to_wgsl_array() {
-        let ty = Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(4)), Ty::f32());
+    fn test_ty_to_wgsl_tensor() {
+        let ty = tensor_ty(Ty::Nat(4), Ty::f32());
         assert_eq!(
             ty_to_wgsl(&ty),
             Ok(WgslType::Array(Box::new(WgslType::F32), Some(4)))
@@ -657,17 +722,43 @@ mod tests {
     }
 
     #[test]
-    fn test_ty_to_wgsl_nested_array() {
-        let ty = Ty::app(
-            Ty::app(Ty::Con("Array".into()), Ty::Nat(2)),
-            Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(4)), Ty::f32()),
-        );
+    fn test_ty_to_wgsl_nested_tensor() {
+        let ty = tensor_ty(Ty::Nat(2), tensor_ty(Ty::Nat(4), Ty::f32()));
         assert_eq!(
             ty_to_wgsl(&ty),
             Ok(WgslType::Array(
                 Box::new(WgslType::Array(Box::new(WgslType::F32), Some(4))),
                 Some(2),
             ))
+        );
+    }
+
+    #[test]
+    fn test_ty_aliases_normalize_before_wgsl_lowering() {
+        assert_eq!(
+            ty_to_wgsl(&Ty::app(Ty::Con("Scalar".into()), Ty::f32())),
+            Ok(WgslType::F32)
+        );
+        assert_eq!(
+            ty_to_wgsl(&Ty::app(
+                Ty::app(Ty::Con("Vector".into()), Ty::Nat(3)),
+                Ty::f32()
+            )),
+            Ok(WgslType::Vec(3, Box::new(WgslType::F32)))
+        );
+        assert_eq!(
+            ty_to_wgsl(&Ty::app(
+                Ty::app(Ty::app(Ty::Con("Matrix".into()), Ty::Nat(4)), Ty::Nat(4)),
+                Ty::f32(),
+            )),
+            Ok(WgslType::Mat(4, 4, Box::new(WgslType::F32)))
+        );
+        assert_eq!(
+            ty_to_wgsl(&Ty::app(
+                Ty::app(Ty::Con("Array".into()), Ty::Nat(8)),
+                Ty::f32()
+            )),
+            Ok(WgslType::Array(Box::new(WgslType::F32), Some(8)))
         );
     }
 

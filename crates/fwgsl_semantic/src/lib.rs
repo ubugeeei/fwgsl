@@ -40,6 +40,9 @@ impl SemanticAnalyzer {
     }
 
     fn add_builtins(&mut self) {
+        self.add_builtin_data_types();
+        self.add_builtin_value_schemes();
+
         // Arithmetic: I32 -> I32 -> I32
         let i32_binop = Scheme::mono(Ty::arrow(Ty::i32(), Ty::arrow(Ty::i32(), Ty::i32())));
         let _f32_binop = Scheme::mono(Ty::arrow(Ty::f32(), Ty::arrow(Ty::f32(), Ty::f32())));
@@ -59,6 +62,282 @@ impl SemanticAnalyzer {
         let bool_binop = Scheme::mono(Ty::arrow(Ty::bool(), Ty::arrow(Ty::bool(), Ty::bool())));
         self.env.insert("&&".to_string(), bool_binop.clone());
         self.env.insert("||".to_string(), bool_binop);
+    }
+
+    fn add_builtin_data_types(&mut self) {
+        self.register_builtin_data_type(
+            "Option",
+            &["a"],
+            vec![
+                ConDecl {
+                    name: "Some".into(),
+                    fields: ConFields::Positional(vec![builtin_type_var("a")]),
+                    span: builtin_span(),
+                },
+                ConDecl {
+                    name: "None".into(),
+                    fields: ConFields::Empty,
+                    span: builtin_span(),
+                },
+            ],
+        );
+
+        self.register_builtin_data_type(
+            "Result",
+            &["a"],
+            vec![
+                ConDecl {
+                    name: "Ok".into(),
+                    fields: ConFields::Positional(vec![builtin_type_var("a")]),
+                    span: builtin_span(),
+                },
+                ConDecl {
+                    name: "Err".into(),
+                    fields: ConFields::Positional(vec![builtin_type_con("String")]),
+                    span: builtin_span(),
+                },
+            ],
+        );
+
+        self.register_builtin_data_type(
+            "Pair",
+            &["a", "b"],
+            vec![ConDecl {
+                name: "Pair".into(),
+                fields: ConFields::Positional(vec![builtin_type_var("a"), builtin_type_var("b")]),
+                span: builtin_span(),
+            }],
+        );
+    }
+
+    fn add_builtin_value_schemes(&mut self) {
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["id"],
+            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), Ty::Var(a))),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["const"],
+            Scheme::poly(
+                vec![a, b],
+                Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::Var(a))),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let c = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["flip"],
+            Scheme::poly(
+                vec![a, b, c],
+                Ty::arrow(
+                    Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::Var(c))),
+                    Ty::arrow(Ty::Var(b), Ty::arrow(Ty::Var(a), Ty::Var(c))),
+                ),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let c = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["compose"],
+            Scheme::poly(
+                vec![a, b, c],
+                Ty::arrow(
+                    Ty::arrow(Ty::Var(b), Ty::Var(c)),
+                    Ty::arrow(
+                        Ty::arrow(Ty::Var(a), Ty::Var(b)),
+                        Ty::arrow(Ty::Var(a), Ty::Var(c)),
+                    ),
+                ),
+            ),
+        );
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["pure"],
+            Scheme::poly(
+                vec![f, a],
+                Ty::arrow(Ty::Var(a), Ty::app(Ty::Var(f), Ty::Var(a))),
+            ),
+        );
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
+        let fb = Ty::app(Ty::Var(f), Ty::Var(b));
+        self.insert_builtin_names(
+            &["bind"],
+            Scheme::poly(
+                vec![f, a, b],
+                Ty::arrow(fa.clone(), Ty::arrow(Ty::arrow(Ty::Var(a), fb.clone()), fb)),
+            ),
+        );
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
+        let fb = Ty::app(Ty::Var(f), Ty::Var(b));
+        let map_scheme = Scheme::poly(
+            vec![f, a, b],
+            Ty::arrow(
+                Ty::arrow(Ty::Var(a), Ty::Var(b)),
+                Ty::arrow(fa.clone(), fb.clone()),
+            ),
+        );
+        self.insert_builtin_names(&["fmap", "map", "$map"], map_scheme);
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
+        let filter_scheme = Scheme::poly(
+            vec![f, a],
+            Ty::arrow(Ty::arrow(Ty::Var(a), Ty::bool()), Ty::arrow(fa.clone(), fa)),
+        );
+        self.insert_builtin_names(&["filter", "$filter"], filter_scheme);
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
+        let fold_scheme = Scheme::poly(
+            vec![f, a, b],
+            Ty::arrow(
+                Ty::arrow(Ty::Var(b), Ty::arrow(Ty::Var(a), Ty::Var(b))),
+                Ty::arrow(Ty::Var(b), Ty::arrow(fa, Ty::Var(b))),
+            ),
+        );
+        self.insert_builtin_names(&["foldl", "fold", "$fold"], fold_scheme);
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
+        let foldr_scheme = Scheme::poly(
+            vec![f, a, b],
+            Ty::arrow(
+                Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::Var(b))),
+                Ty::arrow(Ty::Var(b), Ty::arrow(fa, Ty::Var(b))),
+            ),
+        );
+        self.insert_builtin_names(&["foldr", "$foldr"], foldr_scheme);
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        let nested = Ty::app(Ty::Var(f), Ty::app(Ty::Var(f), Ty::Var(a)));
+        let flat_scheme = Scheme::poly(
+            vec![f, a],
+            Ty::arrow(nested, Ty::app(Ty::Var(f), Ty::Var(a))),
+        );
+        self.insert_builtin_names(&["flat", "$flat"], flat_scheme);
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let fb = Ty::app(Ty::Var(f), Ty::Var(b));
+        let flat_map_scheme = Scheme::poly(
+            vec![f, a, b],
+            Ty::arrow(
+                Ty::arrow(Ty::Var(a), fb.clone()),
+                Ty::arrow(Ty::app(Ty::Var(f), Ty::Var(a)), fb),
+            ),
+        );
+        self.insert_builtin_names(&["flatMap", "$flatMap"], flat_map_scheme);
+
+        let f = fresh_var_id(&mut self.engine);
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let pair_ab = pair_ty(Ty::Var(a), Ty::Var(b));
+        let zip_scheme = Scheme::poly(
+            vec![f, a, b],
+            Ty::arrow(
+                Ty::app(Ty::Var(f), Ty::Var(a)),
+                Ty::arrow(
+                    Ty::app(Ty::Var(f), Ty::Var(b)),
+                    Ty::app(Ty::Var(f), pair_ab),
+                ),
+            ),
+        );
+        self.insert_builtin_names(&["zip", "$zip"], zip_scheme);
+
+        let f = fresh_var_id(&mut self.engine);
+        let bools = Ty::app(Ty::Var(f), Ty::bool());
+        let all_scheme = Scheme::poly(vec![f], Ty::arrow(bools.clone(), Ty::bool()));
+        self.insert_builtin_names(&["all", "$all"], all_scheme);
+
+        let f = fresh_var_id(&mut self.engine);
+        let bools = Ty::app(Ty::Var(f), Ty::bool());
+        let any_scheme = Scheme::poly(vec![f], Ty::arrow(bools, Ty::bool()));
+        self.insert_builtin_names(&["any", "$any"], any_scheme);
+
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["fst", "$fst"],
+            Scheme::poly(
+                vec![a, b],
+                Ty::arrow(pair_ty(Ty::Var(a), Ty::Var(b)), Ty::Var(a)),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["snd", "$snd"],
+            Scheme::poly(
+                vec![a, b],
+                Ty::arrow(pair_ty(Ty::Var(a), Ty::Var(b)), Ty::Var(b)),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["swap", "$swap"],
+            Scheme::poly(
+                vec![a, b],
+                Ty::arrow(
+                    pair_ty(Ty::Var(a), Ty::Var(b)),
+                    pair_ty(Ty::Var(b), Ty::Var(a)),
+                ),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["unwrapOr", "$unwrapOr"],
+            Scheme::poly(
+                vec![a],
+                Ty::arrow(Ty::Var(a), Ty::arrow(option_ty(Ty::Var(a)), Ty::Var(a))),
+            ),
+        );
+    }
+
+    fn register_builtin_data_type(
+        &mut self,
+        name: &str,
+        type_params: &[&str],
+        constructors: Vec<ConDecl>,
+    ) {
+        let type_params: Vec<String> = type_params
+            .iter()
+            .map(|param| (*param).to_string())
+            .collect();
+        self.register_data_type(name, &type_params, &constructors, builtin_span());
+    }
+
+    fn insert_builtin_names(&mut self, names: &[&str], scheme: Scheme) {
+        for name in names {
+            self.env.insert((*name).to_string(), scheme.clone());
+        }
     }
 
     /// Analyze a full program.
@@ -213,7 +492,7 @@ impl SemanticAnalyzer {
         ty: &Type,
         scope: &mut HashMap<String, TyVarId>,
     ) -> Ty {
-        match ty {
+        let ty = match ty {
             Type::Con(name, _) => Ty::Con(name.clone()),
             Type::Var(name, _) => Ty::Var(
                 *scope
@@ -242,7 +521,8 @@ impl SemanticAnalyzer {
                 }
             }
             Type::Unit(_) => Ty::unit(),
-        }
+        };
+        normalize_type_aliases(&ty)
     }
 
     fn new_type_var_scope(&mut self, names: &[String]) -> HashMap<String, TyVarId> {
@@ -657,6 +937,18 @@ impl Default for SemanticAnalyzer {
     }
 }
 
+fn builtin_span() -> Span {
+    Span::new(0, 0)
+}
+
+fn builtin_type_con(name: &str) -> Type {
+    Type::Con(name.to_string(), builtin_span())
+}
+
+fn builtin_type_var(name: &str) -> Type {
+    Type::Var(name.to_string(), builtin_span())
+}
+
 fn fresh_var_id(engine: &mut InferEngine) -> TyVarId {
     match engine.fresh_var() {
         Ty::Var(id) => id,
@@ -713,8 +1005,10 @@ pub fn validate_swizzle(field: &str, n: u8) -> bool {
 
 /// Extract Vec type info: Vec n T → Some((n, T))
 pub fn extract_vec_type(ty: &Ty) -> Option<(u8, Ty)> {
+    let ty = normalize_type_aliases(ty);
+
     // Vec n T = App(App(Con("Vec"), Nat(n)), T)
-    if let Ty::App(f, scalar) = ty {
+    if let Ty::App(f, scalar) = &ty {
         if let Ty::App(con, nat) = f.as_ref() {
             if let (Ty::Con(name), Ty::Nat(n)) = (con.as_ref(), nat.as_ref()) {
                 if name == "Vec" {
@@ -1118,6 +1412,117 @@ mod tests {
                 },
             ],
         };
+        sa.analyze(&program);
+        assert!(!sa.has_errors());
+    }
+
+    #[test]
+    fn test_builtin_option_result_and_tensor_utilities_are_registered() {
+        let sa = SemanticAnalyzer::new();
+
+        for name in [
+            "Some",
+            "None",
+            "Ok",
+            "Err",
+            "Pair",
+            "$map",
+            "$filter",
+            "$fold",
+            "$foldr",
+            "$zip",
+            "$flat",
+            "$flatMap",
+            "$all",
+            "$any",
+            "$unwrapOr",
+        ] {
+            assert!(sa.env.lookup(name).is_some(), "missing builtin: {}", name);
+        }
+    }
+
+    #[test]
+    fn test_builtin_option_result_and_map_type_check() {
+        let mut sa = SemanticAnalyzer::new();
+        let program = Program {
+            decls: vec![
+                Decl::TypeSig {
+                    name: "lift".into(),
+                    ty: Type::Arrow(
+                        Box::new(Type::App(
+                            Box::new(Type::Con("Option".into(), span())),
+                            Box::new(Type::Con("I32".into(), span())),
+                            span(),
+                        )),
+                        Box::new(Type::App(
+                            Box::new(Type::Con("Option".into(), span())),
+                            Box::new(Type::Con("I32".into(), span())),
+                            span(),
+                        )),
+                        span(),
+                    ),
+                    span: span(),
+                },
+                Decl::FunDecl {
+                    name: "lift".into(),
+                    params: vec![Pat::Var("value".into(), span())],
+                    body: Expr::App(
+                        Box::new(Expr::App(
+                            Box::new(Expr::Var("$map".into(), span())),
+                            Box::new(Expr::Lambda(
+                                vec![Pat::Var("x".into(), span())],
+                                Box::new(Expr::Infix(
+                                    Box::new(Expr::Var("x".into(), span())),
+                                    "+".into(),
+                                    Box::new(Expr::Lit(Lit::Int(1), span())),
+                                    span(),
+                                )),
+                                span(),
+                            )),
+                            span(),
+                        )),
+                        Box::new(Expr::Var("value".into(), span())),
+                        span(),
+                    ),
+                    where_binds: vec![],
+                    span: span(),
+                },
+                Decl::TypeSig {
+                    name: "unwrap".into(),
+                    ty: Type::Arrow(
+                        Box::new(Type::App(
+                            Box::new(Type::Con("Result".into(), span())),
+                            Box::new(Type::Con("I32".into(), span())),
+                            span(),
+                        )),
+                        Box::new(Type::Con("I32".into(), span())),
+                        span(),
+                    ),
+                    span: span(),
+                },
+                Decl::FunDecl {
+                    name: "unwrap".into(),
+                    params: vec![Pat::Var("value".into(), span())],
+                    body: Expr::Case(
+                        Box::new(Expr::Var("value".into(), span())),
+                        vec![
+                            (
+                                Pat::Con("Ok".into(), vec![Pat::Var("x".into(), span())], span()),
+                                Expr::Var("x".into(), span()),
+                            ),
+                            (
+                                Pat::Con("Err".into(), vec![Pat::Wild(span())], span()),
+                                Expr::Lit(Lit::Int(0), span()),
+                            ),
+                        ],
+                        span(),
+                    ),
+                    where_binds: vec![],
+                    span: span(),
+                },
+            ],
+        };
+
         sa.analyze(&program);
         assert!(!sa.has_errors());
     }

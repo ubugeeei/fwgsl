@@ -63,7 +63,7 @@ mod parse_single_decl_tests {
 
     #[test]
     fn parse_dependent_array_type_signature() {
-        let source = "grid : Array 2 (Array 4 F32)";
+        let source = "grid : Tensor 2 (Tensor 4 F32)";
         let (program, has_errors) = parse(source);
         assert!(
             !has_errors,

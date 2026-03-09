@@ -73,7 +73,9 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
 
 /// Convert a Ty to MirType.
 pub fn ty_to_mir_type(ty: &Ty) -> Result<MirType, String> {
-    match ty {
+    let ty = fwgsl_typechecker::normalize_type_aliases(ty);
+
+    match &ty {
         Ty::Con(name) => match name.as_str() {
             "I32" => Ok(MirType::I32),
             "U32" => Ok(MirType::U32),
@@ -97,10 +99,10 @@ pub fn ty_to_mir_type(ty: &Ty) -> Result<MirType, String> {
                     let scalar = ty_to_mir_type(arg)?;
                     Ok(MirType::Vec(*n as u8, Box::new(scalar)))
                 }
-                (Ty::Con(name), Ty::Nat(n)) if name == "Array" => {
+                (Ty::Con(name), Ty::Nat(n)) if name == "Tensor" => {
                     let elem = ty_to_mir_type(arg)?;
                     let len = u32::try_from(*n)
-                        .map_err(|_| format!("Array length out of range for MIR: {}", n))?;
+                        .map_err(|_| format!("Tensor length out of range for MIR: {}", n))?;
                     Ok(MirType::Array(Box::new(elem), len))
                 }
                 _ => Err(format!("Cannot convert to MIR type: {}", ty)),
@@ -619,8 +621,8 @@ mod tests {
     }
 
     #[test]
-    fn test_ty_to_mir_type_array() {
-        let ty = Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(4)), Ty::f32());
+    fn test_ty_to_mir_type_tensor() {
+        let ty = fwgsl_typechecker::tensor_ty(Ty::Nat(4), Ty::f32());
         assert_eq!(
             ty_to_mir_type(&ty),
             Ok(MirType::Array(Box::new(MirType::F32), 4))
@@ -628,10 +630,10 @@ mod tests {
     }
 
     #[test]
-    fn test_ty_to_mir_type_nested_array() {
-        let ty = Ty::app(
-            Ty::app(Ty::Con("Array".into()), Ty::Nat(2)),
-            Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(4)), Ty::f32()),
+    fn test_ty_to_mir_type_nested_tensor() {
+        let ty = fwgsl_typechecker::tensor_ty(
+            Ty::Nat(2),
+            fwgsl_typechecker::tensor_ty(Ty::Nat(4), Ty::f32()),
         );
         assert_eq!(
             ty_to_mir_type(&ty),
@@ -639,6 +641,15 @@ mod tests {
                 Box::new(MirType::Array(Box::new(MirType::F32), 4)),
                 2,
             ))
+        );
+    }
+
+    #[test]
+    fn test_ty_aliases_normalize_before_mir_lowering() {
+        let ty = Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(8)), Ty::f32());
+        assert_eq!(
+            ty_to_mir_type(&ty),
+            Ok(MirType::Array(Box::new(MirType::F32), 8))
         );
     }
 

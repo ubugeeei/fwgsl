@@ -959,7 +959,10 @@ mod tests {
         let items = build_completions("", Position::new(0, 0));
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
 
-        for ty in ["I32", "U32", "F32", "Bool", "Vec", "Mat", "Array"] {
+        for ty in [
+            "I32", "U32", "F32", "Bool", "Scalar", "Sca", "Tensor", "Ten", "Vector", "Vec",
+            "Matrix", "Mat", "Option", "Result", "Pair",
+        ] {
             assert!(labels.contains(&ty), "Missing type completion: {}", ty);
         }
     }
@@ -970,7 +973,29 @@ mod tests {
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
 
         for f in [
-            "map", "filter", "foldl", "foldr", "id", "const", "flip", "pure", "bind", "fmap",
+            "map",
+            "filter",
+            "foldl",
+            "foldr",
+            "id",
+            "const",
+            "flip",
+            "pure",
+            "bind",
+            "fmap",
+            "$map",
+            "$filter",
+            "$fold",
+            "$foldr",
+            "$zip",
+            "$flat",
+            "$flatMap",
+            "$all",
+            "$any",
+            "$fst",
+            "$snd",
+            "$swap",
+            "$unwrapOr",
         ] {
             assert!(
                 labels.contains(&f),

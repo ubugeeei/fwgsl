@@ -847,7 +847,7 @@ impl AstLowering {
         ty: &Type,
         scope: &mut HashMap<String, TyVarId>,
     ) -> Ty {
-        match ty {
+        let ty = match ty {
             Type::Con(name, _) => Ty::Con(name.clone()),
             Type::Var(name, _) => Ty::Var(
                 *scope
@@ -874,7 +874,8 @@ impl AstLowering {
                 }
             }
             Type::Unit(_) => Ty::unit(),
-        }
+        };
+        normalize_type_aliases(&ty)
     }
 
     fn new_type_var_scope(&mut self, names: &[String]) -> HashMap<String, TyVarId> {
@@ -886,7 +887,7 @@ impl AstLowering {
 
     /// Pure version that doesn't need &mut self (no fresh vars for type vars).
     fn convert_syntax_type_pure(&self, ty: &Type) -> Ty {
-        match ty {
+        let ty = match ty {
             Type::Con(name, _) => Ty::Con(name.clone()),
             Type::Var(name, _) => Ty::Con(name.clone()),
             Type::Nat(n, _) => Ty::Nat(*n),
@@ -909,7 +910,8 @@ impl AstLowering {
                 }
             }
             Type::Unit(_) => Ty::unit(),
-        }
+        };
+        normalize_type_aliases(&ty)
     }
 
     pub fn has_errors(&self) -> bool {

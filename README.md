@@ -12,8 +12,9 @@ Written in Rust, the compiler is structured as a fast multi-crate pipeline and i
 - HM-style inference with explicit type signatures when needed.
 - Algebraic data types and pattern matching.
 - `where` bindings and expression-oriented `let`, `if`, and `match`.
-- Static dimension-carrying array and vector types such as `Array 16 F32` and `Vec 3 F32`.
+- Static dimension-carrying tensor types such as `Tensor 16 F32`, `Vector 3 F32`, and `Matrix 4 4 F32`.
 - Generic data declarations and polymorphic constructors, including phantom parameters.
+- Builtin `Option`, `Result`, `Pair`, and utility functions such as `$map`, `$zip`, and `$unwrapOr`.
 - Rich editor support through LSP and the web playground.
 
 ## Current Status
@@ -28,7 +29,7 @@ The repository contains both implemented features and planned language goals. Th
 | ADTs | Implemented | Constructors are registered in semantic analysis |
 | Pattern matching | Implemented | Match expressions and constructor patterns |
 | `let` / `where` | Implemented | `where` currently desugars to sequential local bindings |
-| Dependent dimensions | Implemented | `Nat`-backed dimensions for `Array`, `Vec`, `Mat`-style type forms |
+| Dependent dimensions | Implemented | `Nat`-backed dimensions for `Tensor`, `Vector`, `Matrix`, and short aliases such as `Ten`, `Vec`, `Mat`, `Sca` |
 | Generic data / phantom types | Implemented | Polymorphic constructor schemes are preserved |
 | WGSL code generation | Implemented | AST -> HIR -> MIR -> WGSL pipeline works end-to-end |
 | LSP | Implemented | Diagnostics, hover, completion, goto-definition, semantic tokens |
@@ -80,10 +81,10 @@ where
 ### Dimension-carrying types
 
 ```haskell
-weights : Array 4 F32
+weights : Tensor 4 F32
 weights = [1.0, 2.0, 3.0, 4.0]
 
-sample : Vec 3 F32 -> F32
+sample : Vector 3 F32 -> F32
 sample v = $dot v v
 ```
 
@@ -244,7 +245,8 @@ What is already working in the compiler today:
 - ADTs and constructor registration.
 - Pattern matching over constructors.
 - Entry-point attributes such as `@compute`.
-- Type-level naturals in array/vector-like type applications.
+- Type-level naturals in tensor/vector/matrix-like type applications.
+- Builtin `Option`, `Result`, `Pair`, and utility prelude entries.
 - Generic type variables in signatures and data declarations.
 
 ## Roadmap
