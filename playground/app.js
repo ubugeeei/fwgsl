@@ -57,6 +57,14 @@ sign x =
   if x > 0 then 1
   else if x < 0 then 0 - 1
   else 0`,
+
+    graph: `-- Graph Preview: animated scalar function
+graph : F32 -> F32 -> F32
+graph x time =
+  let wave1 = $sin (x * 2.4 + time) * 0.55
+      wave2 = $sin (x * 0.9 - time * 0.7) * 0.25
+      wave3 = $cos (x * 4.2 + time * 0.3) * 0.12
+  in wave1 + wave2 + wave3`,
 };
 
 const AUTO_COMPILE_DELAY_MS = 250;
@@ -525,6 +533,7 @@ const EXAMPLE_LIBRARY = {
     adt: { label: 'ADT + Pattern Match', source: EXAMPLES.adt },
     compute: { label: 'Compute Shader', source: EXAMPLES.compute },
     ifexpr: { label: 'If Expressions', source: EXAMPLES.ifexpr },
+    graph: { label: 'Graph Preview', source: EXAMPLES.graph },
 };
 
 for (const example of SHADORIAL_EXAMPLES) {
@@ -921,7 +930,7 @@ function populateExampleSelector() {
 
     const coreGroup = document.createElement('optgroup');
     coreGroup.label = 'Core';
-    for (const key of ['hello', 'adt', 'compute', 'ifexpr']) {
+    for (const key of ['hello', 'adt', 'compute', 'ifexpr', 'graph']) {
         const option = document.createElement('option');
         option.value = key;
         option.textContent = EXAMPLE_LIBRARY[key].label;
@@ -1207,18 +1216,12 @@ function normalizeWgslType(type) {
     return type.replace(/\s+/g, '').toLowerCase();
 }
 
-function parseShadeSignature(wgslCode) {
-    const match = wgslCode.match(/fn\s+shade\s*\(([\s\S]*?)\)\s*->\s*vec4<\s*f32\s*>/m);
-    if (!match) {
-        return null;
+function parseWgslParamList(rawParams) {
+    if (!rawParams.trim()) {
+        return [];
     }
 
-    const rawParams = match[1].trim();
-    if (!rawParams) {
-        return { params: [] };
-    }
-
-    const params = rawParams
+    return rawParams
         .split(',')
         .map((part) => part.trim())
         .filter(Boolean)
@@ -1232,12 +1235,73 @@ function parseShadeSignature(wgslCode) {
                 type: normalizeWgslType(parsed[2]),
             };
         });
+}
 
-    if (params.some((param) => param === null)) {
+function parseWgslFunctions(wgslCode) {
+    const signatures = [];
+    const fnPattern = /fn\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*->\s*([^{\n]+)\{/g;
+
+    for (const match of wgslCode.matchAll(fnPattern)) {
+        const params = parseWgslParamList(match[2]);
+        if (params.some((param) => param === null)) {
+            continue;
+        }
+        signatures.push({
+            name: match[1],
+            params,
+            returnType: normalizeWgslType(match[3]),
+        });
+    }
+
+    return signatures;
+}
+
+function parseShadeSignature(wgslCode) {
+    const match = wgslCode.match(/fn\s+shade\s*\(([\s\S]*?)\)\s*->\s*vec4<\s*f32\s*>/m);
+    if (!match) {
         return null;
     }
 
+    const params = parseWgslParamList(match[1]);
+    if (params.some((param) => param === null)) {
+        return null;
+    }
+    if (params.length === 0) {
+        return { params: [] };
+    }
+
     return { params };
+}
+
+function isGraphPreviewSignature(signature) {
+    if (signature.returnType !== 'f32' && signature.returnType !== 'i32') {
+        return false;
+    }
+
+    const params = signature.params.map((param) => param.type);
+    if (params.length === 1) {
+        return params[0] === 'f32' || params[0] === 'i32';
+    }
+
+    if (params.length === 2) {
+        return (params[0] === 'f32' || params[0] === 'i32') && params[1] === 'f32';
+    }
+
+    return false;
+}
+
+function findGraphPreviewSignature(wgslCode) {
+    const reservedNames = new Set(['shade', 'main', 'vs_main', 'fs_main']);
+    const candidates = parseWgslFunctions(wgslCode)
+        .filter((signature) => !reservedNames.has(signature.name))
+        .filter(isGraphPreviewSignature);
+
+    const named = candidates.find((signature) => signature.name === 'graph');
+    if (named) {
+        return named;
+    }
+
+    return candidates.length === 1 ? candidates[0] : null;
 }
 
 function shadeParamTypes(signature) {
@@ -1396,6 +1460,89 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 `;
 }
 
+function buildGraphPreviewInvocation(signature) {
+    const paramTypes = signature.params.map((param) => param.type);
+    const xInput = paramTypes[0] === 'i32'
+        ? 'i32(round(graphX * 12.0))'
+        : 'graphX';
+    const invocation = paramTypes.length === 2
+        ? `${signature.name}(${xInput}, preview.time)`
+        : `${signature.name}(${xInput})`;
+
+    return signature.returnType === 'i32'
+        ? `f32(${invocation})`
+        : invocation;
+}
+
+function buildGraphPreviewShader(wgslCode, signature) {
+    const invocation = buildGraphPreviewInvocation(signature);
+
+    return `${wgslCode}
+
+const GRAPH_X_RANGE: f32 = 6.0;
+const GRAPH_Y_RANGE: f32 = 1.5;
+
+struct PreviewUniforms {
+  resolution: vec2<f32>,
+  mouse: vec2<f32>,
+  time: f32,
+  frame: f32,
+  padding: vec2<f32>,
+}
+
+@group(0) @binding(0) var<uniform> preview: PreviewUniforms;
+
+struct PreviewVertexOut {
+  @builtin(position) position: vec4<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> PreviewVertexOut {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0, 1.0),
+    vec2<f32>(3.0, 1.0),
+  );
+  var out: PreviewVertexOut;
+  let pos = positions[vertex_index];
+  out.position = vec4<f32>(pos, 0.0, 1.0);
+  return out;
+}
+
+@fragment
+fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+  let resolution = max(preview.resolution, vec2<f32>(1.0, 1.0));
+  let uv = position.xy / resolution;
+  let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+  let graphX = ndc.x * GRAPH_X_RANGE;
+  let graphY = ${invocation} / GRAPH_Y_RANGE;
+
+  let backgroundTop = vec3<f32>(0.05, 0.08, 0.14);
+  let backgroundBottom = vec3<f32>(0.02, 0.03, 0.06);
+  var color = mix(backgroundBottom, backgroundTop, clamp(uv.y, 0.0, 1.0));
+
+  let gridX = abs(fract((graphX + GRAPH_X_RANGE) / 1.0) - 0.5);
+  let gridY = abs(fract((ndc.y * GRAPH_Y_RANGE + GRAPH_Y_RANGE) / 0.5) - 0.5);
+  let grid = (1.0 - smoothstep(0.46, 0.5, gridX)) * 0.12
+    + (1.0 - smoothstep(0.46, 0.5, gridY)) * 0.08;
+  color += vec3<f32>(0.09, 0.12, 0.2) * grid;
+
+  let axisThickness = 2.0 / resolution.y;
+  let axisX = 1.0 - smoothstep(axisThickness, axisThickness * 3.0, abs(ndc.y));
+  let axisY = 1.0 - smoothstep(axisThickness, axisThickness * 3.0, abs(ndc.x));
+  color = mix(color, vec3<f32>(0.28, 0.33, 0.44), max(axisX, axisY));
+
+  let curveThickness = 2.5 / resolution.y;
+  let curve = 1.0 - smoothstep(curveThickness, curveThickness * 4.0, abs(ndc.y - graphY));
+  let glow = 1.0 - smoothstep(curveThickness * 6.0, curveThickness * 20.0, abs(ndc.y - graphY));
+  color += vec3<f32>(0.08, 0.12, 0.22) * glow;
+  color = mix(color, vec3<f32>(0.48, 0.86, 0.98), curve);
+
+  return vec4<f32>(color, 1.0);
+}
+`;
+}
+
 function buildShadePreviewShader(wgslCode, signature) {
     const fullscreenInvocation = buildFullscreenShadePreviewInvocation(signature);
     if (fullscreenInvocation) {
@@ -1429,7 +1576,7 @@ async function runShaderPreview(wgslCode) {
     stopActivePreview();
 
     if (!wgslCode || wgslCode.startsWith('//')) {
-        showPreviewMessage('Compile a compute shader or a `shade` function to preview.');
+        showPreviewMessage('Compile a compute shader, `shade` function, or `graph` function to preview.');
         return;
     }
 
@@ -1440,7 +1587,12 @@ async function runShaderPreview(wgslCode) {
 
     const signature = parseShadeSignature(wgslCode);
     if (!signature) {
-        showPreviewMessage('Render preview expects `fn shade(...) -> vec4<f32>`.');
+        const graphSignature = findGraphPreviewSignature(wgslCode);
+        if (graphSignature) {
+            await runRenderPreview(buildGraphPreviewShader(wgslCode, graphSignature));
+            return;
+        }
+        showPreviewMessage('Render preview expects `fn shade(...) -> vec4<f32>` or `fn graph(x[, time]) -> f32`.');
         return;
     }
 
@@ -1798,7 +1950,7 @@ function compile(options = {}) {
         if (result.wgsl && !result.wgsl.startsWith('//')) {
             runShaderPreview(result.wgsl);
         } else {
-            showPreviewMessage('Compile a compute shader or a `shade` function to preview.');
+            showPreviewMessage('Compile a compute shader, `shade` function, or `graph` function to preview.');
         }
 
     } catch (e) {
