@@ -29,11 +29,31 @@
                 <span>Format</span>
             </button>
             <div class="separator"></div>
-            <select id="select-example" class="select">
-                <option value="">Load example...</option>
-            </select>
+            <div class="preset-shell">
+                <button id="preset-trigger" class="preset-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">
+                    <span class="preset-kicker">Preset Library</span>
+                    <span class="preset-title" id="preset-title">Shadorial 14 · Water</span>
+                    <span class="preset-meta" id="preset-meta">Live shader preset</span>
+                </button>
+                <div id="preset-sheet" class="preset-sheet" hidden>
+                    <div id="preset-backdrop" class="preset-backdrop"></div>
+                    <div class="preset-panel" role="dialog" aria-modal="true" aria-label="Preset library">
+                        <div class="preset-panel-header">
+                            <div>
+                                <div class="preset-panel-kicker">Presets</div>
+                                <h2 class="preset-panel-title">Start from a real shader</h2>
+                            </div>
+                            <button id="preset-close" class="btn btn-icon" type="button" title="Close presets">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                        </div>
+                        <div id="preset-groups" class="preset-groups"></div>
+                    </div>
+                </div>
+            </div>
         </div>
         <div class="toolbar-right">
+            <div class="toolbar-hint">Cmd/Ctrl+click jump · Shift+F12 refs</div>
             <button id="btn-settings" class="btn btn-icon" title="Settings">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
             </button>

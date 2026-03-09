@@ -4,6 +4,7 @@ members = [
     "crates/fwgsl_allocator",
     "crates/fwgsl_span",
     "crates/fwgsl_diagnostics",
+    "crates/fwgsl_ide",
     "crates/fwgsl_syntax",
     "crates/fwgsl_cst",
     "crates/fwgsl_ast",
@@ -24,6 +25,7 @@ default-members = [
     "crates/fwgsl_allocator",
     "crates/fwgsl_span",
     "crates/fwgsl_diagnostics",
+    "crates/fwgsl_ide",
     "crates/fwgsl_syntax",
     "crates/fwgsl_cst",
     "crates/fwgsl_ast",
@@ -48,6 +50,7 @@ license = "MIT"
 fwgsl_allocator = { path = "crates/fwgsl_allocator" }
 fwgsl_span = { path = "crates/fwgsl_span" }
 fwgsl_diagnostics = { path = "crates/fwgsl_diagnostics" }
+fwgsl_ide = { path = "crates/fwgsl_ide" }
 fwgsl_syntax = { path = "crates/fwgsl_syntax" }
 fwgsl_cst = { path = "crates/fwgsl_cst" }
 fwgsl_ast = { path = "crates/fwgsl_ast" }

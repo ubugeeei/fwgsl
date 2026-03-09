@@ -7,6 +7,7 @@ version.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+fwgsl_ide = { workspace = true }
 fwgsl_parser = { workspace = true }
 fwgsl_typechecker = { workspace = true }
 fwgsl_semantic = { workspace = true }
@@ -19,3 +20,4 @@ fwgsl_span = { workspace = true }
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+lsp-types = "0.94"

@@ -267,6 +267,12 @@ impl TypeEnv {
         self.bindings.get(name)
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Scheme)> {
+        self.bindings
+            .iter()
+            .map(|(name, scheme)| (name.as_str(), scheme))
+    }
+
     pub fn free_vars(&self) -> Vec<TyVarId> {
         let mut vars = Vec::new();
         for scheme in self.bindings.values() {

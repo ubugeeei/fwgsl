@@ -68,6 +68,9 @@ graph x time =
 };
 
 const AUTO_COMPILE_DELAY_MS = 250;
+const DEFAULT_EXAMPLE_KEY = 'shadorial-14';
+const PLAYGROUND_URI = 'inmemory://fwgsl/playground.fwgsl';
+const WGSL_OUTPUT_URI = 'inmemory://fwgsl/output.wgsl';
 const FWGSL_KEYWORD_SET = new Set([
     'module', 'where', 'import', 'data', 'type', 'class', 'instance',
     'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else', 'do',
@@ -545,6 +548,19 @@ for (const example of SHADORIAL_EXAMPLES) {
     };
 }
 
+const PRESET_GROUPS = [
+    {
+        id: 'core',
+        label: 'Core',
+        keys: ['hello', 'adt', 'compute', 'ifexpr', 'graph'],
+    },
+    {
+        id: 'shadorial',
+        label: 'Shadorial',
+        keys: SHADORIAL_EXAMPLES.map((example) => example.key),
+    },
+];
+
 // ============================================================
 // Monaco theme
 // ============================================================
@@ -633,7 +649,11 @@ const WGSL_THEME_RULES = [
 function registerEditorProviders(monaco) {
     monaco.languages.registerCompletionItemProvider('fwgsl', {
         triggerCharacters: ['@', '.', ':', ' '],
-        provideCompletionItems(model, position) {
+        async provideCompletionItems(model, position) {
+            const wasmSuggestions = await getWasmEditorCompletions(monaco, model, position);
+            if (wasmSuggestions) {
+                return { suggestions: wasmSuggestions };
+            }
             return {
                 suggestions: buildEditorSuggestions(monaco, model, position),
             };
@@ -641,7 +661,12 @@ function registerEditorProviders(monaco) {
     });
 
     monaco.languages.registerHoverProvider('fwgsl', {
-        provideHover(model, position) {
+        async provideHover(model, position) {
+            const wasmHover = await getWasmEditorHover(monaco, model, position);
+            if (wasmHover) {
+                return wasmHover;
+            }
+
             const word = model.getWordAtPosition(position);
             if (!word) {
                 return null;
@@ -702,6 +727,110 @@ function registerEditorProviders(monaco) {
             return null;
         },
     });
+
+    monaco.languages.registerDefinitionProvider('fwgsl', {
+        async provideDefinition(model, position) {
+            return getWasmEditorDefinitions(monaco, model, position);
+        },
+    });
+
+    monaco.languages.registerReferenceProvider('fwgsl', {
+        async provideReferences(model, position, context) {
+            return getWasmEditorReferences(monaco, model, position, context?.includeDeclaration ?? false);
+        },
+    });
+}
+
+async function getWasmEditorCompletions(monaco, model, position) {
+    const payload = callWasmEditorApi('editor_completions', model, position);
+    if (!payload) {
+        return null;
+    }
+
+    const word = model.getWordUntilPosition(position);
+    const range = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn,
+    };
+
+    return payload.map((item) => ({
+        label: item.label,
+        kind: item.kind
+            ? monaco.languages.CompletionItemKind[item.kind] ?? monaco.languages.CompletionItemKind.Text
+            : monaco.languages.CompletionItemKind.Text,
+        detail: item.detail,
+        documentation: item.documentation ? { value: item.documentation } : undefined,
+        insertText: item.insertText ?? item.label,
+        insertTextRules: item.insertTextFormat === 2
+            ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+            : undefined,
+        filterText: item.filterText,
+        sortText: item.sortText,
+        range,
+    }));
+}
+
+async function getWasmEditorHover(monaco, model, position) {
+    const hover = callWasmEditorApi('editor_hover', model, position);
+    if (!hover || !hover.contents) {
+        return null;
+    }
+
+    return {
+        range: hover.range ? toMonacoRange(monaco, hover.range) : undefined,
+        contents: [{ value: hover.contents }],
+    };
+}
+
+async function getWasmEditorDefinitions(monaco, model, position) {
+    const locations = callWasmEditorApi('editor_definition', model, position);
+    if (!locations || locations.length === 0) {
+        return null;
+    }
+
+    return locations.map((location) => ({
+        uri: model.uri,
+        range: toMonacoRange(monaco, location.range),
+    }));
+}
+
+async function getWasmEditorReferences(monaco, model, position, includeDeclaration) {
+    const locations = callWasmEditorApi('editor_references', model, position, includeDeclaration);
+    if (!locations || locations.length === 0) {
+        return [];
+    }
+
+    return locations.map((location) => ({
+        uri: model.uri,
+        range: toMonacoRange(monaco, location.range),
+    }));
+}
+
+function callWasmEditorApi(method, model, position, includeDeclaration = false) {
+    if (!wasmModule || typeof wasmModule[method] !== 'function') {
+        return null;
+    }
+
+    try {
+        const raw = includeDeclaration === false && method !== 'editor_references'
+            ? wasmModule[method](model.getValue(), position.lineNumber, position.column)
+            : wasmModule[method](model.getValue(), position.lineNumber, position.column, includeDeclaration);
+        return JSON.parse(raw);
+    } catch (error) {
+        console.warn(`Editor API ${method} failed`, error);
+        return null;
+    }
+}
+
+function toMonacoRange(monaco, range) {
+    return new monaco.Range(
+        range.startLineNumber,
+        range.startColumn,
+        range.endLineNumber,
+        range.endColumn,
+    );
 }
 
 function buildEditorSuggestions(monaco, model, position) {
@@ -915,6 +1044,7 @@ let previewAnimationFrame = 0;
 let previewStartTime = 0;
 let previewFrameCount = 0;
 let previewMouse = { x: -1, y: -1 };
+let currentExampleKey = DEFAULT_EXAMPLE_KEY;
 
 // ============================================================
 // Initialize
@@ -923,35 +1053,36 @@ async function init() {
     await initMonaco();
     await initWasm();
     await initWebGPU();
-    populateExampleSelector();
+    populatePresetPicker();
     setupEventListeners();
     setupResizeHandlers();
+    await selectExample(DEFAULT_EXAMPLE_KEY, { focusEditor: false, compileNow: false });
     compile({ reason: 'initial' });
 }
 
-function populateExampleSelector() {
-    const select = document.getElementById('select-example');
-    select.innerHTML = '<option value="">Load example...</option>';
-
-    const coreGroup = document.createElement('optgroup');
-    coreGroup.label = 'Core';
-    for (const key of ['hello', 'adt', 'compute', 'ifexpr', 'graph']) {
-        const option = document.createElement('option');
-        option.value = key;
-        option.textContent = EXAMPLE_LIBRARY[key].label;
-        coreGroup.appendChild(option);
-    }
-    select.appendChild(coreGroup);
-
-    const shadorialGroup = document.createElement('optgroup');
-    shadorialGroup.label = 'Shadorial';
-    for (const example of SHADORIAL_EXAMPLES) {
-        const option = document.createElement('option');
-        option.value = example.key;
-        option.textContent = example.label;
-        shadorialGroup.appendChild(option);
-    }
-    select.appendChild(shadorialGroup);
+function populatePresetPicker() {
+    const groups = document.getElementById('preset-groups');
+    groups.innerHTML = PRESET_GROUPS.map((group) => `
+        <section class="preset-group">
+            <div class="preset-group-label">${group.label}</div>
+            <div class="preset-grid">
+                ${group.keys.map((key) => {
+                    const example = EXAMPLE_LIBRARY[key];
+                    return `
+                        <button
+                            class="preset-card"
+                            data-example-key="${key}"
+                            type="button"
+                        >
+                            <span class="preset-card-title">${escapeHtml(example.label)}</span>
+                            <span class="preset-card-meta">${escapeHtml(example.path ? 'Shader preset' : 'Core sample')}</span>
+                        </button>
+                    `;
+                }).join('')}
+            </div>
+        </section>
+    `).join('');
+    updatePresetTrigger();
 }
 
 async function loadExampleSource(key) {
@@ -979,6 +1110,64 @@ async function loadExampleSource(key) {
     editor.setValue(source);
 }
 
+async function selectExample(key, options = {}) {
+    if (!EXAMPLE_LIBRARY[key]) {
+        return;
+    }
+
+    await loadExampleSource(key);
+    currentExampleKey = key;
+    updatePresetTrigger();
+    if (options.compileNow) {
+        compile({ reason: 'preset' });
+    }
+    if (options.focusEditor !== false) {
+        editor.focus();
+    }
+    closePresetPicker();
+}
+
+function updatePresetTrigger() {
+    const example = EXAMPLE_LIBRARY[currentExampleKey] || EXAMPLE_LIBRARY[DEFAULT_EXAMPLE_KEY];
+    document.getElementById('preset-title').textContent = example.label;
+    document.getElementById('preset-meta').textContent = example.path
+        ? 'Live shader preset'
+        : 'Compiler sample';
+
+    document.querySelectorAll('.preset-card').forEach((card) => {
+        card.classList.toggle('active', card.dataset.exampleKey === currentExampleKey);
+    });
+}
+
+function openPresetPicker() {
+    const sheet = document.getElementById('preset-sheet');
+    const trigger = document.getElementById('preset-trigger');
+    sheet.hidden = false;
+    requestAnimationFrame(() => sheet.classList.add('open'));
+    trigger.setAttribute('aria-expanded', 'true');
+}
+
+function closePresetPicker() {
+    const sheet = document.getElementById('preset-sheet');
+    const trigger = document.getElementById('preset-trigger');
+    sheet.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+    window.setTimeout(() => {
+        if (!sheet.classList.contains('open')) {
+            sheet.hidden = true;
+        }
+    }, 160);
+}
+
+function togglePresetPicker() {
+    const sheet = document.getElementById('preset-sheet');
+    if (sheet.hidden) {
+        openPresetPicker();
+    } else {
+        closePresetPicker();
+    }
+}
+
 async function initMonaco() {
     return new Promise((resolve) => {
         require.config({
@@ -1002,10 +1191,21 @@ async function initMonaco() {
             });
             registerEditorProviders(monaco);
 
+            const sourceModel = monaco.editor.createModel(
+                EXAMPLE_LIBRARY[DEFAULT_EXAMPLE_KEY].source || EXAMPLES.hello,
+                'fwgsl',
+                monaco.Uri.parse(PLAYGROUND_URI),
+            );
+
+            const wgslModel = monaco.editor.createModel(
+                '-- Compile to see WGSL output',
+                'wgsl',
+                monaco.Uri.parse(WGSL_OUTPUT_URI),
+            );
+
             // Create main editor
             editor = monaco.editor.create(document.getElementById('editor-container'), {
-                value: EXAMPLES.hello,
-                language: 'fwgsl',
+                model: sourceModel,
                 theme: 'fwgsl-dark',
                 fontFamily: "'JetBrains Mono', 'Cascadia Code', monospace",
                 fontSize: 13,
@@ -1047,8 +1247,7 @@ async function initMonaco() {
 
             // Create WGSL output editor (read-only)
             wgslEditor = monaco.editor.create(document.getElementById('wgsl-output'), {
-                value: '-- Compile to see WGSL output',
-                language: 'wgsl',
+                model: wgslModel,
                 theme: 'fwgsl-dark',
                 fontFamily: "'JetBrains Mono', 'Cascadia Code', monospace",
                 fontSize: 12,
@@ -2173,6 +2372,9 @@ function setupEventListeners() {
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closePresetPicker();
+        }
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
             e.preventDefault();
             compile();
@@ -2183,21 +2385,30 @@ function setupEventListeners() {
         }
     });
 
-    // Example selector
-    document.getElementById('select-example').addEventListener('change', async (e) => {
-        const key = e.target.value;
-        if (!key) {
+    document.getElementById('preset-trigger').addEventListener('click', () => {
+        togglePresetPicker();
+    });
+
+    document.getElementById('preset-close').addEventListener('click', () => {
+        closePresetPicker();
+    });
+
+    document.getElementById('preset-backdrop').addEventListener('click', () => {
+        closePresetPicker();
+    });
+
+    document.getElementById('preset-groups').addEventListener('click', async (event) => {
+        const card = event.target.closest('[data-example-key]');
+        if (!card) {
             return;
         }
 
         try {
-            await loadExampleSource(key);
+            await selectExample(card.dataset.exampleKey, { focusEditor: true });
         } catch (error) {
             console.error('Failed to load example:', error);
-            document.getElementById('editor-status').textContent = 'example load failed';
-            showPreviewMessage(`Example load failed: ${error.message}`);
-        } finally {
-            e.target.value = '';
+            document.getElementById('editor-status').textContent = 'preset load failed';
+            showPreviewMessage(`Preset load failed: ${error.message}`);
         }
     });
 

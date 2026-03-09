@@ -13,6 +13,10 @@ use catalog::{
     CompletionContext,
 };
 use dashmap::DashMap;
+use fwgsl_ide::{
+    build_completions as ide_build_completions, build_goto_definition as ide_build_goto_definition,
+    build_hover as ide_build_hover, build_references as ide_build_references,
+};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -148,6 +152,7 @@ impl LanguageServer for FwgslBackend {
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -215,7 +220,7 @@ impl LanguageServer for FwgslBackend {
             None => return Ok(None),
         };
 
-        let items = build_completions(&text, pos);
+        let items = ide_build_completions(&text, pos);
         Ok(Some(CompletionResponse::Array(items)))
     }
 
@@ -230,7 +235,7 @@ impl LanguageServer for FwgslBackend {
             None => return Ok(None),
         };
 
-        Ok(build_hover(&text, pos))
+        Ok(ide_build_hover(&text, pos))
     }
 
     // -- Go to definition ---------------------------------------------------
@@ -247,7 +252,24 @@ impl LanguageServer for FwgslBackend {
             None => return Ok(None),
         };
 
-        Ok(build_goto_definition(uri, &text, pos))
+        Ok(ide_build_goto_definition(uri, &text, pos))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+
+        let text = match self.documents.get(uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+
+        Ok(ide_build_references(
+            uri,
+            &text,
+            pos,
+            params.context.include_declaration,
+        ))
     }
 
     // -- Semantic tokens (full) ---------------------------------------------
