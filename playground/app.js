@@ -528,6 +528,8 @@ const SHADORIAL_EXAMPLES = [
     ['shadorial-19', 'Shadorial 19 · Surface Shader', '../examples/shadorial/19-three-interactive.fwgsl'],
 ].map(([key, label, path]) => ({ key, label, path }));
 
+const EMBEDDED_EXAMPLES = window.FWGSL_EMBEDDED_EXAMPLES || {};
+
 const EXAMPLE_LIBRARY = {
     hello: { label: 'Hello World', source: EXAMPLES.hello },
     adt: { label: 'ADT + Pattern Match', source: EXAMPLES.adt },
@@ -537,7 +539,10 @@ const EXAMPLE_LIBRARY = {
 };
 
 for (const example of SHADORIAL_EXAMPLES) {
-    EXAMPLE_LIBRARY[example.key] = example;
+    EXAMPLE_LIBRARY[example.key] = {
+        ...example,
+        source: EMBEDDED_EXAMPLES[example.key] || example.source,
+    };
 }
 
 // ============================================================
@@ -960,9 +965,13 @@ async function loadExampleSource(key) {
         return;
     }
 
+    if (!example.path) {
+        throw new Error(`No bundled source for ${key}`);
+    }
+
     const response = await fetch(example.path);
     if (!response.ok) {
-        throw new Error(`Failed to load ${example.path}`);
+        throw new Error(`Failed to load ${example.path} (${response.status})`);
     }
 
     const source = await response.text();
@@ -2186,6 +2195,7 @@ function setupEventListeners() {
         } catch (error) {
             console.error('Failed to load example:', error);
             document.getElementById('editor-status').textContent = 'example load failed';
+            showPreviewMessage(`Example load failed: ${error.message}`);
         } finally {
             e.target.value = '';
         }
