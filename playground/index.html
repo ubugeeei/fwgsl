@@ -30,11 +30,21 @@
             </button>
             <div class="separator"></div>
             <div class="preset-shell">
-                <button id="preset-trigger" class="preset-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">
-                    <span class="preset-kicker">Preset Library</span>
-                    <span class="preset-title" id="preset-title">Shadorial 14 · Water</span>
-                    <span class="preset-meta" id="preset-meta">Live shader preset</span>
-                </button>
+                <div class="preset-selector">
+                    <div class="preset-selector-label">Preset</div>
+                    <div id="preset-inline" class="preset-inline"></div>
+                    <button id="preset-trigger" class="preset-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">
+                        <span id="preset-trigger-label" class="preset-trigger-label">All Presets</span>
+                        <span class="preset-trigger-copy">
+                            <span class="preset-kicker">Preset</span>
+                            <span class="preset-title" id="preset-title">Shadorial 14 · Water</span>
+                            <span class="preset-meta" id="preset-meta">Live shader preset</span>
+                        </span>
+                        <span class="preset-trigger-icon" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </span>
+                    </button>
+                </div>
                 <div id="preset-sheet" class="preset-sheet" hidden>
                     <div id="preset-backdrop" class="preset-backdrop"></div>
                     <div class="preset-panel" role="dialog" aria-modal="true" aria-label="Preset library">

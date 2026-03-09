@@ -201,50 +201,157 @@ html, body {
 
 .preset-shell {
     position: relative;
-    min-width: min(360px, 42vw);
+    min-width: min(460px, 50vw);
+}
+
+.preset-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 6px 6px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012)),
+        rgba(9, 12, 21, 0.72);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 12px 28px rgba(4, 8, 18, 0.24);
+}
+
+.preset-selector-label {
+    padding: 0 8px 0 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(141, 211, 255, 0.9);
+}
+
+.preset-inline {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.preset-inline::-webkit-scrollbar {
+    display: none;
+}
+
+.preset-pill {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 11px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.preset-pill:hover,
+.preset-pill.active {
+    color: #f8fbff;
+    border-color: rgba(96, 165, 250, 0.35);
+    background:
+        linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(99, 102, 241, 0.14)),
+        rgba(255, 255, 255, 0.04);
+}
+
+.preset-pill-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
 }
 
 .preset-trigger {
-    width: 100%;
-    display: grid;
-    gap: 3px;
-    padding: 10px 14px;
-    border: 1px solid rgba(99, 102, 241, 0.25);
-    border-radius: 18px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 112px;
+    padding: 8px 10px 8px 12px;
+    border: 1px solid rgba(99, 102, 241, 0.12);
+    border-radius: 999px;
     background:
-        radial-gradient(circle at top right, rgba(96, 165, 250, 0.24), transparent 42%),
-        linear-gradient(135deg, rgba(12, 18, 34, 0.98), rgba(18, 16, 35, 0.98));
+        radial-gradient(circle at top right, rgba(96, 165, 250, 0.14), transparent 52%),
+        linear-gradient(135deg, rgba(15, 23, 42, 0.86), rgba(10, 14, 24, 0.9));
     color: var(--text-primary);
-    text-align: left;
     cursor: pointer;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 28px rgba(6, 10, 24, 0.38);
-    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .preset-trigger:hover {
-    transform: translateY(-1px);
-    border-color: rgba(129, 140, 248, 0.55);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 18px 36px rgba(6, 10, 24, 0.5);
+    border-color: rgba(129, 140, 248, 0.3);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        0 12px 24px rgba(6, 10, 24, 0.2);
+}
+
+.preset-trigger-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(226, 232, 240, 0.9);
+}
+
+.preset-trigger-copy {
+    display: none;
+    gap: 2px;
+    text-align: left;
+}
+
+.preset-trigger.show-current .preset-trigger-label {
+    display: none;
+}
+
+.preset-trigger.show-current .preset-trigger-copy {
+    display: grid;
 }
 
 .preset-kicker {
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
     color: #8dd3ff;
 }
 
 .preset-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
     color: #f8fbff;
+    max-width: 180px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .preset-meta {
+    display: block;
     font-size: 11px;
     color: rgba(226, 226, 232, 0.7);
+}
+
+.preset-trigger-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    color: rgba(226, 226, 232, 0.82);
+    background: rgba(255, 255, 255, 0.06);
 }
 
 .preset-sheet[hidden] {
@@ -888,6 +995,20 @@ html, body {
         min-width: 0;
     }
 
+    .preset-selector {
+        display: block;
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        background: none;
+        box-shadow: none;
+    }
+
+    .preset-selector-label,
+    .preset-inline {
+        display: none;
+    }
+
     .preset-panel {
         top: auto;
         bottom: 0;
@@ -916,6 +1037,33 @@ html, body {
 
     .preset-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .preset-trigger {
+        width: 100%;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-radius: 18px;
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.05),
+            0 12px 28px rgba(6, 10, 24, 0.38);
+    }
+
+    .preset-trigger-label {
+        display: none;
+    }
+
+    .preset-trigger-copy {
+        display: grid;
+    }
+
+    .preset-title {
+        max-width: none;
+        font-size: 13px;
+    }
+
+    .preset-meta {
+        font-size: 11px;
     }
 
     .workspace {

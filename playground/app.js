@@ -71,6 +71,14 @@ const AUTO_COMPILE_DELAY_MS = 250;
 const DEFAULT_EXAMPLE_KEY = 'shadorial-14';
 const PLAYGROUND_URI = 'inmemory://fwgsl/playground.fwgsl';
 const WGSL_OUTPUT_URI = 'inmemory://fwgsl/output.wgsl';
+const FEATURED_PRESETS = [
+    { key: 'shadorial-14', shortLabel: 'Water' },
+    { key: 'shadorial-15', shortLabel: 'Smoke' },
+    { key: 'shadorial-13', shortLabel: 'Particles' },
+    { key: 'graph', shortLabel: 'Graph' },
+    { key: 'compute', shortLabel: 'Compute' },
+];
+const FEATURED_PRESET_KEY_SET = new Set(FEATURED_PRESETS.map((preset) => preset.key));
 const FWGSL_KEYWORD_SET = new Set([
     'module', 'where', 'import', 'data', 'type', 'class', 'instance',
     'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else', 'do',
@@ -1061,7 +1069,22 @@ async function init() {
 }
 
 function populatePresetPicker() {
+    const inline = document.getElementById('preset-inline');
     const groups = document.getElementById('preset-groups');
+    inline.innerHTML = FEATURED_PRESETS.map(({ key, shortLabel }) => {
+        const example = EXAMPLE_LIBRARY[key];
+        return `
+            <button
+                class="preset-pill"
+                data-example-key="${key}"
+                type="button"
+                title="${escapeHtml(example.label)}"
+                aria-label="${escapeHtml(example.label)}"
+            >
+                <span class="preset-pill-title">${escapeHtml(shortLabel)}</span>
+            </button>
+        `;
+    }).join('');
     groups.innerHTML = PRESET_GROUPS.map((group) => `
         <section class="preset-group">
             <div class="preset-group-label">${group.label}</div>
@@ -1129,11 +1152,24 @@ async function selectExample(key, options = {}) {
 
 function updatePresetTrigger() {
     const example = EXAMPLE_LIBRARY[currentExampleKey] || EXAMPLE_LIBRARY[DEFAULT_EXAMPLE_KEY];
+    const trigger = document.getElementById('preset-trigger');
+    const isFeatured = FEATURED_PRESET_KEY_SET.has(currentExampleKey);
+
     document.getElementById('preset-title').textContent = example.label;
     document.getElementById('preset-meta').textContent = example.path
         ? 'Live shader preset'
         : 'Compiler sample';
+    trigger.classList.toggle('show-current', !isFeatured);
+    trigger.setAttribute(
+        'aria-label',
+        !isFeatured
+            ? `Open preset library. Current preset: ${example.label}`
+            : 'Open preset library'
+    );
 
+    document.querySelectorAll('.preset-pill').forEach((pill) => {
+        pill.classList.toggle('active', pill.dataset.exampleKey === currentExampleKey);
+    });
     document.querySelectorAll('.preset-card').forEach((card) => {
         card.classList.toggle('active', card.dataset.exampleKey === currentExampleKey);
     });
@@ -2387,6 +2423,21 @@ function setupEventListeners() {
 
     document.getElementById('preset-trigger').addEventListener('click', () => {
         togglePresetPicker();
+    });
+
+    document.getElementById('preset-inline').addEventListener('click', async (event) => {
+        const pill = event.target.closest('[data-example-key]');
+        if (!pill) {
+            return;
+        }
+
+        try {
+            await selectExample(pill.dataset.exampleKey, { focusEditor: true });
+        } catch (error) {
+            console.error('Failed to load featured preset:', error);
+            document.getElementById('editor-status').textContent = 'preset load failed';
+            showPreviewMessage(`Preset load failed: ${error.message}`);
+        }
     });
 
     document.getElementById('preset-close').addEventListener('click', () => {
