@@ -81,7 +81,7 @@ impl SemanticAnalyzer {
             if let Decl::TypeAlias { name, ty, .. } = decl {
                 let alias_ty = self.convert_syntax_type(ty);
                 // Register the alias name as a type constructor
-                self.env.insert(name.clone(), Scheme::mono(alias_ty));
+                self.env.insert(name.clone(), alias_ty);
             }
         }
 
@@ -89,7 +89,7 @@ impl SemanticAnalyzer {
         for decl in &program.decls {
             if let Decl::TypeSig { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type(ty);
-                self.env.insert(name.clone(), Scheme::mono(inferred_ty));
+                self.env.insert(name.clone(), inferred_ty);
             }
         }
 
@@ -100,10 +100,11 @@ impl SemanticAnalyzer {
                     name,
                     params,
                     body,
+                    where_binds,
                     span,
                     ..
                 } => {
-                    self.check_function(name, params, body, *span);
+                    self.check_function(name, params, body, where_binds, *span);
                 }
                 Decl::EntryPoint {
                     name,
@@ -112,7 +113,7 @@ impl SemanticAnalyzer {
                     span,
                     ..
                 } => {
-                    self.check_function(name, params, body, *span);
+                    self.check_function(name, params, body, &[], *span);
                 }
                 _ => {}
             }
@@ -126,7 +127,9 @@ impl SemanticAnalyzer {
         cons: &[ConDecl],
         _span: Span,
     ) {
-        let result_ty = Ty::Con(name.to_string());
+        let mut type_scope = self.new_type_var_scope(type_params);
+        let scheme_vars = scope_vars(&type_scope);
+        let result_ty = apply_type_params(name, type_params, &type_scope);
         let mut con_names = Vec::new();
 
         for (tag, con) in cons.iter().enumerate() {
@@ -135,7 +138,7 @@ impl SemanticAnalyzer {
                 ConFields::Positional(fields) => {
                     let mut ty = result_ty.clone();
                     for field in fields.iter().rev() {
-                        let field_ty = self.convert_syntax_type(field);
+                        let field_ty = self.convert_syntax_type_with_scope(field, &mut type_scope);
                         ty = Ty::arrow(field_ty, ty);
                     }
                     ty
@@ -144,7 +147,7 @@ impl SemanticAnalyzer {
                     // Record constructor: takes all fields positionally
                     let mut ty = result_ty.clone();
                     for (_, field_ty) in fields.iter().rev() {
-                        let ft = self.convert_syntax_type(field_ty);
+                        let ft = self.convert_syntax_type_with_scope(field_ty, &mut type_scope);
                         ty = Ty::arrow(ft, ty);
                     }
                     ty
@@ -154,12 +157,20 @@ impl SemanticAnalyzer {
             let field_info = match &con.fields {
                 ConFields::Empty => ConstructorFields::Empty,
                 ConFields::Positional(fields) => ConstructorFields::Positional(
-                    fields.iter().map(|f| self.convert_syntax_type(f)).collect(),
+                    fields
+                        .iter()
+                        .map(|f| self.convert_syntax_type_with_scope(f, &mut type_scope))
+                        .collect(),
                 ),
                 ConFields::Record(fields) => ConstructorFields::Record(
                     fields
                         .iter()
-                        .map(|(n, t)| (n.clone(), self.convert_syntax_type(t)))
+                        .map(|(n, t)| {
+                            (
+                                n.clone(),
+                                self.convert_syntax_type_with_scope(t, &mut type_scope),
+                            )
+                        })
                         .collect(),
                 ),
             };
@@ -169,12 +180,14 @@ impl SemanticAnalyzer {
                 ConstructorInfo {
                     type_name: name.to_string(),
                     tag: tag as u32,
+                    scheme_vars: scheme_vars.clone(),
                     fields: field_info,
                     result_ty: result_ty.clone(),
                 },
             );
 
-            self.env.insert(con.name.clone(), Scheme::mono(con_ty));
+            self.env
+                .insert(con.name.clone(), Scheme::poly(scheme_vars.clone(), con_ty));
             con_names.push(con.name.clone());
         }
 
@@ -189,39 +202,64 @@ impl SemanticAnalyzer {
     }
 
     /// Convert syntax-level Type to internal Ty.
-    fn convert_syntax_type(&mut self, ty: &Type) -> Ty {
+    fn convert_syntax_type(&mut self, ty: &Type) -> Scheme {
+        let mut scope = HashMap::new();
+        let ty = self.convert_syntax_type_with_scope(ty, &mut scope);
+        Scheme::poly(scope_vars(&scope), ty)
+    }
+
+    fn convert_syntax_type_with_scope(
+        &mut self,
+        ty: &Type,
+        scope: &mut HashMap<String, TyVarId>,
+    ) -> Ty {
         match ty {
             Type::Con(name, _) => Ty::Con(name.clone()),
-            Type::Var(_, _) => {
-                // For now treat type vars as fresh inference vars.
-                // A proper implementation would track scoped type variables.
-                self.engine.fresh_var()
-            }
+            Type::Var(name, _) => Ty::Var(
+                *scope
+                    .entry(name.clone())
+                    .or_insert_with(|| fresh_var_id(&mut self.engine)),
+            ),
+            Type::Nat(n, _) => Ty::Nat(*n),
             Type::Arrow(a, b, _) => {
-                let a = self.convert_syntax_type(a);
-                let b = self.convert_syntax_type(b);
+                let a = self.convert_syntax_type_with_scope(a, scope);
+                let b = self.convert_syntax_type_with_scope(b, scope);
                 Ty::arrow(a, b)
             }
             Type::App(f, a, _) => {
-                let f = self.convert_syntax_type(f);
-                let a = self.convert_syntax_type(a);
+                let f = self.convert_syntax_type_with_scope(f, scope);
+                let a = self.convert_syntax_type_with_scope(a, scope);
                 Ty::app(f, a)
             }
-            Type::Paren(inner, _) => self.convert_syntax_type(inner),
+            Type::Paren(inner, _) => self.convert_syntax_type_with_scope(inner, scope),
             Type::Tuple(elems, _) => {
                 // Tuples as type application of a tuple constructor
                 if elems.is_empty() {
                     Ty::unit()
                 } else {
                     // Just use first element for now
-                    self.convert_syntax_type(&elems[0])
+                    self.convert_syntax_type_with_scope(&elems[0], scope)
                 }
             }
             Type::Unit(_) => Ty::unit(),
         }
     }
 
-    fn check_function(&mut self, name: &str, params: &[Pat], body: &Expr, span: Span) {
+    fn new_type_var_scope(&mut self, names: &[String]) -> HashMap<String, TyVarId> {
+        names
+            .iter()
+            .map(|name| (name.clone(), fresh_var_id(&mut self.engine)))
+            .collect()
+    }
+
+    fn check_function(
+        &mut self,
+        name: &str,
+        params: &[Pat],
+        body: &Expr,
+        where_binds: &[(String, Expr)],
+        span: Span,
+    ) {
         let mut local_env = self.env.clone();
 
         // Create types for parameters
@@ -232,8 +270,9 @@ impl SemanticAnalyzer {
             param_types.push(ty);
         }
 
-        // Infer body type
-        let body_ty = self.infer_expr(body, &mut local_env);
+        // Infer body type. `where` is desugared to a local `let`.
+        let body = desugar_where(body, where_binds, span);
+        let body_ty = self.infer_expr(&body, &mut local_env);
 
         // Build function type: p1 -> p2 -> ... -> body_ty
         let mut fun_ty = body_ty;
@@ -259,7 +298,12 @@ impl SemanticAnalyzer {
             }
             Pat::Wild(_) => {}
             Pat::Con(name, sub_pats, span) => {
-                if let Some(con_info) = self.constructors.get(name).cloned() {
+                if let Some(con_info) = self
+                    .constructors
+                    .get(name)
+                    .cloned()
+                    .map(|info| info.instantiate(&mut self.engine))
+                {
                     // Unify result type
                     self.engine.unify(ty, &con_info.result_ty, *span);
                     // Bind sub-patterns
@@ -279,7 +323,10 @@ impl SemanticAnalyzer {
                 } else {
                     self.engine.diagnostics.push(
                         Diagnostic::error(format!("Unknown constructor: {}", name))
-                            .with_label(Label::primary(*span, "not found")),
+                            .with_label(Label::primary(*span, "not found"))
+                            .with_help(
+                                "declare it in a data definition before using it in a pattern",
+                            ),
                     );
                 }
             }
@@ -295,7 +342,12 @@ impl SemanticAnalyzer {
                 }
             }
             Pat::Record(con_name, fields, span) => {
-                if let Some(con_info) = self.constructors.get(con_name).cloned() {
+                if let Some(con_info) = self
+                    .constructors
+                    .get(con_name)
+                    .cloned()
+                    .map(|info| info.instantiate(&mut self.engine))
+                {
                     self.engine.unify(ty, &con_info.result_ty, *span);
                     if let ConstructorFields::Record(con_fields) = &con_info.fields {
                         for (field_name, maybe_pat) in fields {
@@ -330,7 +382,10 @@ impl SemanticAnalyzer {
                 } else {
                     self.engine.diagnostics.push(
                         Diagnostic::error(format!("Unbound variable: {}", name))
-                            .with_label(Label::primary(*span, "not in scope")),
+                            .with_label(Label::primary(*span, "not in scope"))
+                            .with_help(
+                                "bind the name in a parameter, let, where, or import declaration",
+                            ),
                     );
                     Ty::Error
                 }
@@ -342,7 +397,10 @@ impl SemanticAnalyzer {
                 } else {
                     self.engine.diagnostics.push(
                         Diagnostic::error(format!("Unknown constructor: {}", name))
-                            .with_label(Label::primary(*span, "not in scope")),
+                            .with_label(Label::primary(*span, "not in scope"))
+                            .with_help(
+                                "declare it in a data definition before constructing it here",
+                            ),
                     );
                     Ty::Error
                 }
@@ -363,7 +421,8 @@ impl SemanticAnalyzer {
                 } else {
                     self.engine.diagnostics.push(
                         Diagnostic::error(format!("Unknown operator: {}", op))
-                            .with_label(Label::primary(*span, "not in scope")),
+                            .with_label(Label::primary(*span, "not in scope"))
+                            .with_help("operators are regular functions; define one or import it into scope"),
                     );
                     return Ty::Error;
                 };
@@ -477,7 +536,10 @@ impl SemanticAnalyzer {
                 if elems.is_empty() {
                     self.engine.diagnostics.push(
                         Diagnostic::error("Empty vec literal")
-                            .with_label(Label::primary(*span, "needs at least 2 elements")),
+                            .with_label(Label::primary(*span, "needs at least 2 elements"))
+                            .with_help(
+                                "add vector elements so the scalar type and arity can be inferred",
+                            ),
                     );
                     return Ty::Error;
                 }
@@ -501,13 +563,14 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                if total_components < 2 || total_components > 4 {
+                if !(2..=4).contains(&total_components) {
                     self.engine.diagnostics.push(
                         Diagnostic::error(format!(
                             "Vec literal has {} components, expected 2, 3, or 4",
                             total_components
                         ))
-                        .with_label(Label::primary(*span, "invalid component count")),
+                        .with_label(Label::primary(*span, "invalid component count"))
+                        .with_help("WGSL vectors must have exactly 2, 3, or 4 scalar components"),
                     );
                     return Ty::Error;
                 }
@@ -524,7 +587,8 @@ impl SemanticAnalyzer {
                 } else {
                     self.engine.diagnostics.push(
                         Diagnostic::error(format!("Unknown operator: {}", op))
-                            .with_label(Label::primary(*span, "not in scope")),
+                            .with_label(Label::primary(*span, "not in scope"))
+                            .with_help("operators are regular functions; define one or import it into scope"),
                     );
                     Ty::Error
                 }
@@ -579,10 +643,44 @@ impl SemanticAnalyzer {
     }
 }
 
+fn desugar_where(body: &Expr, where_binds: &[(String, Expr)], span: Span) -> Expr {
+    if where_binds.is_empty() {
+        body.clone()
+    } else {
+        Expr::Let(where_binds.to_vec(), Box::new(body.clone()), span)
+    }
+}
+
 impl Default for SemanticAnalyzer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn fresh_var_id(engine: &mut InferEngine) -> TyVarId {
+    match engine.fresh_var() {
+        Ty::Var(id) => id,
+        _ => unreachable!(),
+    }
+}
+
+fn scope_vars(scope: &HashMap<String, TyVarId>) -> Vec<TyVarId> {
+    let mut vars: Vec<_> = scope.values().copied().collect();
+    vars.sort_unstable();
+    vars.dedup();
+    vars
+}
+
+fn apply_type_params(name: &str, type_params: &[String], scope: &HashMap<String, TyVarId>) -> Ty {
+    type_params
+        .iter()
+        .fold(Ty::Con(name.to_string()), |ty, param| {
+            let var = scope
+                .get(param)
+                .copied()
+                .expect("type parameter should exist in scope");
+            Ty::app(ty, Ty::Var(var))
+        })
 }
 
 // ── Swizzle / Vec helpers ─────────────────────────────────────────────
@@ -765,6 +863,111 @@ mod tests {
     }
 
     #[test]
+    fn test_generic_type_signature_reuses_type_variable() {
+        let mut sa = SemanticAnalyzer::new();
+        let program = Program {
+            decls: vec![
+                Decl::TypeSig {
+                    name: "id".into(),
+                    ty: Type::Arrow(
+                        Box::new(Type::Var("a".into(), span())),
+                        Box::new(Type::Var("a".into(), span())),
+                        span(),
+                    ),
+                    span: span(),
+                },
+                Decl::FunDecl {
+                    name: "id".into(),
+                    params: vec![Pat::Var("x".into(), span())],
+                    body: Expr::Var("x".into(), span()),
+                    where_binds: vec![],
+                    span: span(),
+                },
+            ],
+        };
+
+        sa.analyze(&program);
+        assert!(!sa.has_errors());
+
+        let scheme = sa.env.lookup("id").expect("id should be in env");
+        assert_eq!(scheme.vars.len(), 1);
+        assert!(matches!(
+            &scheme.ty,
+            Ty::Arrow(from, to) if from.as_ref() == to.as_ref()
+        ));
+    }
+
+    #[test]
+    fn test_generic_constructor_pattern_inference() {
+        let mut sa = SemanticAnalyzer::new();
+        let program = Program {
+            decls: vec![
+                Decl::DataDecl {
+                    name: "Box".into(),
+                    type_params: vec!["a".into()],
+                    constructors: vec![ConDecl {
+                        name: "Box".into(),
+                        fields: ConFields::Positional(vec![Type::Var("a".into(), span())]),
+                        span: span(),
+                    }],
+                    span: span(),
+                },
+                Decl::FunDecl {
+                    name: "unbox".into(),
+                    params: vec![Pat::Con(
+                        "Box".into(),
+                        vec![Pat::Var("x".into(), span())],
+                        span(),
+                    )],
+                    body: Expr::Var("x".into(), span()),
+                    where_binds: vec![],
+                    span: span(),
+                },
+            ],
+        };
+
+        sa.analyze(&program);
+        assert!(!sa.has_errors());
+
+        let constructor = sa
+            .env
+            .lookup("Box")
+            .expect("Box constructor should be in env");
+        assert_eq!(constructor.vars.len(), 1);
+
+        let scheme = sa.env.lookup("unbox").expect("unbox should be in env");
+        assert_eq!(scheme.vars.len(), 1);
+        assert!(format!("{}", scheme.ty).contains("Box"));
+    }
+
+    #[test]
+    fn test_phantom_constructor_is_polymorphic() {
+        let mut sa = SemanticAnalyzer::new();
+        let program = Program {
+            decls: vec![Decl::DataDecl {
+                name: "Phantom".into(),
+                type_params: vec!["a".into()],
+                constructors: vec![ConDecl {
+                    name: "Phantom".into(),
+                    fields: ConFields::Empty,
+                    span: span(),
+                }],
+                span: span(),
+            }],
+        };
+
+        sa.analyze(&program);
+        assert!(!sa.has_errors());
+
+        let scheme = sa
+            .env
+            .lookup("Phantom")
+            .expect("Phantom constructor should be in env");
+        assert_eq!(scheme.vars.len(), 1);
+        assert_eq!(sa.constructors["Phantom"].scheme_vars.len(), 1);
+    }
+
+    #[test]
     fn test_if_expr_type_check() {
         let mut sa = SemanticAnalyzer::new();
         // f x = if x == 0 then 1 else 2
@@ -815,6 +1018,32 @@ mod tests {
         };
         sa.analyze(&program);
         assert!(!sa.has_errors());
+    }
+
+    #[test]
+    fn test_where_clause() {
+        let mut sa = SemanticAnalyzer::new();
+        // f x = y + 1 where y = x
+        let program = Program {
+            decls: vec![Decl::FunDecl {
+                name: "f".into(),
+                params: vec![Pat::Var("x".into(), span())],
+                body: Expr::Infix(
+                    Box::new(Expr::Var("y".into(), span())),
+                    "+".into(),
+                    Box::new(Expr::Lit(Lit::Int(1), span())),
+                    span(),
+                ),
+                where_binds: vec![("y".into(), Expr::Var("x".into(), span()))],
+                span: span(),
+            }],
+        };
+        sa.analyze(&program);
+        assert!(!sa.has_errors());
+
+        let scheme = sa.env.lookup("f").expect("f should be in env");
+        let ty = sa.engine.finalize(&scheme.ty);
+        assert_eq!(format!("{}", ty), "(I32 -> I32)");
     }
 
     #[test]

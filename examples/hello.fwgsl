@@ -1,0 +1,8 @@
+-- Minimal end-to-end example.
+-- Demonstrates arithmetic, function calls, and let-bindings.
+
+double x = x * 2
+
+main x =
+  let y = double x
+  in y + 1

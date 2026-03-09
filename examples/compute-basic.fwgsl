@@ -1,0 +1,4 @@
+-- Minimal compute entry point.
+
+@compute @workgroup_size(64, 1, 1)
+main idx = idx * 2

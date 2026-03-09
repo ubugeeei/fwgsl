@@ -62,6 +62,22 @@ mod parse_single_decl_tests {
     }
 
     #[test]
+    fn parse_dependent_array_type_signature() {
+        let source = "grid : Array 2 (Array 4 F32)";
+        let (program, has_errors) = parse(source);
+        assert!(
+            !has_errors,
+            "dependent array type sig should parse without errors"
+        );
+        assert_eq!(program.decls.len(), 1);
+        assert!(
+            matches!(&program.decls[0], Decl::TypeSig { .. }),
+            "expected TypeSig, got {:?}",
+            program.decls[0]
+        );
+    }
+
+    #[test]
     fn parse_single_function() {
         let source = "add x y = x + y";
         let (program, has_errors) = parse(source);
@@ -99,6 +115,31 @@ mod parse_single_decl_tests {
     }
 
     #[test]
+    fn parse_generic_data_type_declaration() {
+        let source = "data Box a = Box a";
+        let (program, has_errors) = parse(source);
+        assert!(
+            !has_errors,
+            "generic data declaration should parse without errors"
+        );
+        assert_eq!(program.decls.len(), 1);
+        if let Decl::DataDecl {
+            name,
+            constructors,
+            type_params,
+            ..
+        } = &program.decls[0]
+        {
+            assert_eq!(name, "Box");
+            assert_eq!(type_params, &vec!["a".to_string()]);
+            assert_eq!(constructors.len(), 1);
+            assert_eq!(constructors[0].name, "Box");
+        } else {
+            panic!("expected DataDecl, got {:?}", program.decls[0]);
+        }
+    }
+
+    #[test]
     fn parse_function_with_inline_let() {
         let source = "f x = let y = x + 1 in y";
         let (program, has_errors) = parse(source);
@@ -109,6 +150,30 @@ mod parse_single_decl_tests {
                 "body should be a let expression with one binding, got {:?}",
                 body
             );
+        } else {
+            panic!("expected FunDecl");
+        }
+    }
+
+    #[test]
+    fn parse_function_with_where_clause() {
+        let source = "f x = y + 1 where y = x";
+        let (program, has_errors) = parse(source);
+        assert!(
+            !has_errors,
+            "function with where should parse without errors"
+        );
+        if let Decl::FunDecl {
+            body, where_binds, ..
+        } = &program.decls[0]
+        {
+            assert!(
+                matches!(body, Expr::Infix(_, op, _, _) if op == "+"),
+                "body should remain the main expression, got {:?}",
+                body
+            );
+            assert_eq!(where_binds.len(), 1, "expected one where binding");
+            assert_eq!(where_binds[0].0, "y");
         } else {
             panic!("expected FunDecl");
         }
@@ -712,6 +777,13 @@ mod semantic_tests {
     }
 
     #[test]
+    fn well_typed_where_expression() {
+        let source = "f x = y * 2 where y = x + 1";
+        let (_, has_errors) = parse_and_analyze(source);
+        assert!(!has_errors, "where clause should type check");
+    }
+
+    #[test]
     fn well_typed_data_type_and_pattern_match() {
         // Multi-line match arms may be affected by the parser cross-line merge.
         // First, verify that the data type declaration and constructors are registered.
@@ -791,6 +863,25 @@ show c = match c
         assert_eq!(dt.name, "Color");
         assert_eq!(dt.constructors.len(), 3);
         assert!(dt.type_params.is_empty());
+    }
+
+    #[test]
+    fn generic_constructor_is_registered_polymorphically() {
+        let source = "data Box a = Box a";
+        let (sa, has_errors) = parse_and_analyze(source);
+        assert!(!has_errors);
+
+        let scheme = sa
+            .env
+            .lookup("Box")
+            .expect("Box constructor should be in env");
+        assert_eq!(scheme.vars.len(), 1);
+
+        let dt = sa
+            .data_types
+            .get("Box")
+            .expect("Box should be in data_types");
+        assert_eq!(dt.type_params, vec!["a"]);
     }
 
     #[test]
@@ -1232,6 +1323,13 @@ mod codegen_tests {
         assert_eq!(
             format!("{}", MirType::Array(Box::new(MirType::F32), 16)),
             "array<f32, 16>"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                MirType::Array(Box::new(MirType::Array(Box::new(MirType::F32), 4)), 2)
+            ),
+            "array<array<f32, 4>, 2>"
         );
     }
 }
@@ -1702,6 +1800,23 @@ mod full_pipeline_tests {
             "WGSL should contain let x, got: {}",
             wgsl
         );
+    }
+
+    #[test]
+    fn test_full_pipeline_where_clause() {
+        let source = "f x = y * 2 where y = x + 1";
+        let wgsl = compile_to_wgsl(source).expect("compilation should succeed");
+        assert!(
+            wgsl.contains("fn f("),
+            "WGSL should contain fn f, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("let y"),
+            "WGSL should contain lowered where binding, got: {}",
+            wgsl
+        );
+        assert!(wgsl.contains("*"), "WGSL should contain *, got: {}", wgsl);
     }
 
     #[test]

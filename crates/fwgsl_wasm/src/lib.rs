@@ -11,6 +11,9 @@ struct CompileResult {
 struct DiagnosticOutput {
     severity: String,
     message: String,
+    code: Option<String>,
+    help: Option<String>,
+    note: Option<String>,
     line: usize,
     col: usize,
     #[serde(rename = "endLine")]
@@ -113,6 +116,9 @@ fn convert_diagnostic(diag: &fwgsl_diagnostics::Diagnostic, source: &str) -> Dia
     DiagnosticOutput {
         severity: severity.to_string(),
         message: diag.message.clone(),
+        code: diag.code.clone(),
+        help: diag.help.clone(),
+        note: diag.labels.first().map(|label| label.message.clone()),
         line,
         col,
         end_line,

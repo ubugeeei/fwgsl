@@ -59,6 +59,331 @@ sign x =
   else 0`,
 };
 
+const AUTO_COMPILE_DELAY_MS = 250;
+const FWGSL_KEYWORD_SET = new Set([
+    'module', 'where', 'import', 'data', 'type', 'class', 'instance',
+    'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else', 'do',
+    'forall', 'infixl', 'infixr', 'infix', 'deriving',
+]);
+
+const STATIC_EDITOR_ITEMS = [
+    {
+        label: 'match',
+        detail: 'Pattern matching expression',
+        documentation: 'Branch on a value with pattern matching.\n\n```fwgsl\nmatch value\n  | Pattern -> result\n```',
+        insertText: 'match ${1:value}\n  | ${2:pattern} -> ${3:result}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value'],
+    },
+    {
+        label: 'let',
+        detail: 'Let binding',
+        documentation: 'Introduce local bindings and evaluate a body expression.\n\n```fwgsl\nlet x = value\nin body\n```',
+        insertText: 'let ${1:name} = ${2:value}\nin ${3:body}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value'],
+    },
+    {
+        label: 'if',
+        detail: 'Conditional expression',
+        documentation: 'Choose between two expressions based on a boolean condition.\n\n```fwgsl\nif condition\n  then when_true\n  else when_false\n```',
+        insertText: 'if ${1:condition}\n  then ${2:when_true}\n  else ${3:when_false}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value'],
+    },
+    {
+        label: 'where',
+        detail: 'Local definitions',
+        documentation: 'Attach helper bindings to a declaration.\n\n```fwgsl\nf x = body\nwhere\n  helper = x + 1\n```',
+        insertText: 'where\n  ${1:name} = ${2:value}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value'],
+    },
+    {
+        label: 'data',
+        detail: 'Algebraic data type declaration',
+        documentation: 'Declare an algebraic data type and its constructors.\n\n```fwgsl\ndata Option a = Some a | None\n```',
+        insertText: 'data ${1:Type} ${2:a} = ${3:Constructor}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'type',
+        detail: 'Type alias declaration',
+        documentation: 'Define a named alias for a type expression.\n\n```fwgsl\ntype Vec4f = Vec 4 F32\n```',
+        insertText: 'type ${1:Alias} = ${2:Type}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'class',
+        detail: 'Type class declaration',
+        documentation: 'Declare a type class interface.',
+        insertText: 'class ${1:Class} ${2:f} where\n  ${3:member} : ${4:Type}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'instance',
+        detail: 'Type class instance',
+        documentation: 'Implement a type class for a concrete type.',
+        insertText: 'instance ${1:Class} ${2:Type} where\n  ${3:member} = ${4:impl}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'module',
+        detail: 'Module declaration',
+        documentation: 'Declare the module name at the top of the file.',
+        insertText: 'module ${1:Main}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'import',
+        detail: 'Import declaration',
+        documentation: 'Bring another module into scope.',
+        insertText: 'import ${1:Module}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'do',
+        detail: 'Do notation block',
+        documentation: 'Sequence monadic statements in a block.',
+        insertText: 'do\n  ${1:statement}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value'],
+    },
+    {
+        label: 'forall',
+        detail: 'Universal quantification',
+        documentation: 'Bind type variables explicitly in a type expression.\n\n```fwgsl\nforall a. a -> a\n```',
+        insertText: 'forall ${1:a}. ${2:type}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'I32',
+        detail: '32-bit signed integer',
+        documentation: 'Signed 32-bit integer type that lowers to `i32` in WGSL.',
+        insertText: 'I32',
+        snippet: false,
+        kind: 'TypeParameter',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'U32',
+        detail: '32-bit unsigned integer',
+        documentation: 'Unsigned 32-bit integer type that lowers to `u32` in WGSL.',
+        insertText: 'U32',
+        snippet: false,
+        kind: 'TypeParameter',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'F32',
+        detail: '32-bit floating point',
+        documentation: '32-bit floating point scalar that lowers to `f32` in WGSL.',
+        insertText: 'F32',
+        snippet: false,
+        kind: 'TypeParameter',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'Bool',
+        detail: 'Boolean type',
+        documentation: 'Boolean scalar type that lowers to `bool` in WGSL.',
+        insertText: 'Bool',
+        snippet: false,
+        kind: 'TypeParameter',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'Vec',
+        detail: 'Vector type',
+        documentation: 'Vector type parameterized by a type-level dimension and scalar.\n\n```fwgsl\nVec 3 F32\n```',
+        insertText: 'Vec ${1:3} ${2:F32}',
+        snippet: true,
+        kind: 'TypeParameter',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'Mat',
+        detail: 'Matrix type',
+        documentation: 'Matrix type parameterized by rows, columns, and scalar.\n\n```fwgsl\nMat 4 4 F32\n```',
+        insertText: 'Mat ${1:4} ${2:4} ${3:F32}',
+        snippet: true,
+        kind: 'TypeParameter',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'Array',
+        detail: 'Fixed-size array type',
+        documentation: 'Array type parameterized by a type-level length and element type.\n\n```fwgsl\nArray 16 F32\n```',
+        insertText: 'Array ${1:16} ${2:F32}',
+        snippet: true,
+        kind: 'TypeParameter',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'map',
+        detail: 'Apply a function to each element',
+        documentation: 'Functor-style mapping across a structure.',
+        insertText: 'map',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'foldl',
+        detail: 'Left fold over a structure',
+        documentation: 'Accumulate a result from left to right.',
+        insertText: 'foldl',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'foldr',
+        detail: 'Right fold over a structure',
+        documentation: 'Accumulate a result from right to left.',
+        insertText: 'foldr',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'id',
+        detail: 'Identity function',
+        documentation: 'Return the argument unchanged.',
+        insertText: 'id',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'compose',
+        detail: 'Function composition',
+        documentation: 'Compose two functions, equivalent to `(.)`.',
+        insertText: 'compose',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'pure',
+        detail: 'Lift a value into an applicative',
+        documentation: 'Inject a pure value into an applicative context.',
+        insertText: 'pure',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'bind',
+        detail: 'Monadic bind',
+        documentation: 'Sequence computations by feeding a result into the next step.',
+        insertText: 'bind',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'fmap',
+        detail: 'Functor map',
+        documentation: 'Map over values inside a functor.',
+        insertText: 'fmap',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'vertex',
+        detail: 'Vertex entry point attribute',
+        documentation: 'Mark a function as a vertex shader entry point.\n\n```fwgsl\n@vertex\nmain = ...\n```',
+        insertText: 'vertex',
+        snippet: false,
+        kind: 'Property',
+        contexts: ['attribute'],
+    },
+    {
+        label: 'fragment',
+        detail: 'Fragment entry point attribute',
+        documentation: 'Mark a function as a fragment shader entry point.',
+        insertText: 'fragment',
+        snippet: false,
+        kind: 'Property',
+        contexts: ['attribute'],
+    },
+    {
+        label: 'compute',
+        detail: 'Compute entry point attribute',
+        documentation: 'Mark a function as a compute shader entry point.',
+        insertText: 'compute',
+        snippet: false,
+        kind: 'Property',
+        contexts: ['attribute'],
+    },
+    {
+        label: 'workgroup_size',
+        detail: 'Workgroup size attribute',
+        documentation: 'Set compute workgroup dimensions.\n\n```fwgsl\n@workgroup_size(64, 1, 1)\n```',
+        insertText: 'workgroup_size(${1:64}, ${2:1}, ${3:1})',
+        snippet: true,
+        kind: 'Property',
+        contexts: ['attribute'],
+    },
+    {
+        label: 'group',
+        detail: 'Bind group attribute',
+        documentation: 'Specify the resource bind group index.',
+        insertText: 'group(${1:0})',
+        snippet: true,
+        kind: 'Property',
+        contexts: ['attribute'],
+    },
+    {
+        label: 'binding',
+        detail: 'Binding attribute',
+        documentation: 'Specify the binding index within a bind group.',
+        insertText: 'binding(${1:0})',
+        snippet: true,
+        kind: 'Property',
+        contexts: ['attribute'],
+    },
+    {
+        label: 'location',
+        detail: 'Location attribute',
+        documentation: 'Specify an input or output location.',
+        insertText: 'location(${1:0})',
+        snippet: true,
+        kind: 'Property',
+        contexts: ['attribute'],
+    },
+    {
+        label: 'builtin',
+        detail: 'Builtin attribute',
+        documentation: 'Bind a parameter or field to a WGSL builtin.',
+        insertText: 'builtin(${1:global_invocation_id})',
+        snippet: true,
+        kind: 'Property',
+        contexts: ['attribute'],
+    },
+];
+
 // ============================================================
 // fwgsl language definition for Monaco
 // ============================================================
@@ -249,6 +574,277 @@ const WGSL_THEME_RULES = [
     { token: 'string.wgsl', foreground: 'f1fa8c' },
 ];
 
+function registerEditorProviders(monaco) {
+    monaco.languages.registerCompletionItemProvider('fwgsl', {
+        triggerCharacters: ['@', '.', ':', ' '],
+        provideCompletionItems(model, position) {
+            return {
+                suggestions: buildEditorSuggestions(monaco, model, position),
+            };
+        },
+    });
+
+    monaco.languages.registerHoverProvider('fwgsl', {
+        provideHover(model, position) {
+            const word = model.getWordAtPosition(position);
+            if (!word) {
+                return null;
+            }
+
+            const isAttribute = isAttributeContext(model, position, word.word);
+            const staticItem = lookupStaticEditorItem(word.word, isAttribute);
+            const range = new monaco.Range(
+                position.lineNumber,
+                word.startColumn,
+                position.lineNumber,
+                word.endColumn,
+            );
+
+            if (staticItem) {
+                return {
+                    range,
+                    contents: [
+                        {
+                            value: `**\`${word.word}\`**\n\n${staticItem.documentation}`,
+                        },
+                    ],
+                };
+            }
+
+            const symbols = collectDocumentSymbols(model.getValue());
+            if (symbols.signatures.has(word.word)) {
+                return {
+                    range,
+                    contents: [
+                        {
+                            value: `\`\`\`fwgsl\n${word.word} : ${symbols.signatures.get(word.word)}\n\`\`\`\n\nLocal binding from this document.`,
+                        },
+                    ],
+                };
+            }
+            if (symbols.constructors.has(word.word)) {
+                return {
+                    range,
+                    contents: [
+                        {
+                            value: `**\`${word.word}\`**\n\nConstructor for \`${symbols.constructors.get(word.word)}\`.`,
+                        },
+                    ],
+                };
+            }
+            if (symbols.types.has(word.word)) {
+                return {
+                    range,
+                    contents: [
+                        {
+                            value: `**\`${word.word}\`**\n\nUser-defined data type from this document.`,
+                        },
+                    ],
+                };
+            }
+
+            return null;
+        },
+    });
+}
+
+function buildEditorSuggestions(monaco, model, position) {
+    const word = model.getWordUntilPosition(position);
+    const prefix = word.word || '';
+    const context = getEditorCompletionContext(model, position, prefix);
+    const range = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn,
+    };
+    const seen = new Set();
+    const suggestions = [];
+
+    for (const item of STATIC_EDITOR_ITEMS) {
+        if (!item.contexts.includes(context)) {
+            continue;
+        }
+        if (prefix && !item.label.startsWith(prefix)) {
+            continue;
+        }
+
+        suggestions.push({
+            label: item.label,
+            kind: toMonacoCompletionKind(monaco, item.kind),
+            detail: item.detail,
+            documentation: {
+                value: item.documentation,
+            },
+            insertText: item.insertText,
+            insertTextRules: item.snippet
+                ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+                : undefined,
+            range,
+            sortText: `1-${item.label}`,
+        });
+        seen.add(item.label);
+    }
+
+    if (context === 'attribute') {
+        return suggestions;
+    }
+
+    const symbols = collectDocumentSymbols(model.getValue());
+    for (const identifier of symbols.identifiers) {
+        if (seen.has(identifier)) {
+            continue;
+        }
+        if (prefix && !identifier.startsWith(prefix)) {
+            continue;
+        }
+        if (context === 'type' && !/^[A-Z]/.test(identifier)) {
+            continue;
+        }
+
+        suggestions.push({
+            label: identifier,
+            kind: inferDocumentSymbolKind(monaco, symbols, identifier),
+            detail: inferDocumentSymbolDetail(symbols, identifier),
+            documentation: {
+                value: inferDocumentSymbolDocumentation(symbols, identifier),
+            },
+            insertText: identifier,
+            range,
+            sortText: `0-${identifier}`,
+        });
+        seen.add(identifier);
+    }
+
+    return suggestions.sort((left, right) => {
+        if (left.sortText === right.sortText) {
+            return left.label.localeCompare(right.label);
+        }
+        return left.sortText.localeCompare(right.sortText);
+    });
+}
+
+function toMonacoCompletionKind(monaco, kind) {
+    return monaco.languages.CompletionItemKind[kind]
+        ?? monaco.languages.CompletionItemKind.Text;
+}
+
+function getEditorCompletionContext(model, position, prefix) {
+    if (isAttributeContext(model, position, prefix)) {
+        return 'attribute';
+    }
+    if (/^[A-Z]/.test(prefix)) {
+        return 'type';
+    }
+
+    const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
+    const beforePrefix = linePrefix.slice(0, Math.max(0, linePrefix.length - prefix.length));
+    const lastColon = beforePrefix.lastIndexOf(':');
+    const lastEquals = beforePrefix.lastIndexOf('=');
+
+    if (lastColon !== -1 && lastColon > lastEquals) {
+        return 'type';
+    }
+    if (/^\s*type\b/.test(linePrefix)) {
+        return 'type';
+    }
+
+    return 'value';
+}
+
+function isAttributeContext(model, position, prefix) {
+    const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
+    const beforePrefix = linePrefix.slice(0, Math.max(0, linePrefix.length - prefix.length));
+    return beforePrefix.trimEnd().endsWith('@');
+}
+
+function lookupStaticEditorItem(label, isAttribute = false) {
+    return STATIC_EDITOR_ITEMS.find((item) => {
+        if (item.label !== label) {
+            return false;
+        }
+        if (isAttribute) {
+            return item.contexts.includes('attribute');
+        }
+        return !item.contexts.includes('attribute');
+    }) ?? null;
+}
+
+function collectDocumentSymbols(source) {
+    const signatures = new Map();
+    const constructors = new Map();
+    const types = new Set();
+    const identifiers = new Set();
+
+    for (const line of source.split('\n')) {
+        const signatureMatch = line.match(/^\s*([A-Za-z_][\w']*)\s*:\s*(.+)$/);
+        if (signatureMatch) {
+            signatures.set(signatureMatch[1], signatureMatch[2].trim());
+        }
+
+        const dataMatch = line.match(/^\s*data\s+([A-Z][\w']*)(?:\s+[\w'\s]+)?\s*=\s*(.+)$/);
+        if (dataMatch) {
+            types.add(dataMatch[1]);
+            for (const constructorPart of dataMatch[2].split('|')) {
+                const constructorMatch = constructorPart.trim().match(/^([A-Z][\w']*)/);
+                if (constructorMatch) {
+                    constructors.set(constructorMatch[1], dataMatch[1]);
+                }
+            }
+        }
+    }
+
+    for (const match of source.matchAll(/\b[A-Za-z_][\w']*\b/g)) {
+        const identifier = match[0];
+        if (!FWGSL_KEYWORD_SET.has(identifier)) {
+            identifiers.add(identifier);
+        }
+    }
+
+    return {
+        signatures,
+        constructors,
+        types,
+        identifiers,
+    };
+}
+
+function inferDocumentSymbolKind(monaco, symbols, identifier) {
+    if (symbols.constructors.has(identifier)) {
+        return monaco.languages.CompletionItemKind.Constructor;
+    }
+    if (symbols.types.has(identifier) || /^[A-Z]/.test(identifier)) {
+        return monaco.languages.CompletionItemKind.TypeParameter;
+    }
+    return monaco.languages.CompletionItemKind.Variable;
+}
+
+function inferDocumentSymbolDetail(symbols, identifier) {
+    if (symbols.signatures.has(identifier)) {
+        return `binding : ${symbols.signatures.get(identifier)}`;
+    }
+    if (symbols.constructors.has(identifier)) {
+        return `constructor : ${symbols.constructors.get(identifier)}`;
+    }
+    if (symbols.types.has(identifier)) {
+        return 'data type';
+    }
+    return 'identifier from this document';
+}
+
+function inferDocumentSymbolDocumentation(symbols, identifier) {
+    if (symbols.signatures.has(identifier)) {
+        return `\`\`\`fwgsl\n${identifier} : ${symbols.signatures.get(identifier)}\n\`\`\`\n\nLocal binding from this document.`;
+    }
+    if (symbols.constructors.has(identifier)) {
+        return `**\`${identifier}\`**\n\nConstructor for \`${symbols.constructors.get(identifier)}\`.`;
+    }
+    if (symbols.types.has(identifier)) {
+        return `**\`${identifier}\`**\n\nUser-defined data type from this document.`;
+    }
+    return '**Local identifier**';
+}
+
 // ============================================================
 // App state
 // ============================================================
@@ -256,6 +852,8 @@ let editor = null;
 let wgslEditor = null;
 let wasmModule = null;
 let gpuDevice = null;
+let pendingCompileHandle = null;
+let diagnosticDecorationIds = [];
 
 // ============================================================
 // Initialize
@@ -266,6 +864,7 @@ async function init() {
     await initWebGPU();
     setupEventListeners();
     setupResizeHandlers();
+    compile({ reason: 'initial' });
 }
 
 async function initMonaco() {
@@ -274,6 +873,8 @@ async function initMonaco() {
             paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs' }
         });
         require(['vs/editor/editor.main'], function (monaco) {
+            window.monaco = monaco;
+
             // Register fwgsl language
             monaco.languages.register({ id: 'fwgsl' });
             monaco.languages.setMonarchTokensProvider('fwgsl', FWGSL_LANGUAGE);
@@ -287,6 +888,7 @@ async function initMonaco() {
                 ...FWGSL_THEME,
                 rules: [...FWGSL_THEME.rules, ...WGSL_THEME_RULES],
             });
+            registerEditorProviders(monaco);
 
             // Create main editor
             editor = monaco.editor.create(document.getElementById('editor-container'), {
@@ -311,6 +913,18 @@ async function initMonaco() {
                 renderWhitespace: 'selection',
                 tabSize: 2,
                 automaticLayout: true,
+                quickSuggestions: {
+                    other: true,
+                    comments: false,
+                    strings: false,
+                },
+                suggestOnTriggerCharacters: true,
+                glyphMargin: true,
+                hover: {
+                    enabled: true,
+                    delay: 150,
+                    sticky: true,
+                },
                 overviewRulerBorder: false,
                 hideCursorInOverviewRuler: true,
                 scrollbar: {
@@ -346,6 +960,10 @@ async function initMonaco() {
                 const pos = e.position;
                 document.getElementById('status-line').textContent =
                     `Ln ${pos.lineNumber}, Col ${pos.column}`;
+            });
+
+            editor.onDidChangeModelContent(() => {
+                scheduleCompile('typing');
             });
 
             resolve();
@@ -633,7 +1251,24 @@ function showPreviewMessage(msg) {
 // ============================================================
 // Compile
 // ============================================================
-function compile() {
+function scheduleCompile(reason = 'typing') {
+    if (!editor) {
+        return;
+    }
+
+    document.getElementById('editor-status').textContent = 'dirty';
+    window.clearTimeout(pendingCompileHandle);
+    pendingCompileHandle = window.setTimeout(() => {
+        compile({ reason });
+    }, AUTO_COMPILE_DELAY_MS);
+}
+
+function compile(options = {}) {
+    if (!wasmModule) {
+        return;
+    }
+
+    window.clearTimeout(pendingCompileHandle);
     const source = editor.getValue();
     document.body.classList.add('compiling');
     document.getElementById('editor-status').textContent = 'compiling...';
@@ -652,9 +1287,19 @@ function compile() {
         updateDiagnostics(result.diagnostics || []);
 
         // Update status
-        document.getElementById('editor-status').textContent = 'compiled';
+        const issueCount = (result.diagnostics || []).length;
+        const hasErrors = (result.diagnostics || []).some((diag) => diag.severity === 'error');
+        document.getElementById('editor-status').textContent = options.reason === 'typing'
+            ? hasErrors
+                ? `live errors (${issueCount})`
+                : 'live'
+            : hasErrors
+                ? `errors (${issueCount})`
+                : 'compiled';
         document.getElementById('status-compile-time').textContent = `${elapsed}ms`;
-        document.getElementById('output-status').textContent = `${elapsed}ms`;
+        document.getElementById('output-status').textContent = issueCount > 0
+            ? `${elapsed}ms · ${issueCount} issue${issueCount === 1 ? '' : 's'}`
+            : `${elapsed}ms`;
 
         // Run WebGPU preview for compute shaders
         if (result.wgsl && !result.wgsl.startsWith('//')) {
@@ -694,17 +1339,22 @@ function formatSource() {
 function updateDiagnostics(diagnostics) {
     const list = document.getElementById('diagnostics-list');
     const badge = document.getElementById('diag-count');
+    const summary = document.getElementById('diag-summary');
 
     if (!diagnostics || diagnostics.length === 0) {
         list.innerHTML = '<div class="diagnostics-empty"><span>No diagnostics</span></div>';
         badge.textContent = '0';
         badge.className = 'badge';
+        summary.textContent = 'No issues';
+        applyDiagnosticDecorations([]);
         return;
     }
 
+    const counts = summarizeDiagnostics(diagnostics);
     badge.textContent = diagnostics.length;
-    const hasErrors = diagnostics.some(d => d.severity === 'error');
+    const hasErrors = counts.errors > 0;
     badge.className = `badge ${hasErrors ? 'has-errors' : 'has-warnings'}`;
+    summary.textContent = formatDiagnosticSummary(counts);
 
     list.innerHTML = diagnostics.map(d => {
         const severity = d.severity || 'info';
@@ -717,7 +1367,10 @@ function updateDiagnostics(diagnostics) {
         return `
             <div class="diagnostic-item ${severity}" data-line="${d.line || 1}" data-col="${d.col || 1}">
                 ${icon}
-                <span class="diagnostic-message">${escapeHtml(d.message)}</span>
+                <div class="diagnostic-body">
+                    <span class="diagnostic-message">${escapeHtml(d.message)}</span>
+                    ${renderDiagnosticMeta(d)}
+                </div>
                 <span class="diagnostic-location">${d.line || 1}:${d.col || 1}</span>
             </div>
         `;
@@ -740,15 +1393,116 @@ function updateDiagnostics(diagnostics) {
         const markers = diagnostics.map(d => ({
             severity: d.severity === 'error' ? monaco.MarkerSeverity.Error
                     : d.severity === 'warning' ? monaco.MarkerSeverity.Warning
+                    : d.severity === 'hint' ? monaco.MarkerSeverity.Hint
                     : monaco.MarkerSeverity.Info,
             startLineNumber: d.line || 1,
             startColumn: d.col || 1,
             endLineNumber: d.endLine || d.line || 1,
             endColumn: d.endCol || (d.col || 1) + 1,
-            message: d.message,
+            message: formatDiagnosticMessage(d),
+            source: 'fwgsl',
+            code: d.code,
         }));
         monaco.editor.setModelMarkers(model, 'fwgsl', markers);
     }
+
+    applyDiagnosticDecorations(diagnostics);
+}
+
+function summarizeDiagnostics(diagnostics) {
+    return diagnostics.reduce((counts, diagnostic) => {
+        const severity = diagnostic.severity || 'info';
+        if (severity === 'error') {
+            counts.errors += 1;
+        } else if (severity === 'warning') {
+            counts.warnings += 1;
+        } else {
+            counts.info += 1;
+        }
+        return counts;
+    }, { errors: 0, warnings: 0, info: 0 });
+}
+
+function formatDiagnosticSummary(counts) {
+    const parts = [];
+    if (counts.errors > 0) {
+        parts.push(`${counts.errors} error${counts.errors === 1 ? '' : 's'}`);
+    }
+    if (counts.warnings > 0) {
+        parts.push(`${counts.warnings} warning${counts.warnings === 1 ? '' : 's'}`);
+    }
+    if (counts.info > 0) {
+        parts.push(`${counts.info} info`);
+    }
+    return parts.join(' · ');
+}
+
+function renderDiagnosticMeta(diagnostic) {
+    const meta = [];
+    if (diagnostic.code) {
+        meta.push(`<span class="diagnostic-code">${escapeHtml(diagnostic.code)}</span>`);
+    }
+    if (diagnostic.note) {
+        meta.push(`<span class="diagnostic-note">note: ${escapeHtml(diagnostic.note)}</span>`);
+    }
+    if (diagnostic.help) {
+        meta.push(`<span class="diagnostic-help">help: ${escapeHtml(diagnostic.help)}</span>`);
+    }
+
+    if (meta.length === 0) {
+        return '';
+    }
+
+    return `<div class="diagnostic-meta">${meta.join('')}</div>`;
+}
+
+function formatDiagnosticMessage(diagnostic) {
+    const parts = [diagnostic.message];
+    if (diagnostic.note) {
+        parts.push(`note: ${diagnostic.note}`);
+    }
+    if (diagnostic.help) {
+        parts.push(`help: ${diagnostic.help}`);
+    }
+    return parts.join('\n\n');
+}
+
+function applyDiagnosticDecorations(diagnostics) {
+    if (!editor || !window.monaco) {
+        return;
+    }
+
+    const decorationSpecs = diagnostics.map((diagnostic) => ({
+        range: new monaco.Range(
+            diagnostic.line || 1,
+            1,
+            diagnostic.line || 1,
+            1,
+        ),
+        options: {
+            isWholeLine: true,
+            className: diagnostic.severity === 'error'
+                ? 'diagnostic-line-error'
+                : diagnostic.severity === 'warning'
+                    ? 'diagnostic-line-warning'
+                    : diagnostic.severity === 'hint'
+                        ? 'diagnostic-line-hint'
+                        : 'diagnostic-line-info',
+            overviewRuler: {
+                color: diagnostic.severity === 'error'
+                    ? 'rgba(255, 107, 107, 0.9)'
+                    : diagnostic.severity === 'warning'
+                        ? 'rgba(255, 209, 102, 0.9)'
+                        : 'rgba(90, 200, 250, 0.9)',
+                position: monaco.editor.OverviewRulerLane.Right,
+            },
+        },
+    }));
+
+    diagnosticDecorationIds = editor.deltaDecorations(
+        diagnosticDecorationIds,
+        decorationSpecs,
+    );
 }
 
 // ============================================================

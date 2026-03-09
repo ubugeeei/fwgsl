@@ -97,6 +97,12 @@ pub fn ty_to_mir_type(ty: &Ty) -> Result<MirType, String> {
                     let scalar = ty_to_mir_type(arg)?;
                     Ok(MirType::Vec(*n as u8, Box::new(scalar)))
                 }
+                (Ty::Con(name), Ty::Nat(n)) if name == "Array" => {
+                    let elem = ty_to_mir_type(arg)?;
+                    let len = u32::try_from(*n)
+                        .map_err(|_| format!("Array length out of range for MIR: {}", n))?;
+                    Ok(MirType::Array(Box::new(elem), len))
+                }
                 _ => Err(format!("Cannot convert to MIR type: {}", ty)),
             },
             _ => Err(format!("Cannot convert to MIR type: {}", ty)),
@@ -610,6 +616,30 @@ mod tests {
         assert_eq!(ty_to_mir_type(&Ty::u32()), Ok(MirType::U32));
         assert_eq!(ty_to_mir_type(&Ty::bool()), Ok(MirType::Bool));
         assert_eq!(ty_to_mir_type(&Ty::unit()), Ok(MirType::Unit));
+    }
+
+    #[test]
+    fn test_ty_to_mir_type_array() {
+        let ty = Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(4)), Ty::f32());
+        assert_eq!(
+            ty_to_mir_type(&ty),
+            Ok(MirType::Array(Box::new(MirType::F32), 4))
+        );
+    }
+
+    #[test]
+    fn test_ty_to_mir_type_nested_array() {
+        let ty = Ty::app(
+            Ty::app(Ty::Con("Array".into()), Ty::Nat(2)),
+            Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(4)), Ty::f32()),
+        );
+        assert_eq!(
+            ty_to_mir_type(&ty),
+            Ok(MirType::Array(
+                Box::new(MirType::Array(Box::new(MirType::F32), 4)),
+                2,
+            ))
+        );
     }
 
     #[test]

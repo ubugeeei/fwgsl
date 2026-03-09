@@ -257,7 +257,8 @@ impl InferEngine {
                 if ty.contains_var(*v) {
                     self.diagnostics.push(
                         Diagnostic::error(format!("Infinite type: t{} ~ {}", v, ty))
-                            .with_label(Label::primary(span, "occurs here")),
+                            .with_label(Label::primary(span, "occurs here"))
+                            .with_help("introduce a concrete argument or result type to break the self-reference"),
                     );
                 } else {
                     self.subst.insert(*v, ty.clone());
@@ -276,7 +277,8 @@ impl InferEngine {
             _ => {
                 self.diagnostics.push(
                     Diagnostic::error(format!("Type mismatch: {} vs {}", a, b))
-                        .with_label(Label::primary(span, "type mismatch")),
+                        .with_label(Label::primary(span, "type mismatch"))
+                        .with_help("add a type annotation or convert one side so both types agree"),
                 );
             }
         }
@@ -314,8 +316,26 @@ impl InferEngine {
 pub struct ConstructorInfo {
     pub type_name: String,
     pub tag: u32,
+    pub scheme_vars: Vec<TyVarId>,
     pub fields: ConstructorFields,
     pub result_ty: Ty,
+}
+
+impl ConstructorInfo {
+    pub fn instantiate(&self, engine: &mut InferEngine) -> Self {
+        let mut subst = Substitution::new();
+        for &var in &self.scheme_vars {
+            subst.insert(var, engine.fresh_var());
+        }
+
+        Self {
+            type_name: self.type_name.clone(),
+            tag: self.tag,
+            scheme_vars: vec![],
+            fields: self.fields.apply_subst(&subst),
+            result_ty: self.result_ty.apply_subst(&subst),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -323,6 +343,23 @@ pub enum ConstructorFields {
     Positional(Vec<Ty>),
     Record(Vec<(String, Ty)>),
     Empty,
+}
+
+impl ConstructorFields {
+    pub fn apply_subst(&self, subst: &Substitution) -> Self {
+        match self {
+            ConstructorFields::Positional(fields) => ConstructorFields::Positional(
+                fields.iter().map(|ty| ty.apply_subst(subst)).collect(),
+            ),
+            ConstructorFields::Record(fields) => ConstructorFields::Record(
+                fields
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), ty.apply_subst(subst)))
+                    .collect(),
+            ),
+            ConstructorFields::Empty => ConstructorFields::Empty,
+        }
+    }
 }
 
 /// WGSL-compatible types (used in MIR and codegen).
@@ -371,7 +408,7 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
             other => Ok(WgslType::Struct(other.to_string())),
         },
         Ty::App(f, arg) => {
-            // Handle Vec N Scalar and Mat N M Scalar
+            // Handle Vec N Scalar, Mat N M Scalar, and Array N Elem
             match f.as_ref() {
                 Ty::App(ff, n) => match (ff.as_ref(), n.as_ref()) {
                     // Mat N M Scalar
@@ -389,8 +426,19 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
                         let scalar = ty_to_wgsl(arg)?;
                         Ok(WgslType::Vec(*n as u8, Box::new(scalar)))
                     }
+                    // Array N Elem
+                    (Ty::Con(name), Ty::Nat(n)) if name == "Array" => {
+                        let elem = ty_to_wgsl(arg)?;
+                        let len = u32::try_from(*n)
+                            .map_err(|_| format!("Array length out of range for WGSL: {}", n))?;
+                        Ok(WgslType::Array(Box::new(elem), Some(len)))
+                    }
                     _ => Err(format!("Cannot convert to WGSL: {}", ty)),
                 },
+                Ty::Con(name) if name == "Array" => {
+                    let elem = ty_to_wgsl(arg)?;
+                    Ok(WgslType::Array(Box::new(elem), None))
+                }
                 Ty::Con(name) if name == "Vec" => {
                     // Vec applied to one arg (the dim), need another arg
                     Err(format!("Partially applied Vec: {}", ty))
@@ -596,6 +644,30 @@ mod tests {
         assert_eq!(
             ty_to_wgsl(&ty),
             Ok(WgslType::Mat(4, 4, Box::new(WgslType::F32)))
+        );
+    }
+
+    #[test]
+    fn test_ty_to_wgsl_array() {
+        let ty = Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(4)), Ty::f32());
+        assert_eq!(
+            ty_to_wgsl(&ty),
+            Ok(WgslType::Array(Box::new(WgslType::F32), Some(4)))
+        );
+    }
+
+    #[test]
+    fn test_ty_to_wgsl_nested_array() {
+        let ty = Ty::app(
+            Ty::app(Ty::Con("Array".into()), Ty::Nat(2)),
+            Ty::app(Ty::app(Ty::Con("Array".into()), Ty::Nat(4)), Ty::f32()),
+        );
+        assert_eq!(
+            ty_to_wgsl(&ty),
+            Ok(WgslType::Array(
+                Box::new(WgslType::Array(Box::new(WgslType::F32), Some(4))),
+                Some(2),
+            ))
         );
     }
 

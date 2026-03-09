@@ -1,0 +1,8 @@
+-- Generic and phantom data declarations.
+-- This is a good `check` example for semantic/type-system work.
+
+data Box a = Box a
+data Phantom a = Phantom
+
+unbox value = match value
+  | Box x -> x

@@ -128,6 +128,7 @@ pub enum Pat {
 pub enum Type {
     Con(String, Span),
     Var(String, Span),
+    Nat(u64, Span),
     App(Box<Type>, Box<Type>, Span),
     Arrow(Box<Type>, Box<Type>, Span),
     Paren(Box<Type>, Span),
@@ -168,6 +169,7 @@ impl Type {
         match self {
             Type::Con(_, s)
             | Type::Var(_, s)
+            | Type::Nat(_, s)
             | Type::App(_, _, s)
             | Type::Arrow(_, _, s)
             | Type::Paren(_, s)
@@ -570,7 +572,7 @@ impl Parser {
                     continue;
                 }
             }
-            let else_branch = result.unwrap_or_else(|| {
+            let else_branch = result.unwrap_or({
                 // Fallback: return a zero literal if no otherwise clause
                 Expr::Lit(Lit::Int(0), span)
             });
@@ -875,7 +877,8 @@ impl Parser {
                     let tok = self.current_token().clone();
                     self.diagnostics.push(
                         Diagnostic::error("expected field name after '.'")
-                            .with_label(Label::primary(tok.span, "expected identifier")),
+                            .with_label(Label::primary(tok.span, "expected identifier"))
+                            .with_help("write a field access like `value.field`"),
                     );
                     break;
                 }
@@ -1519,7 +1522,10 @@ impl Parser {
             let next = self.peek_non_trivia();
             if matches!(
                 next,
-                SyntaxKind::UpperIdent | SyntaxKind::Ident | SyntaxKind::LParen
+                SyntaxKind::UpperIdent
+                    | SyntaxKind::Ident
+                    | SyntaxKind::IntLiteral
+                    | SyntaxKind::LParen
             ) {
                 let arg = self.parse_type_atom();
                 let span = ty.span().merge(arg.span());
@@ -1546,6 +1552,11 @@ impl Parser {
                 let tok = self.bump();
                 let name = self.text_of(&tok).to_owned();
                 Type::Var(name, tok.span)
+            }
+            SyntaxKind::IntLiteral => {
+                let tok = self.bump();
+                let value = parse_int_literal(self.text_of(&tok)).max(0) as u64;
+                Type::Nat(value, tok.span)
             }
             SyntaxKind::LParen => {
                 self.bump();
@@ -1582,7 +1593,8 @@ impl Parser {
                 let tok = self.current_token().clone();
                 self.diagnostics.push(
                     Diagnostic::error(format!("unexpected token in type: {}", tok.kind))
-                        .with_label(Label::primary(tok.span, "unexpected")),
+                        .with_label(Label::primary(tok.span, "unexpected"))
+                        .with_help("check the type expression syntax around this token"),
                 );
                 let span = tok.span;
                 self.bump();
@@ -1749,6 +1761,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_dependent_array_type_sig() {
+        let prog = parse("grid : Array 2 (Array 4 F32)");
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::TypeSig { ty, .. } => match ty {
+                Type::App(outer, inner, _) => {
+                    assert!(matches!(outer.as_ref(), Type::App(_, _, _)));
+                    assert!(matches!(inner.as_ref(), Type::Paren(_, _)));
+                }
+                other => panic!("expected applied array type, got {:?}", other),
+            },
+            other => panic!("expected TypeSig, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_fun_decl() {
         let prog = parse("add x y = x + y");
         assert_eq!(prog.decls.len(), 1);
@@ -1807,6 +1835,22 @@ mod tests {
                 }
                 other => panic!("expected Let, got {:?}", other),
             },
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_where_clause() {
+        let source = "f x = y + 1 where y = x";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl {
+                body, where_binds, ..
+            } => {
+                assert!(matches!(body, Expr::Infix(..)));
+                assert_eq!(where_binds.len(), 1);
+                assert_eq!(where_binds[0].0, "y");
+            }
             other => panic!("expected FunDecl, got {:?}", other),
         }
     }

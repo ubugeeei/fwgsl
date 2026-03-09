@@ -4,6 +4,14 @@
 //! go-to-definition) by integrating with the fwgsl compiler pipeline
 //! (`fwgsl_parser`, `fwgsl_semantic`, `fwgsl_typechecker`).
 
+mod catalog;
+
+use std::collections::HashSet;
+
+use catalog::{
+    all_completion_specs, completion_item_from_spec, lookup_completion_spec, spec_matches_context,
+    CompletionContext,
+};
 use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -15,6 +23,7 @@ use fwgsl_parser::{lex, Parser};
 use fwgsl_semantic::SemanticAnalyzer;
 use fwgsl_span::Span;
 use fwgsl_syntax::SyntaxKind;
+use fwgsl_typechecker::{InferEngine, Scheme};
 
 // ============================================================================
 // Semantic token legend
@@ -99,7 +108,7 @@ impl FwgslBackend {
 
         // Collect parser diagnostics
         for diag in parser.diagnostics().iter() {
-            if let Some(lsp_diag) = fwgsl_diag_to_lsp(diag, text) {
+            if let Some(lsp_diag) = fwgsl_diag_to_lsp(diag, text, Some(&uri)) {
                 all_diagnostics.push(lsp_diag);
             }
         }
@@ -109,7 +118,7 @@ impl FwgslBackend {
         analyzer.analyze(&program);
 
         for diag in analyzer.diagnostics().iter() {
-            if let Some(lsp_diag) = fwgsl_diag_to_lsp(diag, text) {
+            if let Some(lsp_diag) = fwgsl_diag_to_lsp(diag, text, Some(&uri)) {
                 all_diagnostics.push(lsp_diag);
             }
         }
@@ -266,171 +275,210 @@ impl LanguageServer for FwgslBackend {
 // Completions
 // ============================================================================
 
-/// Build a list of completion items based on context.
-pub fn build_completions(source: &str, _pos: Position) -> Vec<CompletionItem> {
+/// Build a list of completion items based on cursor context.
+pub fn build_completions(source: &str, pos: Position) -> Vec<CompletionItem> {
+    let prefix = completion_prefix(source, pos);
+    let context = completion_context(source, pos, &prefix);
+    let mut seen = HashSet::new();
     let mut items = Vec::new();
 
-    // Keyword completions
-    let keywords = [
-        ("match", "Pattern matching expression"),
-        ("let", "Let binding"),
-        ("in", "Body of a let expression"),
-        ("if", "Conditional expression"),
-        ("then", "Then branch of if expression"),
-        ("else", "Else branch of if expression"),
-        ("where", "Local definitions"),
-        ("data", "Algebraic data type declaration"),
-        ("type", "Type alias declaration"),
-        ("class", "Type class declaration"),
-        ("instance", "Type class instance"),
-        ("module", "Module declaration"),
-        ("import", "Import declaration"),
-        ("do", "Do notation block"),
-        ("forall", "Universal quantification"),
-        ("case", "Case expression"),
-        ("of", "Case arms"),
-        ("infixl", "Left-associative fixity"),
-        ("infixr", "Right-associative fixity"),
-        ("infix", "Non-associative fixity"),
-        ("deriving", "Automatic instance derivation"),
-    ];
-
-    for (kw, detail) in &keywords {
-        items.push(CompletionItem {
-            label: kw.to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some(detail.to_string()),
-            insert_text: Some(kw.to_string()),
-            ..Default::default()
-        });
-    }
-
-    // Type completions (WGSL-compatible built-in types)
-    let types = [
-        ("I32", "32-bit signed integer"),
-        ("U32", "32-bit unsigned integer"),
-        ("F32", "32-bit floating point"),
-        ("Bool", "Boolean type"),
-        ("Vec", "Vector type (e.g. Vec 3 F32)"),
-        ("Mat", "Matrix type (e.g. Mat 4 4 F32)"),
-        ("Array", "Array type"),
-        ("String", "String type"),
-        ("Char", "Character type"),
-    ];
-
-    for (ty, detail) in &types {
-        items.push(CompletionItem {
-            label: ty.to_string(),
-            kind: Some(CompletionItemKind::TYPE_PARAMETER),
-            detail: Some(detail.to_string()),
-            insert_text: Some(ty.to_string()),
-            ..Default::default()
-        });
-    }
-
-    // Built-in function completions (functional)
-    let builtins = [
-        ("map", "Apply a function to each element"),
-        ("filter", "Filter elements by predicate"),
-        ("foldl", "Left fold over a structure"),
-        ("foldr", "Right fold over a structure"),
-        ("id", "Identity function :: a -> a"),
-        ("const", "Constant function :: a -> b -> a"),
-        (
-            "flip",
-            "Flip function arguments :: (a -> b -> c) -> b -> a -> c",
-        ),
-        ("compose", "Function composition (.)"),
-        ("pure", "Lift a value into an applicative"),
-        ("bind", "Monadic bind (>>=)"),
-        ("fmap", "Functor map"),
-    ];
-
-    // WGSL built-in functions ($ prefix)
-    let wgsl_builtins = [
-        ("$vec2", "Construct Vec 2 :: a -> a -> Vec 2 a"),
-        ("$vec3", "Construct Vec 3 :: a -> a -> a -> Vec 3 a"),
-        ("$vec4", "Construct Vec 4 :: a -> a -> a -> a -> Vec 4 a"),
-        ("$sin", "Sine :: F32 -> F32"),
-        ("$cos", "Cosine :: F32 -> F32"),
-        ("$tan", "Tangent :: F32 -> F32"),
-        ("$atan", "Arctangent :: F32 -> F32 -> F32"),
-        ("$abs", "Absolute value :: F32 -> F32"),
-        ("$fract", "Fractional part :: F32 -> F32"),
-        ("$floor", "Floor :: F32 -> F32"),
-        ("$ceil", "Ceiling :: F32 -> F32"),
-        ("$round", "Round :: F32 -> F32"),
-        ("$smoothstep", "Smooth step :: F32 -> F32 -> F32 -> F32"),
-        ("$step", "Step :: F32 -> F32 -> F32"),
-        ("$mix", "Linear interpolation :: a -> a -> F32 -> a"),
-        ("$clamp", "Clamp :: F32 -> F32 -> F32 -> F32"),
-        ("$dot", "Dot product :: Vec n a -> Vec n a -> a"),
-        ("$cross", "Cross product :: Vec 3 a -> Vec 3 a -> Vec 3 a"),
-        ("$length", "Vector length :: Vec n a -> a"),
-        ("$normalize", "Normalize :: Vec n a -> Vec n a"),
-        ("$reflect", "Reflect :: Vec n a -> Vec n a -> Vec n a"),
-        ("$sqrt", "Square root :: F32 -> F32"),
-        ("$pow", "Power :: F32 -> F32 -> F32"),
-        ("$exp", "Exponential :: F32 -> F32"),
-        ("$log", "Natural logarithm :: F32 -> F32"),
-        ("$min", "Minimum :: F32 -> F32 -> F32"),
-        ("$max", "Maximum :: F32 -> F32 -> F32"),
-        ("$sign", "Sign :: F32 -> F32"),
-        ("$mod", "Modulo :: F32 -> F32 -> F32"),
-    ];
-
-    for (name, detail) in &builtins {
-        items.push(CompletionItem {
-            label: name.to_string(),
-            kind: Some(CompletionItemKind::FUNCTION),
-            detail: Some(detail.to_string()),
-            insert_text: Some(name.to_string()),
-            ..Default::default()
-        });
-    }
-
-    for (name, detail) in &wgsl_builtins {
-        items.push(CompletionItem {
-            label: name.to_string(),
-            kind: Some(CompletionItemKind::FUNCTION),
-            detail: Some(detail.to_string()),
-            insert_text: Some(name.to_string()),
-            ..Default::default()
-        });
-    }
-
-    // Add identifiers from the current document as variable completions.
-    let tokens = lex(source);
-    let mut seen = std::collections::HashSet::new();
-    for tok in &tokens {
-        match tok.kind {
-            SyntaxKind::Ident => {
-                let text = tok.text(source);
-                if seen.insert(text.to_string()) {
-                    items.push(CompletionItem {
-                        label: text.to_string(),
-                        kind: Some(CompletionItemKind::VARIABLE),
-                        detail: Some("local identifier".to_string()),
-                        ..Default::default()
-                    });
-                }
-            }
-            SyntaxKind::UpperIdent => {
-                let text = tok.text(source);
-                if seen.insert(text.to_string()) {
-                    items.push(CompletionItem {
-                        label: text.to_string(),
-                        kind: Some(CompletionItemKind::CONSTRUCTOR),
-                        detail: Some("type/constructor".to_string()),
-                        ..Default::default()
-                    });
-                }
-            }
-            _ => {}
+    for spec in all_completion_specs() {
+        if !spec_matches_context(spec, context) {
+            continue;
         }
+        if !matches_prefix(spec.label, &prefix) {
+            continue;
+        }
+
+        seen.insert(spec.label.to_owned());
+        items.push(completion_item_from_spec(spec));
     }
 
+    let mut parser = Parser::new(source);
+    let program = parser.parse_program();
+    let mut analyzer = SemanticAnalyzer::new();
+    analyzer.analyze(&program);
+    let mut document_seen = HashSet::new();
+
+    for tok in lex(source) {
+        let label = tok.text(source);
+        if !matches!(tok.kind, SyntaxKind::Ident | SyntaxKind::UpperIdent) {
+            continue;
+        }
+        if !matches_prefix(label, &prefix) {
+            continue;
+        }
+        if context == CompletionContext::Attribute {
+            continue;
+        }
+        if context == CompletionContext::Type && tok.kind == SyntaxKind::Ident {
+            continue;
+        }
+        if !document_seen.insert(label.to_owned()) {
+            continue;
+        }
+
+        let kind = if analyzer.constructors.contains_key(label) {
+            CompletionItemKind::CONSTRUCTOR
+        } else if analyzer.data_types.contains_key(label) || tok.kind == SyntaxKind::UpperIdent {
+            CompletionItemKind::TYPE_PARAMETER
+        } else {
+            CompletionItemKind::VARIABLE
+        };
+        let detail = document_symbol_detail(&analyzer, label, tok.kind);
+        let documentation = document_symbol_documentation(&analyzer, label, tok.kind);
+
+        items.retain(|item| item.label != label);
+        items.push(CompletionItem {
+            label: label.to_owned(),
+            kind: Some(kind),
+            detail: Some(detail),
+            documentation: Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: documentation,
+            })),
+            sort_text: Some(format!("05-{}", label)),
+            filter_text: Some(label.to_owned()),
+            ..Default::default()
+        });
+        seen.insert(label.to_owned());
+    }
+
+    items.sort_by(|left, right| {
+        left.sort_text
+            .as_deref()
+            .cmp(&right.sort_text.as_deref())
+            .then_with(|| left.label.cmp(&right.label))
+    });
     items
+}
+
+fn completion_prefix(source: &str, pos: Position) -> String {
+    let offset = position_to_offset(source, pos).unwrap_or(source.len());
+    let mut start = offset;
+
+    while start > 0 {
+        let Some(ch) = source[..start].chars().next_back() else {
+            break;
+        };
+        if !is_completion_word_char(ch) {
+            break;
+        }
+        start -= ch.len_utf8();
+    }
+
+    source[start..offset].to_owned()
+}
+
+fn completion_context(source: &str, pos: Position, prefix: &str) -> CompletionContext {
+    let offset = position_to_offset(source, pos).unwrap_or(source.len());
+    let before_cursor = &source[..offset];
+    let before_prefix = &before_cursor[..before_cursor.len().saturating_sub(prefix.len())];
+
+    if before_prefix
+        .chars()
+        .rev()
+        .find(|ch| !ch.is_whitespace())
+        .is_some_and(|ch| ch == '@')
+    {
+        return CompletionContext::Attribute;
+    }
+
+    if prefix.chars().next().is_some_and(char::is_uppercase) {
+        return CompletionContext::Type;
+    }
+
+    let line_start = before_cursor.rfind('\n').map_or(0, |index| index + 1);
+    let line = &before_cursor[line_start..];
+    let last_colon = line.rfind(':');
+    let last_equals = line.rfind('=');
+
+    if last_colon.is_some() && last_equals.is_none_or(|equals| last_colon > Some(equals)) {
+        return CompletionContext::Type;
+    }
+
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("type ") {
+        return CompletionContext::Type;
+    }
+
+    CompletionContext::Value
+}
+
+fn is_completion_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '\'' | '$')
+}
+
+fn matches_prefix(candidate: &str, prefix: &str) -> bool {
+    prefix.is_empty() || candidate.starts_with(prefix)
+}
+
+fn document_symbol_detail(analyzer: &SemanticAnalyzer, label: &str, kind: SyntaxKind) -> String {
+    if let Some(scheme) = analyzer.env.lookup(label) {
+        return format!(
+            "{} : {}",
+            symbol_kind_label(analyzer, label, kind),
+            format_scheme(&analyzer.engine, scheme)
+        );
+    }
+
+    if analyzer.data_types.contains_key(label) {
+        return "data type".to_owned();
+    }
+
+    "identifier".to_owned()
+}
+
+fn document_symbol_documentation(
+    analyzer: &SemanticAnalyzer,
+    label: &str,
+    kind: SyntaxKind,
+) -> String {
+    if let Some(scheme) = analyzer.env.lookup(label) {
+        return format!(
+            "```fwgsl\n{} : {}\n```\n\n{}",
+            label,
+            format_scheme(&analyzer.engine, scheme),
+            symbol_description(analyzer, label, kind),
+        );
+    }
+
+    format!("**{}**", symbol_description(analyzer, label, kind))
+}
+
+fn symbol_kind_label(analyzer: &SemanticAnalyzer, label: &str, kind: SyntaxKind) -> &'static str {
+    if analyzer.constructors.contains_key(label) {
+        "constructor"
+    } else if analyzer.data_types.contains_key(label) || kind == SyntaxKind::UpperIdent {
+        "type"
+    } else {
+        "binding"
+    }
+}
+
+fn symbol_description(analyzer: &SemanticAnalyzer, label: &str, kind: SyntaxKind) -> String {
+    if let Some(constructor) = analyzer.constructors.get(label) {
+        return format!("Constructor for `{}`.", constructor.type_name);
+    }
+    if analyzer.data_types.contains_key(label) || kind == SyntaxKind::UpperIdent {
+        return "User-defined type or constructor.".to_owned();
+    }
+    "Identifier from the current document.".to_owned()
+}
+
+fn format_scheme(engine: &InferEngine, scheme: &Scheme) -> String {
+    let ty = engine.finalize(&scheme.ty);
+    if scheme.vars.is_empty() {
+        format!("{}", ty)
+    } else {
+        let vars = scheme
+            .vars
+            .iter()
+            .map(|var| format!("t{}", var))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("forall {}. {}", vars, ty)
+    }
 }
 
 // ============================================================================
@@ -441,103 +489,82 @@ pub fn build_completions(source: &str, _pos: Position) -> Vec<CompletionItem> {
 pub fn build_hover(source: &str, pos: Position) -> Option<Hover> {
     let offset = position_to_offset(source, pos)? as u32;
     let tokens = lex(source);
-
-    // Find the token under the cursor.
-    let tok = tokens
+    let (tok_index, tok) = tokens
         .iter()
-        .find(|t| t.span.start <= offset && offset < t.span.end)?;
+        .enumerate()
+        .find(|(_, token)| token.span.start <= offset && offset < token.span.end)?;
+    let range = span_to_range(source, tok.span);
 
     match tok.kind {
         SyntaxKind::Ident | SyntaxKind::UpperIdent => {
             let name = tok.text(source);
 
-            // Parse and run semantic analysis to get type information.
+            if previous_non_trivia_token(&tokens, tok_index)
+                .is_some_and(|prev| prev.kind == SyntaxKind::At)
+            {
+                if let Some(spec) = lookup_completion_spec(name, CompletionContext::Attribute) {
+                    return Some(spec_hover(spec, range));
+                }
+            }
+
+            if let Some(spec) = lookup_non_attribute_spec(name) {
+                return Some(spec_hover(spec, range));
+            }
+
             let mut parser = Parser::new(source);
             let program = parser.parse_program();
             let mut analyzer = SemanticAnalyzer::new();
             analyzer.analyze(&program);
 
-            let type_info = if let Some(scheme) = analyzer.env.lookup(name) {
-                let ty = analyzer.engine.finalize(&scheme.ty);
-                format!("{}", ty)
-            } else if let Some(con_info) = analyzer.constructors.get(name) {
-                format!("constructor of `{}`", con_info.type_name)
-            } else {
-                return None;
-            };
+            if analyzer.env.lookup(name).is_some() || analyzer.data_types.contains_key(name) {
+                return Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: document_symbol_documentation(&analyzer, name, tok.kind),
+                    }),
+                    range: Some(range),
+                });
+            }
 
-            let hover_text = format!("```fwgsl\n{} :: {}\n```", name, type_info);
-            let range = span_to_range(source, tok.span);
-
-            Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: hover_text,
-                }),
-                range: Some(range),
-            })
+            None
         }
-        SyntaxKind::KwLet
-        | SyntaxKind::KwIn
-        | SyntaxKind::KwMatch
-        | SyntaxKind::KwIf
-        | SyntaxKind::KwThen
-        | SyntaxKind::KwElse
-        | SyntaxKind::KwWhere
-        | SyntaxKind::KwDo
-        | SyntaxKind::KwModule
-        | SyntaxKind::KwImport
-        | SyntaxKind::KwData
-        | SyntaxKind::KwType
-        | SyntaxKind::KwClass
-        | SyntaxKind::KwInstance
-        | SyntaxKind::KwForall
-        | SyntaxKind::KwCase
-        | SyntaxKind::KwOf
-        | SyntaxKind::KwInfixl
-        | SyntaxKind::KwInfixr
-        | SyntaxKind::KwInfix
-        | SyntaxKind::KwDeriving => {
+        kind if kind.is_keyword() => {
             let keyword = tok.text(source);
-            let description = keyword_description(keyword);
-            let range = span_to_range(source, tok.span);
-            Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("**`{}`** - {}", keyword, description),
-                }),
-                range: Some(range),
-            })
+            lookup_non_attribute_spec(keyword).map(|spec| spec_hover(spec, range))
         }
+        SyntaxKind::At => Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: "Use `@` to introduce a WGSL attribute such as `@compute`, `@vertex`, or `@workgroup_size(...)`.".to_owned(),
+            }),
+            range: Some(range),
+        }),
         _ => None,
     }
 }
 
-/// Returns a human-readable description for a keyword.
-fn keyword_description(kw: &str) -> &'static str {
-    match kw {
-        "let" => "Introduces local bindings",
-        "in" => "Marks the body of a let expression",
-        "match" => "Pattern matching on a value",
-        "case" => "Case expression (alias for match ... of)",
-        "of" => "Introduces case arms",
-        "if" => "Conditional expression",
-        "then" => "Then branch of an if expression",
-        "else" => "Else branch of an if expression",
-        "where" => "Local definitions attached to a declaration",
-        "do" => "Do-notation block for monadic sequencing",
-        "module" => "Module declaration",
-        "import" => "Import another module",
-        "data" => "Algebraic data type declaration",
-        "type" => "Type alias declaration",
-        "class" => "Type class declaration",
-        "instance" => "Type class instance declaration",
-        "forall" => "Universal quantification in types",
-        "infixl" => "Left-associative operator fixity declaration",
-        "infixr" => "Right-associative operator fixity declaration",
-        "infix" => "Non-associative operator fixity declaration",
-        "deriving" => "Automatically derive type class instances",
-        _ => "keyword",
+fn previous_non_trivia_token(tokens: &[Token], index: usize) -> Option<&Token> {
+    tokens[..index]
+        .iter()
+        .rev()
+        .find(|token| !token.kind.is_trivia())
+}
+
+fn lookup_non_attribute_spec(label: &str) -> Option<&'static catalog::CompletionSpec> {
+    lookup_completion_spec(label, CompletionContext::Value)
+        .or_else(|| lookup_completion_spec(label, CompletionContext::Type))
+}
+
+fn spec_hover(spec: &catalog::CompletionSpec, range: Range) -> Hover {
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: format!(
+                "**`{}`**\n\n_{}_\n\n{}",
+                spec.label, spec.detail, spec.documentation
+            ),
+        }),
+        range: Some(range),
     }
 }
 
@@ -784,7 +811,11 @@ pub fn encode_semantic_tokens(classified: &[ClassifiedToken], source: &str) -> V
 // ============================================================================
 
 /// Convert a fwgsl diagnostic to an LSP diagnostic.
-fn fwgsl_diag_to_lsp(diag: &FwgslDiag, source: &str) -> Option<tower_lsp::lsp_types::Diagnostic> {
+fn fwgsl_diag_to_lsp(
+    diag: &FwgslDiag,
+    source: &str,
+    uri: Option<&Url>,
+) -> Option<tower_lsp::lsp_types::Diagnostic> {
     let severity = match diag.severity {
         FwgslSeverity::Error => DiagnosticSeverity::ERROR,
         FwgslSeverity::Warning => DiagnosticSeverity::WARNING,
@@ -798,6 +829,37 @@ fn fwgsl_diag_to_lsp(diag: &FwgslDiag, source: &str) -> Option<tower_lsp::lsp_ty
     } else {
         Range::new(Position::new(0, 0), Position::new(0, 0))
     };
+    let related_information = uri.and_then(|uri| {
+        let related = diag
+            .labels
+            .iter()
+            .skip(1)
+            .map(|label| DiagnosticRelatedInformation {
+                location: Location {
+                    uri: uri.clone(),
+                    range: span_to_range(source, label.span),
+                },
+                message: label.message.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        if related.is_empty() {
+            None
+        } else {
+            Some(related)
+        }
+    });
+    let mut message = diag.message.clone();
+    if let Some(label) = diag.labels.first() {
+        if !label.message.is_empty() {
+            message.push_str("\n\n");
+            message.push_str(&label.message);
+        }
+    }
+    if let Some(help) = &diag.help {
+        message.push_str("\n\nhelp: ");
+        message.push_str(help);
+    }
 
     Some(tower_lsp::lsp_types::Diagnostic {
         range,
@@ -807,8 +869,8 @@ fn fwgsl_diag_to_lsp(diag: &FwgslDiag, source: &str) -> Option<tower_lsp::lsp_ty
             .as_ref()
             .map(|c| NumberOrString::String(c.clone())),
         source: Some("fwgsl".into()),
-        message: diag.message.clone(),
-        related_information: None,
+        message,
+        related_information,
         tags: None,
         code_description: None,
         data: None,
@@ -969,6 +1031,47 @@ mod tests {
         let let_items: Vec<_> = items.iter().filter(|i| i.label == "let").collect();
         assert_eq!(let_items.len(), 1);
         assert_eq!(let_items[0].kind, Some(CompletionItemKind::KEYWORD));
+    }
+
+    #[test]
+    fn test_attribute_completions_after_at() {
+        let items = build_completions("@", Position::new(0, 1));
+        let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+
+        assert!(labels.contains(&"compute"));
+        assert!(labels.contains(&"workgroup_size"));
+        assert!(!labels.contains(&"let"));
+    }
+
+    #[test]
+    fn test_keyword_completion_uses_snippet_and_docs() {
+        let items = build_completions("", Position::new(0, 0));
+        let match_item = items.iter().find(|item| item.label == "match").unwrap();
+
+        assert_eq!(
+            match_item.insert_text_format,
+            Some(InsertTextFormat::SNIPPET)
+        );
+        match &match_item.documentation {
+            Some(Documentation::MarkupContent(markup)) => {
+                assert!(markup.value.contains("Pattern matching expression"));
+            }
+            other => panic!("Expected markdown documentation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_document_completion_includes_type_detail() {
+        let source = "id x = x\nmain = id";
+        let items = build_completions(source, Position::new(1, 9));
+        let item = items
+            .iter()
+            .find(|candidate| candidate.label == "id")
+            .unwrap();
+
+        let detail = item.detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("binding"));
+        assert!(detail.contains("->"));
     }
 
     // -- Semantic token classification tests --------------------------------
@@ -1391,6 +1494,21 @@ mod tests {
     }
 
     #[test]
+    fn test_hover_on_attribute_identifier() {
+        let source = "@compute\nmain x = x";
+        let hover = build_hover(source, Position::new(0, 1));
+        assert!(hover.is_some());
+
+        match hover.unwrap().contents {
+            HoverContents::Markup(markup) => {
+                assert!(markup.value.contains("compute"));
+                assert!(markup.value.contains("compute shader entry point"));
+            }
+            _ => panic!("Expected Markup hover content"),
+        }
+    }
+
+    #[test]
     fn test_hover_on_whitespace_returns_none() {
         let source = "let  x = 42";
         // Position at column 4 which is whitespace between "let" and "x"
@@ -1440,9 +1558,10 @@ mod tests {
         let diag = FwgslDiag::error("type mismatch")
             .with_label(fwgsl_diagnostics::Label::primary(Span::new(0, 5), "here"));
         let source = "hello world";
-        let lsp = fwgsl_diag_to_lsp(&diag, source).unwrap();
+        let lsp = fwgsl_diag_to_lsp(&diag, source, None).unwrap();
         assert_eq!(lsp.severity, Some(DiagnosticSeverity::ERROR));
-        assert_eq!(lsp.message, "type mismatch");
+        assert!(lsp.message.contains("type mismatch"));
+        assert!(lsp.message.contains("here"));
         assert_eq!(lsp.range.start.line, 0);
         assert_eq!(lsp.range.start.character, 0);
         assert_eq!(lsp.range.end.character, 5);
@@ -1452,7 +1571,7 @@ mod tests {
     fn test_fwgsl_diag_to_lsp_warning() {
         let diag = FwgslDiag::warning("unused variable");
         let source = "hello";
-        let lsp = fwgsl_diag_to_lsp(&diag, source).unwrap();
+        let lsp = fwgsl_diag_to_lsp(&diag, source, None).unwrap();
         assert_eq!(lsp.severity, Some(DiagnosticSeverity::WARNING));
     }
 
@@ -1460,7 +1579,7 @@ mod tests {
     fn test_fwgsl_diag_to_lsp_with_code() {
         let diag = FwgslDiag::error("oops").with_code("E001");
         let source = "";
-        let lsp = fwgsl_diag_to_lsp(&diag, source).unwrap();
+        let lsp = fwgsl_diag_to_lsp(&diag, source, None).unwrap();
         assert_eq!(lsp.code, Some(NumberOrString::String("E001".into())));
         assert_eq!(lsp.source, Some("fwgsl".into()));
     }
@@ -1469,10 +1588,30 @@ mod tests {
     fn test_fwgsl_diag_to_lsp_no_labels() {
         let diag = FwgslDiag::error("generic error");
         let source = "some source";
-        let lsp = fwgsl_diag_to_lsp(&diag, source).unwrap();
+        let lsp = fwgsl_diag_to_lsp(&diag, source, None).unwrap();
         // Falls back to (0,0)-(0,0) range
         assert_eq!(lsp.range.start.line, 0);
         assert_eq!(lsp.range.start.character, 0);
+    }
+
+    #[test]
+    fn test_fwgsl_diag_to_lsp_includes_help_and_related_info() {
+        let diag = FwgslDiag::error("type mismatch")
+            .with_label(fwgsl_diagnostics::Label::primary(
+                Span::new(0, 3),
+                "expected I32",
+            ))
+            .with_label(fwgsl_diagnostics::Label::new(Span::new(4, 7), "found Bool"))
+            .with_help("add a conversion or change the annotation");
+        let source = "foo bar";
+        let uri = Url::parse("file:///test.fwgsl").unwrap();
+        let lsp = fwgsl_diag_to_lsp(&diag, source, Some(&uri)).unwrap();
+
+        assert!(lsp.message.contains("help: add a conversion"));
+        assert_eq!(lsp.related_information.as_ref().map(Vec::len), Some(1));
+        let related = &lsp.related_information.unwrap()[0];
+        assert_eq!(related.location.uri, uri);
+        assert_eq!(related.message, "found Bool");
     }
 
     // -- Semantic tokens legend tests ---------------------------------------

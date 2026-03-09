@@ -1,0 +1,10 @@
+-- Algebraic data types and pattern matching.
+
+data Color = Red | Green | Blue
+
+toI32 c = match c
+  | Red -> 0
+  | Green -> 1
+  | Blue -> 2
+
+main x = toI32 Red + x

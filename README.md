@@ -1,16 +1,54 @@
 # fwgsl
 
-A pure functional language that compiles to [WGSL](https://www.w3.org/TR/WGSL/) (WebGPU Shading Language).
+`fwgsl` is a pure functional language for WebGPU that compiles to [WGSL](https://www.w3.org/TR/WGSL/).
 
-fwgsl brings ML/Haskell-style programming to the GPU — static typing, Hindley-Milner inference, algebraic data types, pattern matching, and function composition — all compiled down to valid WGSL that runs on WebGPU.
+It targets the space between ML/Haskell ergonomics and GPU reality: algebraic data types, pattern matching, Hindley-Milner inference, shader entry-point attributes, and a toolchain that aims to feel like a modern programming language rather than a shader macro layer.
 
-## Examples
+Written in Rust, the compiler is structured as a fast multi-crate pipeline and is heavily inspired by arena-oriented compiler design in projects like [Oxc](https://github.com/oxc-project/oxc).
 
-### Hello World
+## Highlights
+
+- Pure functional surface language that lowers to valid WGSL.
+- HM-style inference with explicit type signatures when needed.
+- Algebraic data types and pattern matching.
+- `where` bindings and expression-oriented `let`, `if`, and `match`.
+- Static dimension-carrying array and vector types such as `Array 16 F32` and `Vec 3 F32`.
+- Generic data declarations and polymorphic constructors, including phantom parameters.
+- Rich editor support through LSP and the web playground.
+
+## Current Status
+
+The repository contains both implemented features and planned language goals. The table below is the current state of the codebase.
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Lexer + layout resolver | Implemented | Indentation-sensitive layout with virtual braces/semicolons |
+| Parser | Implemented | Recursive descent + Pratt parser |
+| HM inference | Implemented | Let-generalization and unification-based inference |
+| ADTs | Implemented | Constructors are registered in semantic analysis |
+| Pattern matching | Implemented | Match expressions and constructor patterns |
+| `let` / `where` | Implemented | `where` currently desugars to sequential local bindings |
+| Dependent dimensions | Implemented | `Nat`-backed dimensions for `Array`, `Vec`, `Mat`-style type forms |
+| Generic data / phantom types | Implemented | Polymorphic constructor schemes are preserved |
+| WGSL code generation | Implemented | AST -> HIR -> MIR -> WGSL pipeline works end-to-end |
+| LSP | Implemented | Diagnostics, hover, completion, goto-definition, semantic tokens |
+| Playground | Implemented | Monaco editor, live diagnostics, hover/completion, WGSL output, WebGPU preview |
+| Type classes | In progress | Surface direction is decided, full resolution is not merged yet |
+| Kinds / HKT | In progress | Next major type-system layer |
+| Algebraic effects | Planned | Will require syntax, typing, and handler-aware IR |
+| Formatter / linter / LSP code actions | Planned | CST-based tooling is part of the roadmap |
+| Modules / bundler / web playground polish | Planned | Base structure exists, full system is not complete |
+
+## What It Looks Like
+
+### A small functional program
 
 ```haskell
+add : I32 -> I32 -> I32
+add x y = x + y
+
 double : I32 -> I32
-double x = x + x
+double x = x * 2
 
 main : I32 -> I32
 main x =
@@ -18,246 +56,230 @@ main x =
   in y + 1
 ```
 
-### Algebraic Data Types and Pattern Matching
+### Algebraic data types and pattern matching
 
 ```haskell
 data Color = Red | Green | Blue
 
-show : Color -> I32
-show c = match c
-  | Red   -> 0
+toI32 : Color -> I32
+toI32 color = match color
+  | Red -> 0
   | Green -> 1
-  | Blue  -> 2
+  | Blue -> 2
 ```
 
-### Lambda Expressions and Function Composition
+### `where` bindings
 
 ```haskell
-apply : (I32 -> I32) -> I32 -> I32
-apply f x = f x
-
-inc : I32 -> I32
-inc = \x -> x + 1
-
-doubleInc : I32 -> I32
-doubleInc = double . inc
+scaleAndBias : I32 -> I32
+scaleAndBias x = y * 2
+where
+  y = x + 1
 ```
 
-### Shader Entry Points
+### Dimension-carrying types
 
 ```haskell
-@vertex
-vs_main : VertexInput -> Vec4F
-vs_main input = input.position
+weights : Array 4 F32
+weights = [1.0, 2.0, 3.0, 4.0]
 
-@fragment
-fs_main : FragmentInput -> Vec4F
-fs_main input = vec4 1.0 0.0 0.0 1.0
-
-@compute @workgroup_size(64, 1, 1)
-cs_main : ComputeInput -> ()
-cs_main input =
-  let idx = input.global_invocation_id.x
-  in store output idx (load input_buf idx)
+sample : Vec 3 F32 -> F32
+sample v = $dot v v
 ```
 
-### GPU Particle Simulation
-
-A more complete example showing ADTs, pattern matching, and compute shaders working together:
+### Generic and phantom data
 
 ```haskell
-data ParticleState
-  = Active { position : Vec3F, velocity : Vec3F, life : F32 }
-  | Dead
+data Box a = Box a
+data Phantom a = Phantom
 
-stepParticle : F32 -> ParticleState -> ParticleState
-stepParticle dt particle =
-  match particle
-    | Active { position, velocity, life } ->
-      if life - dt <= 0.0
-        then Dead
-        else Active
-          { position = position + velocity * dt
-          , velocity = velocity + gravity * dt
-          , life     = life - dt
-          }
-    | Dead -> Dead
+unbox : Box a -> a
+unbox value = match value
+  | Box x -> x
+```
 
+### Shader entry points
+
+```haskell
 @compute @workgroup_size(64, 1, 1)
-main : ComputeInput -> ()
-main input =
-  let idx    = input.global_invocation_id.x
-      state  = load particles idx
-      state' = stepParticle deltaTime state
-  in  store particles idx state'
+main idx =
+  let doubled = idx * 2
+  in doubled
 ```
 
-Compiles to:
+For small verified sample programs, see [examples/README.md](/Users/nishimura/projects/oss/ubugeeei/fwgsl/examples/README.md).
 
-```wgsl
-struct ParticleState {
-  tag: u32,
-  position: vec3<f32>,
-  velocity: vec3<f32>,
-  life: f32,
-}
+## Tooling Experience
 
-fn stepParticle(dt: f32, particle: ParticleState) -> ParticleState {
-  if (particle.tag == 0u) {
-    let position = particle.position;
-    let velocity = particle.velocity;
-    let life = particle.life;
-    if (life - dt <= 0.0) {
-      return ParticleState(1u, vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
-    } else {
-      return ParticleState(0u, position + velocity * dt,
-        velocity + vec3<f32>(0.0, -9.8, 0.0) * dt, life - dt);
-    }
-  } else {
-    return particle;
-  }
-}
+### Language Server
 
-@compute @workgroup_size(64, 1, 1)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let idx = gid.x;
-  let state = particles[idx];
-  let state_prime = stepParticle(deltaTime, state);
-  particles[idx] = state_prime;
-}
-```
+The `fwgsl-lsp` binary currently provides:
 
-## Language Features
-
-### Type System
-
-- **Hindley-Milner type inference** — full type inference with let-generalization; type annotations optional but supported
-- **Static typing** — all types resolved at compile time, no runtime type checks
-- **Dependent-type dimensions** — `Vec 3 F32` compiles to `vec3<f32>`, `Mat 4 4 F32` to `mat4x4<f32>`, with compile-time dimension validation
-- **Type classes** — Functor, Applicative, Monad with instance resolution (no special symbols like `<$>`)
-- **Type signatures** — `add : I32 -> I32 -> I32` using `:` (not `::`)
-
-### Functional Programming
-
-- **Algebraic data types** — `data Color = Red | Green | Blue` compiled to tagged WGSL structs
-- **Pattern matching** — `match` with pipe-delimited arms, compiled to decision trees via Maranget's algorithm
-- **Lambda expressions** — `\x y -> x + y`
-- **Let bindings** — `let x = 1 in x + 2` with block-style `let ... in ...`
-- **Function composition** — `normalize . getVelocity` with the dot operator
-- **Currying and partial application** — all functions are curried
-- **Operators as functions** — `(+)`, `(*)` can be passed as first-class values
-- **Backtick infix** — `` x `clamp` lo `` turns any function into an infix operator
-- **If-then-else** — `if x == 0 then 1 else 2` as expressions
-
-### Syntax
-
-- **Indentation-sensitive layout** — Haskell 2010-style layout rules with virtual braces and semicolons
-- **Entry point attributes** — `@vertex`, `@fragment`, `@compute @workgroup_size(64, 1, 1)` map directly to WGSL shader stages
-- **Expression-oriented** — everything is an expression, including `if`, `let`, and `match`
-- **Pratt parsing** — operator precedence: `.` > application > `*`/`/` > `+`/`-` > comparison > `&&` > `||` > backtick > `$`
-
-### Compiler Transforms
-
-- **Monomorphization** — polymorphic functions specialized at each call site for WGSL compatibility
-- **Defunctionalization** — higher-order functions lowered to tagged structs with switch dispatch
-- **Tail-call elimination** — tail recursion converted to loops (WGSL forbids recursion)
-- **ADT lowering** — algebraic data types compiled to flat structs with tag fields
-
-## Architecture
-
-Written in Rust, inspired by [Oxc](https://github.com/oxc-project/oxc)'s arena-allocated design for fast compilation.
-
-```
-Source Text
-    |
-  Lexer + Layout Resolver
-    |
-  Parser (recursive descent + Pratt)
-    |
-  [AST] ── Semantic Analysis (name resolution + HM inference)
-    |
-  [HIR] ── Desugared, type-annotated
-    |
-  [MIR] ── Monomorphized, first-order, WGSL-shaped
-    |
-  WGSL Text
-```
-
-### Crates
-
-| Crate | Purpose |
-|-------|---------|
-| `fwgsl_allocator` | Arena allocation (bumpalo wrapper) |
-| `fwgsl_span` | Source spans, atoms, source types |
-| `fwgsl_diagnostics` | Error/warning reporting with labels (miette-based) |
-| `fwgsl_syntax` | SyntaxKind enum for all tokens and node kinds |
-| `fwgsl_parser` | Hand-written lexer, Haskell-style layout resolver, recursive descent + Pratt parser |
-| `fwgsl_typechecker` | Type representation, HM inference engine, union-find unification |
-| `fwgsl_semantic` | Name resolution, scope analysis, type checking with constructor registration |
-| `fwgsl_hir` | High-level IR — desugared, type-annotated, still functional |
-| `fwgsl_mir` | Mid-level IR — monomorphized, first-order, imperative, WGSL-shaped |
-| `fwgsl_wgsl_codegen` | MIR to WGSL text emission with struct ordering and name mangling |
-| `fwgsl_language_server` | LSP server (tower-lsp) — diagnostics, hover, completion, goto-definition, semantic tokens |
-| `fwgsl_integration_tests` | End-to-end pipeline tests (256+ tests) |
-| `fwgsl_cli` | Command-line interface |
-| `fwgsl_wasm` | WASM target for web playground |
-
-## Getting Started
-
-Requires [Rust](https://rustup.rs/) and [mise](https://mise.jdx.dev/).
-
-```sh
-# Build
-mise run build
-
-# Run tests
-mise run test
-
-# Compile a .fwgsl file
-mise run cli -- compile examples/hello.fwgsl
-
-# Lint and format
-mise run lint
-mise run fmt
-```
-
-## Tooling
-
-### Language Server (LSP)
-
-The `fwgsl-lsp` binary provides IDE support via the Language Server Protocol:
-
-- **Diagnostics** — parse and type errors reported on open/change
-- **Hover** — shows inferred types for identifiers and keyword descriptions
-- **Completion** — keywords, built-in types (`I32`, `F32`, `Vec3F`, ...), WGSL builtins, and document identifiers
-- **Go to Definition** — jump to function and type definitions
-- **Semantic Tokens** — syntax-aware highlighting for keywords, types, operators, strings, numbers, and comments
+- Parse and semantic diagnostics on open/change.
+- Rich completion items with snippets, details, and markdown documentation.
+- Context-aware completion for values, types, and WGSL-style attributes such as `@compute` and `@workgroup_size`.
+- Hover for keywords, built-ins, attributes, constructors, and document-local typed bindings.
+- Go to definition for local declarations.
+- Semantic tokens for keywords, operators, decorators, types, literals, and comments.
 
 ### Web Playground
 
-A browser-based playground with Monaco editor, WGSL output pane, and WebGPU live preview.
+The playground uses Monaco and the WASM compiler build.
+
+Current editor feedback includes:
+
+- Live compile on typing with debounce.
+- Inline Monaco markers and whole-line decorations for diagnostics.
+- Diagnostics panel with severity, note/help text, and error codes.
+- Editor completion and hover mirroring the LSP experience.
+- Read-only WGSL output panel.
+- WebGPU preview for compute shaders.
+
+Run it locally with:
 
 ```sh
-mise run wasm       # build WASM module
-mise run playground # serve playground
-mise run dev        # quick dev server (no WASM rebuild)
+mise run wasm
+mise run playground
 ```
 
-### Linter and Formatter
+## Quick Start
 
-Planned: CST-based formatter (preserves comments, canonical indentation) and modular lint rules (unused variables, incomplete patterns, WGSL-incompatible recursion).
+Requirements:
+
+- [Rust](https://rustup.rs/)
+- [mise](https://mise.jdx.dev/)
+
+Common commands:
+
+```sh
+# Build the workspace
+mise run build
+
+# Run the full test suite
+mise run test
+
+# Run formatting and linting tasks
+mise run fmt
+mise run lint
+
+# Compile a file through the CLI
+mise run cli -- compile examples/hello.fwgsl
+
+# Start the playground dev server
+mise run dev
+```
+
+## Compiler Pipeline
+
+`fwgsl` is split into explicit phases so language work, tooling work, and WGSL lowering can evolve independently.
+
+```text
+Source Text
+    |
+Lexer
+    |
+Layout Resolver
+    |
+Parser
+    |
+AST
+    |
+Semantic Analysis
+  - name resolution
+  - constructor registration
+  - HM inference
+    |
+HIR
+  - desugared
+  - type-annotated
+    |
+MIR
+  - WGSL-shaped
+  - first-order
+    |
+WGSL Codegen
+```
+
+## Repository Layout
+
+| Crate | Purpose |
+|-------|---------|
+| `fwgsl_allocator` | Arena allocation helpers |
+| `fwgsl_span` | Source spans, atoms, and source metadata |
+| `fwgsl_diagnostics` | Structured diagnostics with labels and help text |
+| `fwgsl_syntax` | `SyntaxKind` definitions for tokens and syntax nodes |
+| `fwgsl_parser` | Hand-written lexer, layout resolver, parser |
+| `fwgsl_typechecker` | Types, schemes, substitutions, unification, inference engine |
+| `fwgsl_semantic` | Semantic analysis, environment building, constructor/type registration |
+| `fwgsl_hir` | Desugared typed high-level IR |
+| `fwgsl_mir` | Lowered WGSL-oriented IR |
+| `fwgsl_wgsl_codegen` | MIR to WGSL text emitter |
+| `fwgsl_language_server` | LSP server implementation |
+| `fwgsl_wasm` | WASM bindings for the playground |
+| `fwgsl_cli` | CLI entry point |
+| `fwgsl_integration_tests` | End-to-end compiler pipeline tests |
+
+## Language Design Direction
+
+The target language is intentionally ambitious. The medium-term direction is:
+
+- ML-derived, Haskell-influenced pure functional syntax.
+- No symbolic dependency on idioms like `<$>` for core ergonomics.
+- Everything is an expression.
+- Operators are functions and can be sectioned or used infix with backticks.
+- Strong static typing with inference first, annotations when needed.
+- Rich algebraic data modeling that can still lower to WGSL's restricted runtime model.
+- Tooling-first compiler architecture: parser, diagnostics, LSP, formatter, linter, playground.
+
+## Implemented Language Surface
+
+What is already working in the compiler today:
+
+- Function declarations and type signatures.
+- Lambda expressions.
+- Function application and infix operators.
+- `let ... in ...`.
+- `where` clauses on function declarations.
+- `if ... then ... else ...`.
+- ADTs and constructor registration.
+- Pattern matching over constructors.
+- Entry-point attributes such as `@compute`.
+- Type-level naturals in array/vector-like type applications.
+- Generic type variables in signatures and data declarations.
+
+## Roadmap
+
+The next major areas are:
+
+1. Kind checking and higher-kinded type parameters.
+2. Type class declaration and instance resolution.
+3. Algebraic effects and handler-aware intermediate representations.
+4. Module system and bundling.
+5. CST-based formatter and lint rule framework.
+6. LSP upgrades such as inlay hints, code actions, and more structural navigation.
 
 ## WGSL Constraints
 
-WGSL imposes severe restrictions that the compiler must bridge:
+WGSL is intentionally restrictive. `fwgsl` exists to bridge that gap.
 
-| Constraint | How fwgsl handles it |
-|-----------|---------------------|
-| No recursion | Tail-call elimination to loops; general recursion detected and rejected |
-| No dynamic allocation | All data is fixed-size; arena allocation is compile-time only |
-| No first-class functions | Defunctionalization: closures become tagged structs + dispatch |
-| No generics | Monomorphization: polymorphic code specialized per call site |
-| No ADTs | Tagged structs with flat field layout |
+| WGSL Constraint | Compiler Direction |
+|----------------|--------------------|
+| No recursion | Detect and lower acceptable cases; reject unsupported recursion |
+| No first-class functions | Lower higher-order structure toward first-order representations |
+| No runtime generics | Specialize polymorphism during lowering |
+| No native ADTs | Encode constructors as WGSL-friendly layouts |
+| GPU-oriented fixed layouts | Preserve as much static information as possible in the source type system |
+
+## Contributing
+
+A good starting point is usually one of:
+
+- Parser and diagnostics improvements in `crates/fwgsl_parser`
+- Semantic/type-system work in `crates/fwgsl_semantic` and `crates/fwgsl_typechecker`
+- WGSL lowering/codegen in `crates/fwgsl_mir` and `crates/fwgsl_wgsl_codegen`
+- Editor experience in `crates/fwgsl_language_server` and `playground/`
+
+This repository uses `mise` for task entry points and keeps the workspace split into small crates.
 
 ## License
 

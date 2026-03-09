@@ -433,6 +433,13 @@ html, body {
     font-size: 12px;
 }
 
+.diagnostic-summary {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-right: 8px;
+    white-space: nowrap;
+}
+
 .diagnostic-item {
     display: flex;
     align-items: flex-start;
@@ -485,11 +492,55 @@ html, body {
     line-height: 1.5;
 }
 
+.diagnostic-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.diagnostic-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.diagnostic-note,
+.diagnostic-help,
+.diagnostic-code {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.diagnostic-code {
+    font-family: var(--font-mono);
+    color: var(--accent-primary);
+}
+
 .diagnostic-location {
     color: var(--text-tertiary);
     font-family: var(--font-mono);
     font-size: 11px;
     white-space: nowrap;
+}
+
+.monaco-editor .diagnostic-line-error {
+    background: linear-gradient(90deg, rgba(255, 107, 107, 0.12), transparent 28%);
+}
+
+.monaco-editor .diagnostic-line-warning {
+    background: linear-gradient(90deg, rgba(255, 209, 102, 0.12), transparent 28%);
+}
+
+.monaco-editor .diagnostic-line-info,
+.monaco-editor .diagnostic-line-hint {
+    background: linear-gradient(90deg, rgba(90, 200, 250, 0.12), transparent 28%);
 }
 
 /* ==============================

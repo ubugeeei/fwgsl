@@ -1,0 +1,4 @@
+-- Function-level where bindings.
+-- The current compiler lowers `where` to a local sequential let.
+
+scaleAndBias x = y * 2 where y = x + 1

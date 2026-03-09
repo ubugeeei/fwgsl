@@ -55,19 +55,22 @@ impl AstLowering {
         for decl in &program.decls {
             if let Decl::DataDecl {
                 name,
-                type_params: _,
+                type_params,
                 constructors: cons,
                 span: _,
             } = decl
             {
-                let result_ty = Ty::Con(name.to_string());
+                let mut type_scope = self.new_type_var_scope(type_params);
+                let scheme_vars = scope_vars(&type_scope);
+                let result_ty = apply_type_params(name, type_params, &type_scope);
                 for con in cons {
                     let con_ty = match &con.fields {
                         ConFields::Empty => result_ty.clone(),
                         ConFields::Positional(fields) => {
                             let mut ty = result_ty.clone();
                             for field in fields.iter().rev() {
-                                let ft = self.convert_syntax_type(field);
+                                let ft =
+                                    self.convert_syntax_type_with_scope(field, &mut type_scope);
                                 ty = Ty::arrow(ft, ty);
                             }
                             ty
@@ -75,13 +78,15 @@ impl AstLowering {
                         ConFields::Record(fields) => {
                             let mut ty = result_ty.clone();
                             for (_, field_ty) in fields.iter().rev() {
-                                let ft = self.convert_syntax_type(field_ty);
+                                let ft =
+                                    self.convert_syntax_type_with_scope(field_ty, &mut type_scope);
                                 ty = Ty::arrow(ft, ty);
                             }
                             ty
                         }
                     };
-                    self.env.insert(con.name.clone(), Scheme::mono(con_ty));
+                    self.env
+                        .insert(con.name.clone(), Scheme::poly(scheme_vars.clone(), con_ty));
                 }
             }
         }
@@ -89,8 +94,8 @@ impl AstLowering {
         // Pass 2: collect type signatures
         for decl in &program.decls {
             if let Decl::TypeSig { name, ty, .. } = decl {
-                let inferred_ty = self.convert_syntax_type(ty);
-                self.env.insert(name.clone(), Scheme::mono(inferred_ty));
+                let inferred_ty = self.convert_syntax_type_scheme(ty);
+                self.env.insert(name.clone(), inferred_ty);
             }
         }
 
@@ -104,10 +109,11 @@ impl AstLowering {
                     name,
                     params,
                     body,
+                    where_binds,
                     span,
                     ..
                 } => {
-                    if let Some(f) = self.lower_fun_decl(name, params, body, *span) {
+                    if let Some(f) = self.lower_fun_decl(name, params, body, where_binds, *span) {
                         functions.push(f);
                     }
                 }
@@ -144,6 +150,7 @@ impl AstLowering {
         name: &str,
         params: &[Pat],
         body: &Expr,
+        where_binds: &[(String, Expr)],
         span: Span,
     ) -> Option<HirFunction> {
         let mut local_env = self.env.clone();
@@ -158,7 +165,8 @@ impl AstLowering {
             hir_params.push((pname, ty));
         }
 
-        let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
+        let body = desugar_where(body, where_binds, span);
+        let (hir_body, body_ty) = self.lower_expr(&body, &mut local_env);
 
         // Build function type and unify with declared type
         let mut fun_ty = body_ty.clone();
@@ -573,7 +581,7 @@ impl AstLowering {
                 }
 
                 // Construct vecN call: App(App(...(Var("vecN"), arg1), arg2), argN)
-                let n = total_components.min(4).max(2);
+                let n = total_components.clamp(2, 4);
                 let vec_name = format!("$vec{}", n);
                 let result_ty = Ty::app(
                     Ty::app(Ty::Con("Vec".into()), Ty::Nat(n)),
@@ -662,12 +670,17 @@ impl AstLowering {
         }
     }
 
-    fn lower_pattern(&self, pat: &Pat, _scrutinee_ty: &Ty) -> HirPattern {
+    fn lower_pattern(&mut self, pat: &Pat, _scrutinee_ty: &Ty) -> HirPattern {
         match pat {
             Pat::Wild(_) => HirPattern::Wild,
             Pat::Var(name, _) => HirPattern::Var(name.clone(), self.engine.finalize(_scrutinee_ty)),
             Pat::Con(name, sub_pats, _) => {
-                if let Some(con_info) = self.constructors.get(name) {
+                if let Some(con_info) = self
+                    .constructors
+                    .get(name)
+                    .cloned()
+                    .map(|info| info.instantiate(&mut self.engine))
+                {
                     let sub_hir: Vec<HirPattern> = match &con_info.fields {
                         ConstructorFields::Positional(field_tys) => sub_pats
                             .iter()
@@ -699,7 +712,12 @@ impl AstLowering {
                 }
             }
             Pat::Record(con_name, fields, _) => {
-                if let Some(con_info) = self.constructors.get(con_name) {
+                if let Some(con_info) = self
+                    .constructors
+                    .get(con_name)
+                    .cloned()
+                    .map(|info| info.instantiate(&mut self.engine))
+                {
                     let sub_pats: Vec<HirPattern> = if let ConstructorFields::Record(con_fields) =
                         &con_info.fields
                     {
@@ -751,7 +769,12 @@ impl AstLowering {
             }
             Pat::Wild(_) => {}
             Pat::Con(name, sub_pats, span) => {
-                if let Some(con_info) = self.constructors.get(name).cloned() {
+                if let Some(con_info) = self
+                    .constructors
+                    .get(name)
+                    .cloned()
+                    .map(|info| info.instantiate(&mut self.engine))
+                {
                     self.engine.unify(ty, &con_info.result_ty, *span);
                     match &con_info.fields {
                         ConstructorFields::Positional(field_tys) => {
@@ -784,7 +807,12 @@ impl AstLowering {
                 }
             }
             Pat::Record(con_name, fields, span) => {
-                if let Some(con_info) = self.constructors.get(con_name).cloned() {
+                if let Some(con_info) = self
+                    .constructors
+                    .get(con_name)
+                    .cloned()
+                    .map(|info| info.instantiate(&mut self.engine))
+                {
                     self.engine.unify(ty, &con_info.result_ty, *span);
                     if let ConstructorFields::Record(con_fields) = &con_info.fields {
                         for (field_name, maybe_pat) in fields {
@@ -808,30 +836,52 @@ impl AstLowering {
         }
     }
 
-    fn convert_syntax_type(&mut self, ty: &Type) -> Ty {
+    fn convert_syntax_type_scheme(&mut self, ty: &Type) -> Scheme {
+        let mut scope = HashMap::new();
+        let ty = self.convert_syntax_type_with_scope(ty, &mut scope);
+        Scheme::poly(scope_vars(&scope), ty)
+    }
+
+    fn convert_syntax_type_with_scope(
+        &mut self,
+        ty: &Type,
+        scope: &mut HashMap<String, TyVarId>,
+    ) -> Ty {
         match ty {
             Type::Con(name, _) => Ty::Con(name.clone()),
-            Type::Var(_, _) => self.engine.fresh_var(),
+            Type::Var(name, _) => Ty::Var(
+                *scope
+                    .entry(name.clone())
+                    .or_insert_with(|| fresh_var_id(&mut self.engine)),
+            ),
+            Type::Nat(n, _) => Ty::Nat(*n),
             Type::Arrow(a, b, _) => {
-                let a = self.convert_syntax_type(a);
-                let b = self.convert_syntax_type(b);
+                let a = self.convert_syntax_type_with_scope(a, scope);
+                let b = self.convert_syntax_type_with_scope(b, scope);
                 Ty::arrow(a, b)
             }
             Type::App(f, a, _) => {
-                let f = self.convert_syntax_type(f);
-                let a = self.convert_syntax_type(a);
+                let f = self.convert_syntax_type_with_scope(f, scope);
+                let a = self.convert_syntax_type_with_scope(a, scope);
                 Ty::app(f, a)
             }
-            Type::Paren(inner, _) => self.convert_syntax_type(inner),
+            Type::Paren(inner, _) => self.convert_syntax_type_with_scope(inner, scope),
             Type::Tuple(elems, _) => {
                 if elems.is_empty() {
                     Ty::unit()
                 } else {
-                    self.convert_syntax_type(&elems[0])
+                    self.convert_syntax_type_with_scope(&elems[0], scope)
                 }
             }
             Type::Unit(_) => Ty::unit(),
         }
+    }
+
+    fn new_type_var_scope(&mut self, names: &[String]) -> HashMap<String, TyVarId> {
+        names
+            .iter()
+            .map(|name| (name.clone(), fresh_var_id(&mut self.engine)))
+            .collect()
     }
 
     /// Pure version that doesn't need &mut self (no fresh vars for type vars).
@@ -839,6 +889,7 @@ impl AstLowering {
         match ty {
             Type::Con(name, _) => Ty::Con(name.clone()),
             Type::Var(name, _) => Ty::Con(name.clone()),
+            Type::Nat(n, _) => Ty::Nat(*n),
             Type::Arrow(a, b, _) => {
                 let a = self.convert_syntax_type_pure(a);
                 let b = self.convert_syntax_type_pure(b);
@@ -864,6 +915,40 @@ impl AstLowering {
     pub fn has_errors(&self) -> bool {
         self.engine.diagnostics.has_errors()
     }
+}
+
+fn desugar_where(body: &Expr, where_binds: &[(String, Expr)], span: Span) -> Expr {
+    if where_binds.is_empty() {
+        body.clone()
+    } else {
+        Expr::Let(where_binds.to_vec(), Box::new(body.clone()), span)
+    }
+}
+
+fn fresh_var_id(engine: &mut InferEngine) -> TyVarId {
+    match engine.fresh_var() {
+        Ty::Var(id) => id,
+        _ => unreachable!(),
+    }
+}
+
+fn scope_vars(scope: &HashMap<String, TyVarId>) -> Vec<TyVarId> {
+    let mut vars: Vec<_> = scope.values().copied().collect();
+    vars.sort_unstable();
+    vars.dedup();
+    vars
+}
+
+fn apply_type_params(name: &str, type_params: &[String], scope: &HashMap<String, TyVarId>) -> Ty {
+    type_params
+        .iter()
+        .fold(Ty::Con(name.to_string()), |ty, param| {
+            let var = scope
+                .get(param)
+                .copied()
+                .expect("type parameter should exist in scope");
+            Ty::app(ty, Ty::Var(var))
+        })
 }
 
 /// Extract a name from a pattern (for parameter names).
@@ -942,6 +1027,45 @@ mod tests {
         assert!(hir.functions.is_empty());
         assert!(hir.data_types.is_empty());
         assert!(hir.entry_points.is_empty());
+    }
+
+    #[test]
+    fn test_lower_where_clause() {
+        let program = Program {
+            decls: vec![Decl::FunDecl {
+                name: "f".into(),
+                params: vec![Pat::Var("x".into(), span())],
+                body: Expr::Infix(
+                    Box::new(Expr::Var("y".into(), span())),
+                    "+".into(),
+                    Box::new(Expr::Lit(Lit::Int(1), span())),
+                    span(),
+                ),
+                where_binds: vec![("y".into(), Expr::Var("x".into(), span()))],
+                span: span(),
+            }],
+        };
+
+        let mut sa = SemanticAnalyzer::new();
+        sa.analyze(&program);
+        assert!(!sa.has_errors());
+
+        let mut lowering = AstLowering::new(&sa);
+        let hir = lowering.lower_program(&program);
+
+        assert_eq!(hir.functions.len(), 1);
+        let f = &hir.functions[0];
+        match &f.body {
+            HirExpr::Let(binds, body, _, _) => {
+                assert_eq!(binds.len(), 1);
+                assert_eq!(binds[0].0, "y");
+                assert!(matches!(
+                    body.as_ref(),
+                    HirExpr::BinOp(BinOp::Add, _, _, _, _)
+                ));
+            }
+            other => panic!("expected HirExpr::Let, got {:?}", other),
+        }
     }
 
     #[test]
