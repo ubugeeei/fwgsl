@@ -50,6 +50,9 @@ pub fn compile(source: &str) -> String {
         let hir = lowering.lower_program(&program);
 
         if lowering.has_errors() {
+            for diag in lowering.diagnostics().iter() {
+                diagnostics.push(convert_diagnostic(diag, source));
+            }
             "// HIR lowering failed.".to_string()
         } else {
             match fwgsl_mir::lower::lower_hir_to_mir(&hir) {

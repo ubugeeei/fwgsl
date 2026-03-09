@@ -31,10 +31,6 @@
             <div class="separator"></div>
             <select id="select-example" class="select">
                 <option value="">Load example...</option>
-                <option value="hello">Hello World</option>
-                <option value="adt">ADT + Pattern Match</option>
-                <option value="compute">Compute Shader</option>
-                <option value="ifexpr">If Expressions</option>
             </select>
         </div>
         <div class="toolbar-right">
@@ -85,11 +81,14 @@
                         <div id="wgsl-output"></div>
                     </div>
                     <div id="tab-preview" class="tab-pane">
-                        <canvas id="webgpu-canvas"></canvas>
-                        <div id="preview-overlay" class="preview-overlay">
-                            <div class="preview-placeholder">
-                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                                <p>Compile a compute or render shader to preview</p>
+                        <div id="preview-stage" class="preview-stage">
+                            <canvas id="compute-canvas" class="preview-canvas"></canvas>
+                            <canvas id="render-canvas" class="preview-canvas"></canvas>
+                            <div id="preview-overlay" class="preview-overlay">
+                                <div class="preview-placeholder">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                                    <p>Compile a compute shader or a `shade` function to preview</p>
+                                </div>
                             </div>
                         </div>
                     </div>

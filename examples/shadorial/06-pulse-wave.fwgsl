@@ -1,9 +1,8 @@
 -- Shadorial Chapter 06: Pulse Wave
 -- Square/pulse wave with animated duty cycle
 
-@fragment
-main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
-main fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+shade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+shade fragCoord time resolution = $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
   where
     uv        = fragCoord / resolution
     x         = $vecX uv * 6.0 + time

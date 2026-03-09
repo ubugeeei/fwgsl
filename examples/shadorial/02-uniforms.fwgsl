@@ -1,9 +1,8 @@
 -- Shadorial Chapter 02: Uniforms
 -- Time animation, resolution, and mouse interaction
 
-@fragment
-main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 2 F32 -> Vec 4 F32
-main fragCoord time resolution mouse = $vec4 ($vecX color) ($vecY color) ($vecZ color) 1.0
+shade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 2 F32 -> Vec 4 F32
+shade fragCoord time resolution mouse = $vec4 ($vecX color) ($vecY color) ($vecZ color) 1.0
   where
     uv     = fragCoord / resolution
     mouseN = mouse / resolution
@@ -13,4 +12,5 @@ main fragCoord time resolution mouse = $vec4 ($vecX color) ($vecY color) ($vecZ 
     dist   = $length (uv - mouseN)
     circle = $smoothstep 0.15 0.14 dist
     base   = $vec3 r g b
-    color  = base * (0.3 + circle * 0.7)
+    intensity = 0.3 + circle * 0.7
+    color  = base * $splat3 intensity

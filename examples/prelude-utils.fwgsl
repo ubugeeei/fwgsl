@@ -1,0 +1,24 @@
+-- Higher-order prelude utilities.
+-- This file is intended for `fwgsl check`.
+
+keepPositive values = $filter (\x -> x > 0) values
+
+sumValues values = $fold (\acc x -> acc + x) 0 values
+
+sumValuesR values = $foldr (\x acc -> x + acc) 0 values
+
+zipSelf values = $zip values values
+
+flatten nested = $flat nested
+
+stepAll values = $flatMap (\x -> Some (x + 1)) values
+
+allReady flags = $all flags
+
+anyReady flags = $any flags
+
+leftOf pair = $fst pair
+
+rightOf pair = $snd pair
+
+swapped pair = $swap pair

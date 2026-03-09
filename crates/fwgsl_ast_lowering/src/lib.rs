@@ -25,9 +25,13 @@ pub struct AstLowering {
 impl AstLowering {
     /// Create a new lowering context from a completed semantic analyzer.
     pub fn new(sa: &fwgsl_semantic::SemanticAnalyzer) -> Self {
+        let mut engine = InferEngine::new();
+        if let Some(max_var_id) = sa.env.max_var_id() {
+            engine.reserve_above(max_var_id + 1);
+        }
         let mut lowering = Self {
             env: sa.env.clone(),
-            engine: InferEngine::new(),
+            engine,
             constructors: sa.constructors.clone(),
             data_types: sa.data_types.clone(),
         };
@@ -36,13 +40,21 @@ impl AstLowering {
     }
 
     fn add_builtins(&mut self) {
-        let i32_binop = Scheme::mono(Ty::arrow(Ty::i32(), Ty::arrow(Ty::i32(), Ty::i32())));
+        let scalar = fresh_var_id(&mut self.engine);
+        let numeric_binop = Scheme::poly(
+            vec![scalar],
+            Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::Var(scalar))),
+        );
         for op in ["+", "-", "*", "/", "%"] {
-            self.env.insert(op.to_string(), i32_binop.clone());
+            self.env.insert(op.to_string(), numeric_binop.clone());
         }
-        let i32_cmp = Scheme::mono(Ty::arrow(Ty::i32(), Ty::arrow(Ty::i32(), Ty::bool())));
+        let scalar = fresh_var_id(&mut self.engine);
+        let numeric_cmp = Scheme::poly(
+            vec![scalar],
+            Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::bool())),
+        );
         for op in ["==", "/=", "<", ">", "<=", ">="] {
-            self.env.insert(op.to_string(), i32_cmp.clone());
+            self.env.insert(op.to_string(), numeric_cmp.clone());
         }
         let bool_binop = Scheme::mono(Ty::arrow(Ty::bool(), Ty::arrow(Ty::bool(), Ty::bool())));
         self.env.insert("&&".to_string(), bool_binop.clone());
@@ -185,12 +197,13 @@ impl AstLowering {
             .map(|(n, ty)| (n, self.engine.finalize(&ty)))
             .collect();
         let return_ty = self.engine.finalize(&body_ty);
+        let body = self.finalize_expr(hir_body);
 
         Some(HirFunction {
             name: name.to_string(),
             params: final_params,
             return_ty,
-            body: hir_body,
+            body,
             span,
         })
     }
@@ -232,6 +245,7 @@ impl AstLowering {
             .map(|(n, ty)| (n, self.engine.finalize(&ty)))
             .collect();
         let return_ty = self.engine.finalize(&body_ty);
+        let body = self.finalize_expr(hir_body);
 
         let hir_attrs = attributes
             .iter()
@@ -246,7 +260,7 @@ impl AstLowering {
             attributes: hir_attrs,
             params: final_params,
             return_ty,
-            body: hir_body,
+            body,
             span,
         })
     }
@@ -298,11 +312,7 @@ impl AstLowering {
                 } else {
                     Ty::Error
                 };
-                let final_ty = self.engine.finalize(&ty);
-                (
-                    HirExpr::Var(name.clone(), final_ty.clone(), *span),
-                    final_ty,
-                )
+                (HirExpr::Var(name.clone(), ty.clone(), *span), ty)
             }
 
             Expr::Con(name, span) => {
@@ -317,33 +327,20 @@ impl AstLowering {
 
                 if let Some(con_info) = self.constructors.get(name).cloned() {
                     match &con_info.fields {
-                        ConstructorFields::Empty => {
-                            let final_ty = self.engine.finalize(&ty);
-                            (
-                                HirExpr::ConstructorCall(
-                                    name.clone(),
-                                    con_info.tag,
-                                    vec![],
-                                    final_ty.clone(),
-                                    *span,
-                                ),
-                                final_ty,
-                            )
-                        }
-                        _ => {
-                            let final_ty = self.engine.finalize(&ty);
-                            (
-                                HirExpr::Var(name.clone(), final_ty.clone(), *span),
-                                final_ty,
-                            )
-                        }
+                        ConstructorFields::Empty => (
+                            HirExpr::ConstructorCall(
+                                name.clone(),
+                                con_info.tag,
+                                vec![],
+                                ty.clone(),
+                                *span,
+                            ),
+                            ty,
+                        ),
+                        _ => (HirExpr::Var(name.clone(), ty.clone(), *span), ty),
                     }
                 } else {
-                    let final_ty = self.engine.finalize(&ty);
-                    (
-                        HirExpr::Var(name.clone(), final_ty.clone(), *span),
-                        final_ty,
-                    )
+                    (HirExpr::Var(name.clone(), ty.clone(), *span), ty)
                 }
             }
 
@@ -353,15 +350,9 @@ impl AstLowering {
                 let ret_ty = self.engine.fresh_var();
                 let expected = Ty::arrow(arg_ty, ret_ty.clone());
                 self.engine.unify(&func_ty, &expected, *span);
-                let final_ty = self.engine.finalize(&ret_ty);
                 (
-                    HirExpr::App(
-                        Box::new(hir_func),
-                        Box::new(hir_arg),
-                        final_ty.clone(),
-                        *span,
-                    ),
-                    final_ty,
+                    HirExpr::App(Box::new(hir_func), Box::new(hir_arg), ret_ty.clone(), *span),
+                    ret_ty,
                 )
             }
 
@@ -383,16 +374,15 @@ impl AstLowering {
                         &Ty::arrow(lhs_ty, Ty::arrow(rhs_ty, ret_ty.clone())),
                         *span,
                     );
-                    let final_ty = self.engine.finalize(&ret_ty);
                     (
                         HirExpr::BinOp(
                             binop,
                             Box::new(hir_lhs),
                             Box::new(hir_rhs),
-                            final_ty.clone(),
+                            ret_ty.clone(),
                             *span,
                         ),
-                        final_ty,
+                        ret_ty,
                     )
                 } else {
                     // Desugar as function application: (op lhs) rhs
@@ -409,13 +399,12 @@ impl AstLowering {
                         &Ty::arrow(lhs_ty, Ty::arrow(rhs_ty, ret_ty.clone())),
                         *span,
                     );
-                    let final_ty = self.engine.finalize(&ret_ty);
                     let op_expr = HirExpr::Var(op.clone(), op_ty, *span);
                     let app1_ty = self.engine.fresh_var();
                     let app1 = HirExpr::App(Box::new(op_expr), Box::new(hir_lhs), app1_ty, *span);
                     (
-                        HirExpr::App(Box::new(app1), Box::new(hir_rhs), final_ty.clone(), *span),
-                        final_ty,
+                        HirExpr::App(Box::new(app1), Box::new(hir_rhs), ret_ty.clone(), *span),
+                        ret_ty,
                     )
                 }
             }
@@ -433,10 +422,9 @@ impl AstLowering {
                 for pt in param_types.into_iter().rev() {
                     result_ty = Ty::arrow(pt, result_ty);
                 }
-                let final_ty = self.engine.finalize(&result_ty);
                 // Lambda is desugared: for now, emit as the body directly
                 // (lambdas in fwgsl source get applied away or become function params)
-                (hir_body, final_ty)
+                (hir_body, result_ty)
             }
 
             Expr::Let(binds, body, span) => {
@@ -444,15 +432,13 @@ impl AstLowering {
                 let mut hir_binds = Vec::new();
                 for (name, expr) in binds {
                     let (hir_expr, ty) = self.lower_expr(expr, &mut local_env);
-                    let scheme = self.engine.generalize(&local_env, &ty);
-                    local_env.insert(name.clone(), scheme);
+                    local_env.insert(name.clone(), Scheme::mono(ty.clone()));
                     hir_binds.push((name.clone(), hir_expr));
                 }
                 let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
-                let final_ty = self.engine.finalize(&body_ty);
                 (
-                    HirExpr::Let(hir_binds, Box::new(hir_body), final_ty.clone(), *span),
-                    final_ty,
+                    HirExpr::Let(hir_binds, Box::new(hir_body), body_ty.clone(), *span),
+                    body_ty,
                 )
             }
 
@@ -473,10 +459,9 @@ impl AstLowering {
                     });
                 }
 
-                let final_ty = self.engine.finalize(&result_ty);
                 (
-                    HirExpr::Case(Box::new(hir_scrut), hir_arms, final_ty.clone(), *span),
-                    final_ty,
+                    HirExpr::Case(Box::new(hir_scrut), hir_arms, result_ty.clone(), *span),
+                    result_ty,
                 )
             }
 
@@ -486,16 +471,15 @@ impl AstLowering {
                 let (hir_then, then_ty) = self.lower_expr(then_expr, env);
                 let (hir_else, else_ty) = self.lower_expr(else_expr, env);
                 self.engine.unify(&then_ty, &else_ty, *span);
-                let final_ty = self.engine.finalize(&then_ty);
                 (
                     HirExpr::If(
                         Box::new(hir_cond),
                         Box::new(hir_then),
                         Box::new(hir_else),
-                        final_ty.clone(),
+                        then_ty.clone(),
                         *span,
                     ),
-                    final_ty,
+                    then_ty,
                 )
             }
 
@@ -545,15 +529,14 @@ impl AstLowering {
                     self.engine.fresh_var()
                 };
 
-                let final_ty = self.engine.finalize(&result_ty);
                 (
                     HirExpr::FieldAccess(
                         Box::new(hir_expr),
                         field.clone(),
-                        final_ty.clone(),
+                        result_ty.clone(),
                         *span,
                     ),
-                    final_ty,
+                    result_ty,
                 )
             }
 
@@ -585,18 +568,17 @@ impl AstLowering {
                 let vec_name = format!("$vec{}", n);
                 let result_ty = Ty::app(
                     Ty::app(Ty::Con("Vec".into()), Ty::Nat(n)),
-                    self.engine.finalize(&scalar_ty),
+                    scalar_ty.clone(),
                 );
-                let final_ty = self.engine.finalize(&result_ty);
 
                 // Build curried application chain
-                let mut expr = HirExpr::Var(vec_name, final_ty.clone(), *span);
+                let mut expr = HirExpr::Var(vec_name, result_ty.clone(), *span);
                 for arg in hir_args {
-                    let app_ty = final_ty.clone();
+                    let app_ty = result_ty.clone();
                     expr = HirExpr::App(Box::new(expr), Box::new(arg), app_ty, *span);
                 }
 
-                (expr, final_ty)
+                (expr, result_ty)
             }
 
             Expr::OpSection(op, span) => {
@@ -605,24 +587,22 @@ impl AstLowering {
                 } else {
                     Ty::Error
                 };
-                let final_ty = self.engine.finalize(&ty);
-                (HirExpr::Var(op.clone(), final_ty.clone(), *span), final_ty)
+                (HirExpr::Var(op.clone(), ty.clone(), *span), ty)
             }
 
             Expr::Neg(inner, span) => {
                 let (hir_inner, inner_ty) = self.lower_expr(inner, env);
                 // Negation: emit as (0 - x)
                 let zero = HirExpr::Lit(HirLit::Int(0), inner_ty.clone(), *span);
-                let final_ty = self.engine.finalize(&inner_ty);
                 (
                     HirExpr::BinOp(
                         BinOp::Sub,
                         Box::new(zero),
                         Box::new(hir_inner),
-                        final_ty.clone(),
+                        inner_ty.clone(),
                         *span,
                     ),
-                    final_ty,
+                    inner_ty,
                 )
             }
 
@@ -660,10 +640,9 @@ impl AstLowering {
                 if hir_binds.is_empty() {
                     (body, body_ty)
                 } else {
-                    let final_ty = self.engine.finalize(&body_ty);
                     (
-                        HirExpr::Let(hir_binds, Box::new(body), final_ty.clone(), *span),
-                        final_ty,
+                        HirExpr::Let(hir_binds, Box::new(body), body_ty.clone(), *span),
+                        body_ty,
                     )
                 }
             }
@@ -916,6 +895,88 @@ impl AstLowering {
 
     pub fn has_errors(&self) -> bool {
         self.engine.diagnostics.has_errors()
+    }
+
+    pub fn diagnostics(&self) -> &fwgsl_diagnostics::DiagnosticSink {
+        &self.engine.diagnostics
+    }
+
+    fn finalize_expr(&self, expr: HirExpr) -> HirExpr {
+        match expr {
+            HirExpr::Lit(lit, ty, span) => HirExpr::Lit(lit, self.engine.finalize(&ty), span),
+            HirExpr::Var(name, ty, span) => HirExpr::Var(name, self.engine.finalize(&ty), span),
+            HirExpr::App(func, arg, ty, span) => HirExpr::App(
+                Box::new(self.finalize_expr(*func)),
+                Box::new(self.finalize_expr(*arg)),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::Let(binds, body, ty, span) => HirExpr::Let(
+                binds
+                    .into_iter()
+                    .map(|(name, expr)| (name, self.finalize_expr(expr)))
+                    .collect(),
+                Box::new(self.finalize_expr(*body)),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::Case(scrutinee, arms, ty, span) => HirExpr::Case(
+                Box::new(self.finalize_expr(*scrutinee)),
+                arms.into_iter()
+                    .map(|arm| HirCaseArm {
+                        pattern: self.finalize_pattern(arm.pattern),
+                        body: self.finalize_expr(arm.body),
+                    })
+                    .collect(),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::If(cond, then_expr, else_expr, ty, span) => HirExpr::If(
+                Box::new(self.finalize_expr(*cond)),
+                Box::new(self.finalize_expr(*then_expr)),
+                Box::new(self.finalize_expr(*else_expr)),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::BinOp(op, lhs, rhs, ty, span) => HirExpr::BinOp(
+                op,
+                Box::new(self.finalize_expr(*lhs)),
+                Box::new(self.finalize_expr(*rhs)),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::ConstructorCall(name, tag, args, ty, span) => HirExpr::ConstructorCall(
+                name,
+                tag,
+                args.into_iter()
+                    .map(|arg| self.finalize_expr(arg))
+                    .collect(),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::FieldAccess(expr, field, ty, span) => HirExpr::FieldAccess(
+                Box::new(self.finalize_expr(*expr)),
+                field,
+                self.engine.finalize(&ty),
+                span,
+            ),
+        }
+    }
+
+    fn finalize_pattern(&self, pattern: HirPattern) -> HirPattern {
+        match pattern {
+            HirPattern::Wild => HirPattern::Wild,
+            HirPattern::Var(name, ty) => HirPattern::Var(name, self.engine.finalize(&ty)),
+            HirPattern::Constructor(name, tag, sub_patterns) => HirPattern::Constructor(
+                name,
+                tag,
+                sub_patterns
+                    .into_iter()
+                    .map(|pattern| self.finalize_pattern(pattern))
+                    .collect(),
+            ),
+            HirPattern::Lit(lit) => HirPattern::Lit(lit),
+        }
     }
 }
 

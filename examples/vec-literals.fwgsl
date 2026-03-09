@@ -1,0 +1,6 @@
+-- Vector literals and swizzles.
+-- This example lowers end-to-end through WGSL.
+
+main x =
+  let base = [x, x + 1, x + 2]
+  in [base.x, base.y, base.z, 1]

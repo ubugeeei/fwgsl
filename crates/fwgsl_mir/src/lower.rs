@@ -280,7 +280,7 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr) -> Result<(Vec<MirStmt>, MirExpr), St
                 MirStmt::Var(
                     tmp_name.clone(),
                     result_ty.clone(),
-                    MirExpr::Lit(default_lit_for_type(&result_ty)),
+                    default_expr_for_type(&result_ty),
                 ),
                 MirStmt::If(cond_mir, then_stmts, else_stmts),
             ];
@@ -300,7 +300,7 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr) -> Result<(Vec<MirStmt>, MirExpr), St
                 MirStmt::Var(
                     tmp_name.clone(),
                     result_ty.clone(),
-                    MirExpr::Lit(default_lit_for_type(&result_ty)),
+                    default_expr_for_type(&result_ty),
                 ),
             ];
 
@@ -354,7 +354,77 @@ fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
             let mir_args: Result<Vec<MirExpr>, String> =
                 args.iter().map(|a| lower_hir_expr(a)).collect();
             let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
-            Ok(MirExpr::Call(func_name, mir_args?, mir_ty))
+            let mir_args = mir_args?;
+
+            match (func_name.as_str(), mir_args.as_slice()) {
+                ("negate", [arg]) => Ok(MirExpr::UnaryOp(
+                    MirUnaryOp::Neg,
+                    Box::new(arg.clone()),
+                    mir_ty,
+                )),
+                ("$mod", [lhs, rhs]) => {
+                    let div = MirExpr::BinOp(
+                        MirBinOp::Div,
+                        Box::new(lhs.clone()),
+                        Box::new(rhs.clone()),
+                        mir_ty.clone(),
+                    );
+                    let floored = MirExpr::Call("$floor".to_string(), vec![div], mir_ty.clone());
+                    let product = MirExpr::BinOp(
+                        MirBinOp::Mul,
+                        Box::new(rhs.clone()),
+                        Box::new(floored),
+                        mir_ty.clone(),
+                    );
+                    Ok(MirExpr::BinOp(
+                        MirBinOp::Sub,
+                        Box::new(lhs.clone()),
+                        Box::new(product),
+                        mir_ty,
+                    ))
+                }
+                ("$atan", [y, x]) => Ok(MirExpr::Call(
+                    "atan2".to_string(),
+                    vec![y.clone(), x.clone()],
+                    mir_ty,
+                )),
+                ("$splat2", [arg]) => Ok(MirExpr::Call(
+                    "$vec2".to_string(),
+                    vec![arg.clone(), arg.clone()],
+                    mir_ty,
+                )),
+                ("$splat3", [arg]) => Ok(MirExpr::Call(
+                    "$vec3".to_string(),
+                    vec![arg.clone(), arg.clone(), arg.clone()],
+                    mir_ty,
+                )),
+                ("$splat4", [arg]) => Ok(MirExpr::Call(
+                    "$vec4".to_string(),
+                    vec![arg.clone(), arg.clone(), arg.clone(), arg.clone()],
+                    mir_ty,
+                )),
+                ("$vecX", [arg]) => Ok(MirExpr::FieldAccess(
+                    Box::new(arg.clone()),
+                    "x".to_string(),
+                    mir_ty,
+                )),
+                ("$vecY", [arg]) => Ok(MirExpr::FieldAccess(
+                    Box::new(arg.clone()),
+                    "y".to_string(),
+                    mir_ty,
+                )),
+                ("$vecZ", [arg]) => Ok(MirExpr::FieldAccess(
+                    Box::new(arg.clone()),
+                    "z".to_string(),
+                    mir_ty,
+                )),
+                ("$vecW", [arg]) => Ok(MirExpr::FieldAccess(
+                    Box::new(arg.clone()),
+                    "w".to_string(),
+                    mir_ty,
+                )),
+                _ => Ok(MirExpr::Call(func_name, mir_args, mir_ty)),
+            }
         }
 
         HirExpr::ConstructorCall(name, _tag, args, _ty, _span) => {
@@ -537,6 +607,27 @@ fn default_lit_for_type(ty: &MirType) -> MirLit {
         MirType::F32 => MirLit::F32(0.0),
         MirType::Bool => MirLit::Bool(false),
         _ => MirLit::I32(0),
+    }
+}
+
+fn default_expr_for_type(ty: &MirType) -> MirExpr {
+    match ty {
+        MirType::I32 | MirType::U32 | MirType::F32 | MirType::Bool => {
+            MirExpr::Lit(default_lit_for_type(ty))
+        }
+        MirType::Vec(n, inner) => MirExpr::Call(
+            format!("vec{}", n),
+            (0..*n).map(|_| default_expr_for_type(inner)).collect(),
+            ty.clone(),
+        ),
+        MirType::Mat(cols, rows, inner) => MirExpr::Call(
+            format!("mat{}x{}", cols, rows),
+            (0..(u32::from(*cols) * u32::from(*rows)))
+                .map(|_| default_expr_for_type(inner))
+                .collect(),
+            ty.clone(),
+        ),
+        _ => MirExpr::Lit(MirLit::I32(0)),
     }
 }
 

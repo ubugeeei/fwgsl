@@ -230,13 +230,22 @@ const STATIC_EDITOR_ITEMS = [
         contexts: ['value', 'type'],
     },
     {
-        label: 'Array',
-        detail: 'Fixed-size array type',
-        documentation: 'Array type parameterized by a type-level length and element type.\n\n```fwgsl\nArray 16 F32\n```',
-        insertText: 'Array ${1:16} ${2:F32}',
+        label: 'Tensor',
+        detail: 'Fixed-size tensor type',
+        documentation: 'Tensor type parameterized by a type-level extent and element type.\n\n```fwgsl\nTensor 16 F32\n```',
+        insertText: 'Tensor ${1:16} ${2:F32}',
         snippet: true,
         kind: 'TypeParameter',
         contexts: ['value', 'type'],
+    },
+    {
+        label: '$splat3',
+        detail: 'Lift a scalar into Vec 3',
+        documentation: 'Construct a 3D vector by repeating one scalar.\n\n```fwgsl\n$splat3 0.5\n```',
+        insertText: '$splat3',
+        snippet: false,
+        kind: 'Function',
+        contexts: ['value'],
     },
     {
         label: 'map',
@@ -396,8 +405,8 @@ const FWGSL_LANGUAGE = {
         'forall', 'infixl', 'infixr', 'infix', 'deriving',
     ],
     typeKeywords: [
-        'I32', 'U32', 'F32', 'Bool', 'Vec', 'Mat', 'Array',
-        'Vec2', 'Vec3', 'Vec4', 'Option', 'String',
+        'I32', 'U32', 'F32', 'Bool', 'Scalar', 'Sca', 'Tensor', 'Ten', 'Vector', 'Vec', 'Matrix', 'Mat',
+        'Vec2', 'Vec3', 'Vec4', 'Option', 'Result', 'String',
     ],
     operators: [
         '->', '=>', '::', '..', '<-', '=',
@@ -488,6 +497,39 @@ const FWGSL_LANGUAGE = {
         ],
     },
 };
+
+const SHADORIAL_EXAMPLES = [
+    ['shadorial-01', 'Shadorial 01 · Hello Shader', '../examples/shadorial/01-hello-shader.fwgsl'],
+    ['shadorial-02', 'Shadorial 02 · Uniforms', '../examples/shadorial/02-uniforms.fwgsl'],
+    ['shadorial-03', 'Shadorial 03 · Colors', '../examples/shadorial/03-colors-gradients.fwgsl'],
+    ['shadorial-04', 'Shadorial 04 · Sin Wave', '../examples/shadorial/04-sin-wave.fwgsl'],
+    ['shadorial-05', 'Shadorial 05 · Saw Triangle', '../examples/shadorial/05-saw-triangle-wave.fwgsl'],
+    ['shadorial-06', 'Shadorial 06 · Pulse Wave', '../examples/shadorial/06-pulse-wave.fwgsl'],
+    ['shadorial-07', 'Shadorial 07 · Noise Wave', '../examples/shadorial/07-noise-wave.fwgsl'],
+    ['shadorial-08', 'Shadorial 08 · Composition', '../examples/shadorial/08-wave-composition.fwgsl'],
+    ['shadorial-09', 'Shadorial 09 · Shapes SDF', '../examples/shadorial/09-shapes-sdf.fwgsl'],
+    ['shadorial-10', 'Shadorial 10 · Lighting', '../examples/shadorial/10-light-reflection.fwgsl'],
+    ['shadorial-11', 'Shadorial 11 · Animation', '../examples/shadorial/11-animation.fwgsl'],
+    ['shadorial-12', 'Shadorial 12 · Noise', '../examples/shadorial/12-noise.fwgsl'],
+    ['shadorial-13', 'Shadorial 13 · Particles', '../examples/shadorial/13-particles.fwgsl'],
+    ['shadorial-14', 'Shadorial 14 · Water', '../examples/shadorial/14-fluid-water.fwgsl'],
+    ['shadorial-15', 'Shadorial 15 · Smoke', '../examples/shadorial/15-fluid-smoke.fwgsl'],
+    ['shadorial-16', 'Shadorial 16 · Glitch', '../examples/shadorial/16-glitch.fwgsl'],
+    ['shadorial-17', 'Shadorial 17 · Geometric', '../examples/shadorial/17-geometric.fwgsl'],
+    ['shadorial-18', 'Shadorial 18 · Pixel Art', '../examples/shadorial/18-pixel-art.fwgsl'],
+    ['shadorial-19', 'Shadorial 19 · Surface Shader', '../examples/shadorial/19-three-interactive.fwgsl'],
+].map(([key, label, path]) => ({ key, label, path }));
+
+const EXAMPLE_LIBRARY = {
+    hello: { label: 'Hello World', source: EXAMPLES.hello },
+    adt: { label: 'ADT + Pattern Match', source: EXAMPLES.adt },
+    compute: { label: 'Compute Shader', source: EXAMPLES.compute },
+    ifexpr: { label: 'If Expressions', source: EXAMPLES.ifexpr },
+};
+
+for (const example of SHADORIAL_EXAMPLES) {
+    EXAMPLE_LIBRARY[example.key] = example;
+}
 
 // ============================================================
 // Monaco theme
@@ -852,8 +894,13 @@ let editor = null;
 let wgslEditor = null;
 let wasmModule = null;
 let gpuDevice = null;
+let gpuCanvasFormat = null;
 let pendingCompileHandle = null;
 let diagnosticDecorationIds = [];
+let previewAnimationFrame = 0;
+let previewStartTime = 0;
+let previewFrameCount = 0;
+let previewMouse = { x: -1, y: -1 };
 
 // ============================================================
 // Initialize
@@ -862,9 +909,56 @@ async function init() {
     await initMonaco();
     await initWasm();
     await initWebGPU();
+    populateExampleSelector();
     setupEventListeners();
     setupResizeHandlers();
     compile({ reason: 'initial' });
+}
+
+function populateExampleSelector() {
+    const select = document.getElementById('select-example');
+    select.innerHTML = '<option value="">Load example...</option>';
+
+    const coreGroup = document.createElement('optgroup');
+    coreGroup.label = 'Core';
+    for (const key of ['hello', 'adt', 'compute', 'ifexpr']) {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = EXAMPLE_LIBRARY[key].label;
+        coreGroup.appendChild(option);
+    }
+    select.appendChild(coreGroup);
+
+    const shadorialGroup = document.createElement('optgroup');
+    shadorialGroup.label = 'Shadorial';
+    for (const example of SHADORIAL_EXAMPLES) {
+        const option = document.createElement('option');
+        option.value = example.key;
+        option.textContent = example.label;
+        shadorialGroup.appendChild(option);
+    }
+    select.appendChild(shadorialGroup);
+}
+
+async function loadExampleSource(key) {
+    const example = EXAMPLE_LIBRARY[key];
+    if (!example) {
+        return;
+    }
+
+    if (example.source) {
+        editor.setValue(example.source);
+        return;
+    }
+
+    const response = await fetch(example.path);
+    if (!response.ok) {
+        throw new Error(`Failed to load ${example.path}`);
+    }
+
+    const source = await response.text();
+    example.source = source;
+    editor.setValue(source);
 }
 
 async function initMonaco() {
@@ -1046,37 +1140,226 @@ async function initWebGPU() {
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) return;
         gpuDevice = await adapter.requestDevice();
+        gpuCanvasFormat = navigator.gpu.getPreferredCanvasFormat();
         console.log('WebGPU initialized');
     } catch (e) {
         console.warn('WebGPU initialization failed', e);
     }
 }
 
-/**
- * Run a WGSL compute shader on the GPU and visualize the output buffer on the canvas.
- * Creates a storage buffer, dispatches the compute shader, reads back results,
- * and renders them as colored pixels on the preview canvas.
- */
+function previewOverlayElement() {
+    return document.getElementById('preview-overlay');
+}
+
+function computePreviewCanvas() {
+    return document.getElementById('compute-canvas');
+}
+
+function renderPreviewCanvas() {
+    return document.getElementById('render-canvas');
+}
+
+function previewStageElement() {
+    return document.getElementById('preview-stage');
+}
+
+function stopActivePreview() {
+    if (previewAnimationFrame) {
+        cancelAnimationFrame(previewAnimationFrame);
+        previewAnimationFrame = 0;
+    }
+}
+
+function activatePreviewCanvas(mode) {
+    computePreviewCanvas().classList.toggle('active', mode === 'compute');
+    renderPreviewCanvas().classList.toggle('active', mode === 'render');
+}
+
+function resizeCanvasToDisplaySize(canvas) {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width * dpr));
+    const height = Math.max(1, Math.round(rect.height * dpr));
+
+    if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+    }
+
+    return { width, height };
+}
+
+function currentPreviewMouse(canvas) {
+    if (previewMouse.x < 0 || previewMouse.y < 0) {
+        return { x: -1, y: -1 };
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(rect.width, 1);
+    const scaleY = canvas.height / Math.max(rect.height, 1);
+    return {
+        x: previewMouse.x * scaleX,
+        y: previewMouse.y * scaleY,
+    };
+}
+
+function normalizeWgslType(type) {
+    return type.replace(/\s+/g, '').toLowerCase();
+}
+
+function parseShadeSignature(wgslCode) {
+    const match = wgslCode.match(/fn\s+shade\s*\(([\s\S]*?)\)\s*->\s*vec4<\s*f32\s*>/m);
+    if (!match) {
+        return null;
+    }
+
+    const rawParams = match[1].trim();
+    if (!rawParams) {
+        return { params: [] };
+    }
+
+    const params = rawParams
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => {
+            const parsed = part.match(/^([A-Za-z_]\w*)\s*:\s*(.+)$/);
+            if (!parsed) {
+                return null;
+            }
+            return {
+                name: parsed[1],
+                type: normalizeWgslType(parsed[2]),
+            };
+        });
+
+    if (params.some((param) => param === null)) {
+        return null;
+    }
+
+    return { params };
+}
+
+function buildShadePreviewInvocation(signature) {
+    const params = signature.params.map((param) => param.type);
+
+    if (params.length === 2 && params[0] === 'vec2<f32>' && params[1] === 'vec2<f32>') {
+        return 'shade(position.xy, preview.resolution)';
+    }
+    if (params.length === 3 && params[0] === 'vec2<f32>' && params[1] === 'f32' && params[2] === 'vec2<f32>') {
+        return 'shade(position.xy, preview.time, preview.resolution)';
+    }
+    if (
+        params.length === 4
+        && params[0] === 'vec2<f32>'
+        && params[1] === 'f32'
+        && params[2] === 'vec2<f32>'
+        && params[3] === 'vec2<f32>'
+    ) {
+        return 'shade(position.xy, preview.time, preview.resolution, preview.mouse)';
+    }
+
+    return null;
+}
+
+function buildShadePreviewShader(wgslCode, signature) {
+    const invocation = buildShadePreviewInvocation(signature);
+    if (!invocation) {
+        return null;
+    }
+
+    return `${wgslCode}
+
+struct PreviewUniforms {
+  resolution: vec2<f32>,
+  mouse: vec2<f32>,
+  time: f32,
+  frame: f32,
+  padding: vec2<f32>,
+}
+
+@group(0) @binding(0) var<uniform> preview: PreviewUniforms;
+
+struct PreviewVertexOut {
+  @builtin(position) position: vec4<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> PreviewVertexOut {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0, 1.0),
+    vec2<f32>(3.0, 1.0),
+  );
+  var out: PreviewVertexOut;
+  let pos = positions[vertex_index];
+  out.position = vec4<f32>(pos, 0.0, 1.0);
+  return out;
+}
+
+@fragment
+fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+  return ${invocation};
+}
+`;
+}
+
+async function createCheckedShaderModule(code) {
+    try {
+        const shaderModule = gpuDevice.createShaderModule({ code });
+        const info = await shaderModule.getCompilationInfo();
+        const errors = info.messages.filter((message) => message.type === 'error');
+        if (errors.length > 0) {
+            showPreviewMessage('GPU shader compile error:\n' + errors.map((error) => error.message).join('\n'));
+            return null;
+        }
+        return shaderModule;
+    } catch (e) {
+        showPreviewMessage('GPU shader error:\n' + e.message);
+        return null;
+    }
+}
+
+async function runShaderPreview(wgslCode) {
+    stopActivePreview();
+
+    if (!wgslCode || wgslCode.startsWith('//')) {
+        showPreviewMessage('Compile a compute shader or a `shade` function to preview.');
+        return;
+    }
+
+    if (wgslCode.includes('@compute')) {
+        await runComputePreview(wgslCode);
+        return;
+    }
+
+    const signature = parseShadeSignature(wgslCode);
+    if (!signature) {
+        showPreviewMessage('Render preview expects `fn shade(...) -> vec4<f32>`.');
+        return;
+    }
+
+    const wrappedShader = buildShadePreviewShader(wgslCode, signature);
+    if (!wrappedShader) {
+        showPreviewMessage('Render preview supports fullscreen `shade` contracts with 2D fragCoord/time/resolution/mouse inputs.');
+        return;
+    }
+
+    await runRenderPreview(wrappedShader);
+}
+
 async function runComputePreview(wgslCode) {
     if (!gpuDevice) {
         showPreviewMessage('WebGPU not available');
         return;
     }
 
-    // Only run if the shader has @compute
-    if (!wgslCode.includes('@compute')) {
-        showPreviewMessage('No @compute entry point found.\nCompile a compute shader to preview.');
-        return;
-    }
-
     try {
-        const canvas = document.getElementById('webgpu-canvas');
-        const overlay = document.getElementById('preview-overlay');
+        const canvas = computePreviewCanvas();
+        const overlay = previewOverlayElement();
         const ctx = canvas.getContext('2d');
-        const W = 256;
-        const H = 256;
-        canvas.width = W;
-        canvas.height = H;
+        activatePreviewCanvas('compute');
+        const { width: W, height: H } = resizeCanvasToDisplaySize(canvas);
 
         const elementCount = W * H;
         const bufferSize = elementCount * 4; // i32 per element
@@ -1139,7 +1422,7 @@ ${helperFns.join('\n')}
 
 @compute @workgroup_size(64, 1, 1)
 fn main(@builtin(global_invocation_id) _gid: vec3<u32>) {
-  let _flat_idx = _gid.x + _gid.y * ${W}u;
+  let _flat_idx = _gid.x;
   if (_flat_idx >= ${elementCount}u) { return; }
   let _gid_i32: i32 = i32(_flat_idx);
 ${mainBody.map(l => l.replace(/i32\(_gid\.x\)/, '_gid_i32')).join('\n')}
@@ -1147,17 +1430,8 @@ ${mainBody.map(l => l.replace(/i32\(_gid\.x\)/, '_gid_i32')).join('\n')}
 }
 `;
 
-        let shaderModule;
-        try {
-            shaderModule = gpuDevice.createShaderModule({ code: wrappedShader });
-            const info = await shaderModule.getCompilationInfo();
-            const errors = info.messages.filter(m => m.type === 'error');
-            if (errors.length > 0) {
-                showPreviewMessage('GPU shader compile error:\n' + errors.map(e => e.message).join('\n'));
-                return;
-            }
-        } catch (e) {
-            showPreviewMessage('GPU shader error:\n' + e.message);
+        const shaderModule = await createCheckedShaderModule(wrappedShader);
+        if (!shaderModule) {
             return;
         }
 
@@ -1191,7 +1465,7 @@ ${mainBody.map(l => l.replace(/i32\(_gid\.x\)/, '_gid_i32')).join('\n')}
         const pass = encoder.beginComputePass();
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bindGroup);
-        pass.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8), 1);
+        pass.dispatchWorkgroups(Math.ceil(elementCount / 64), 1, 1);
         pass.end();
         encoder.copyBufferToBuffer(storageBuffer, 0, readBuffer, 0, bufferSize);
         gpuDevice.queue.submit([encoder.finish()]);
@@ -1227,10 +1501,122 @@ ${mainBody.map(l => l.replace(/i32\(_gid\.x\)/, '_gid_i32')).join('\n')}
         overlay.style.display = 'none';
 
         // Show stats
-        document.getElementById('preview-overlay').innerHTML = '';
+        overlay.innerHTML = '';
     } catch (e) {
         showPreviewMessage('GPU error: ' + e.message);
         console.error('WebGPU preview error:', e);
+    }
+}
+
+async function runRenderPreview(wgslCode) {
+    if (!gpuDevice || !gpuCanvasFormat) {
+        showPreviewMessage('WebGPU not available');
+        return;
+    }
+
+    try {
+        const canvas = renderPreviewCanvas();
+        const overlay = previewOverlayElement();
+        activatePreviewCanvas('render');
+        const context = canvas.getContext('webgpu');
+        if (!context) {
+            showPreviewMessage('WebGPU canvas context unavailable');
+            return;
+        }
+
+        const shaderModule = await createCheckedShaderModule(wgslCode);
+        if (!shaderModule) {
+            return;
+        }
+
+        const bindGroupLayout = gpuDevice.createBindGroupLayout({
+            entries: [{
+                binding: 0,
+                visibility: GPUShaderStage.FRAGMENT,
+                buffer: { type: 'uniform' },
+            }],
+        });
+
+        const pipeline = gpuDevice.createRenderPipeline({
+            layout: gpuDevice.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout],
+            }),
+            vertex: {
+                module: shaderModule,
+                entryPoint: 'vs_main',
+            },
+            fragment: {
+                module: shaderModule,
+                entryPoint: 'fs_main',
+                targets: [{ format: gpuCanvasFormat }],
+            },
+            primitive: {
+                topology: 'triangle-list',
+            },
+        });
+
+        const uniformBuffer = gpuDevice.createBuffer({
+            size: 32,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        const bindGroup = gpuDevice.createBindGroup({
+            layout: bindGroupLayout,
+            entries: [{
+                binding: 0,
+                resource: { buffer: uniformBuffer },
+            }],
+        });
+
+        previewStartTime = performance.now();
+        previewFrameCount = 0;
+        overlay.style.display = 'none';
+        overlay.innerHTML = '';
+
+        const renderFrame = (now) => {
+            const { width, height } = resizeCanvasToDisplaySize(canvas);
+            context.configure({
+                device: gpuDevice,
+                format: gpuCanvasFormat,
+                alphaMode: 'opaque',
+            });
+
+            const mouse = currentPreviewMouse(canvas);
+            const uniforms = new Float32Array([
+                width,
+                height,
+                mouse.x,
+                mouse.y,
+                (now - previewStartTime) / 1000,
+                previewFrameCount,
+                0,
+                0,
+            ]);
+            previewFrameCount += 1;
+            gpuDevice.queue.writeBuffer(uniformBuffer, 0, uniforms);
+
+            const encoder = gpuDevice.createCommandEncoder();
+            const pass = encoder.beginRenderPass({
+                colorAttachments: [{
+                    view: context.getCurrentTexture().createView(),
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                    loadOp: 'clear',
+                    storeOp: 'store',
+                }],
+            });
+            pass.setPipeline(pipeline);
+            pass.setBindGroup(0, bindGroup);
+            pass.draw(3);
+            pass.end();
+            gpuDevice.queue.submit([encoder.finish()]);
+
+            previewAnimationFrame = requestAnimationFrame(renderFrame);
+        };
+
+        previewAnimationFrame = requestAnimationFrame(renderFrame);
+    } catch (e) {
+        showPreviewMessage('GPU render error: ' + e.message);
+        console.error('WebGPU render preview error:', e);
     }
 }
 
@@ -1239,7 +1625,9 @@ function lerp(a, b, t) {
 }
 
 function showPreviewMessage(msg) {
-    const overlay = document.getElementById('preview-overlay');
+    stopActivePreview();
+    activatePreviewCanvas(null);
+    const overlay = previewOverlayElement();
     overlay.style.display = 'flex';
     overlay.innerHTML = `
         <div class="preview-placeholder">
@@ -1301,9 +1689,11 @@ function compile(options = {}) {
             ? `${elapsed}ms · ${issueCount} issue${issueCount === 1 ? '' : 's'}`
             : `${elapsed}ms`;
 
-        // Run WebGPU preview for compute shaders
+        // Run WebGPU preview for compute shaders and fullscreen render shaders
         if (result.wgsl && !result.wgsl.startsWith('//')) {
-            runComputePreview(result.wgsl);
+            runShaderPreview(result.wgsl);
+        } else {
+            showPreviewMessage('Compile a compute shader or a `shade` function to preview.');
         }
 
     } catch (e) {
@@ -1528,10 +1918,18 @@ function setupEventListeners() {
     });
 
     // Example selector
-    document.getElementById('select-example').addEventListener('change', (e) => {
+    document.getElementById('select-example').addEventListener('change', async (e) => {
         const key = e.target.value;
-        if (key && EXAMPLES[key]) {
-            editor.setValue(EXAMPLES[key]);
+        if (!key) {
+            return;
+        }
+
+        try {
+            await loadExampleSource(key);
+        } catch (error) {
+            console.error('Failed to load example:', error);
+            document.getElementById('editor-status').textContent = 'example load failed';
+        } finally {
             e.target.value = '';
         }
     });
@@ -1558,6 +1956,18 @@ function setupEventListeners() {
         if (window.monaco) {
             monaco.editor.setModelMarkers(editor.getModel(), 'fwgsl', []);
         }
+    });
+
+    const previewStage = previewStageElement();
+    previewStage.addEventListener('pointermove', (event) => {
+        const rect = previewStage.getBoundingClientRect();
+        previewMouse = {
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+        };
+    });
+    previewStage.addEventListener('pointerleave', () => {
+        previewMouse = { x: -1, y: -1 };
     });
 }
 

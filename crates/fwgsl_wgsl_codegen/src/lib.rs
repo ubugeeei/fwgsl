@@ -11,6 +11,81 @@ fn strip_builtin_prefix(name: &str) -> &str {
     name.strip_prefix('$').unwrap_or(name)
 }
 
+fn sanitize_identifier(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => out.push(ch),
+            '\'' => out.push_str("_prime"),
+            _ => out.push('_'),
+        }
+    }
+
+    if out.is_empty() {
+        "_".to_string()
+    } else if out.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        format!("_{}", out)
+    } else if is_reserved_identifier(&out) {
+        format!("fw_{}", out)
+    } else {
+        out
+    }
+}
+
+fn is_reserved_identifier(name: &str) -> bool {
+    matches!(
+        name,
+        "alias"
+            | "bitcast"
+            | "bool"
+            | "break"
+            | "case"
+            | "compute"
+            | "const"
+            | "const_assert"
+            | "continue"
+            | "continuing"
+            | "default"
+            | "diagnostic"
+            | "discard"
+            | "else"
+            | "enable"
+            | "f32"
+            | "false"
+            | "fn"
+            | "for"
+            | "fragment"
+            | "i32"
+            | "if"
+            | "let"
+            | "loop"
+            | "mat2x2"
+            | "mat3x3"
+            | "mat4x4"
+            | "override"
+            | "private"
+            | "read"
+            | "read_write"
+            | "requires"
+            | "return"
+            | "storage"
+            | "struct"
+            | "switch"
+            | "true"
+            | "u32"
+            | "uniform"
+            | "var"
+            | "vec2"
+            | "vec3"
+            | "vec4"
+            | "vertex"
+            | "while"
+            | "workgroup"
+            | "write"
+            | "final"
+    )
+}
+
 /// A tree-walk emitter that writes WGSL text into a `String` buffer.
 pub struct WgslEmitter {
     output: String,
@@ -60,12 +135,16 @@ impl WgslEmitter {
     // -----------------------------------------------------------------------
 
     fn emit_struct(&mut self, s: &MirStruct) {
-        self.write(&format!("struct {} {{", s.name));
+        self.write(&format!("struct {} {{", sanitize_identifier(&s.name)));
         self.newline();
         self.indent += 1;
         for field in &s.fields {
             self.write_indent();
-            self.write(&format!("{}: {},", field.name, self.format_type(&field.ty)));
+            self.write(&format!(
+                "{}: {},",
+                sanitize_identifier(&field.name),
+                self.format_type(&field.ty)
+            ));
             self.newline();
         }
         self.indent -= 1;
@@ -78,12 +157,16 @@ impl WgslEmitter {
     // -----------------------------------------------------------------------
 
     fn emit_function(&mut self, f: &MirFunction) {
-        self.write(&format!("fn {}(", f.name));
+        self.write(&format!("fn {}(", sanitize_identifier(&f.name)));
         for (i, param) in f.params.iter().enumerate() {
             if i > 0 {
                 self.write(", ");
             }
-            self.write(&format!("{}: {}", param.name, self.format_type(&param.ty)));
+            self.write(&format!(
+                "{}: {}",
+                sanitize_identifier(&param.name),
+                self.format_type(&param.ty)
+            ));
         }
         self.write(")");
         if f.return_ty != MirType::Unit {
@@ -132,7 +215,7 @@ impl WgslEmitter {
         }
         self.newline();
 
-        self.write(&format!("fn {}(", ep.name));
+        self.write(&format!("fn {}(", sanitize_identifier(&ep.name)));
 
         let mut first = true;
 
@@ -145,7 +228,7 @@ impl WgslEmitter {
             self.write(&format!(
                 "@builtin({}) {}: {}",
                 binding,
-                name,
+                sanitize_identifier(name),
                 self.format_type(ty)
             ));
         }
@@ -156,7 +239,11 @@ impl WgslEmitter {
                 self.write(", ");
             }
             first = false;
-            self.write(&format!("{}: {}", param.name, self.format_type(&param.ty)));
+            self.write(&format!(
+                "{}: {}",
+                sanitize_identifier(&param.name),
+                self.format_type(&param.ty)
+            ));
         }
 
         self.write(")");
@@ -192,21 +279,29 @@ impl WgslEmitter {
         match stmt {
             MirStmt::Let(name, ty, expr) => {
                 self.write_indent();
-                self.write(&format!("let {}: {} = ", name, self.format_type(ty)));
+                self.write(&format!(
+                    "let {}: {} = ",
+                    sanitize_identifier(name),
+                    self.format_type(ty)
+                ));
                 self.emit_expr(expr);
                 self.write(";");
                 self.newline();
             }
             MirStmt::Var(name, ty, expr) => {
                 self.write_indent();
-                self.write(&format!("var {}: {} = ", name, self.format_type(ty)));
+                self.write(&format!(
+                    "var {}: {} = ",
+                    sanitize_identifier(name),
+                    self.format_type(ty)
+                ));
                 self.emit_expr(expr);
                 self.write(";");
                 self.newline();
             }
             MirStmt::Assign(name, expr) => {
                 self.write_indent();
-                self.write(&format!("{} = ", name));
+                self.write(&format!("{} = ", sanitize_identifier(name)));
                 self.emit_expr(expr);
                 self.write(";");
                 self.newline();
@@ -270,7 +365,7 @@ impl WgslEmitter {
     fn emit_expr(&mut self, expr: &MirExpr) {
         match expr {
             MirExpr::Lit(lit) => self.emit_lit(lit),
-            MirExpr::Var(name, _) => self.write(strip_builtin_prefix(name)),
+            MirExpr::Var(name, _) => self.write(&sanitize_identifier(strip_builtin_prefix(name))),
             MirExpr::BinOp(op, lhs, rhs, _) => {
                 self.write("(");
                 self.emit_expr(lhs);
@@ -282,8 +377,13 @@ impl WgslEmitter {
                 self.write(&format!("{}", op));
                 self.emit_expr(operand);
             }
-            MirExpr::Call(name, args, _) => {
-                self.write(strip_builtin_prefix(name));
+            MirExpr::Call(name, args, ty) => {
+                let callee = strip_builtin_prefix(name);
+                if is_type_constructor_call(callee, ty) {
+                    self.write(&self.format_type(ty));
+                } else {
+                    self.write(&sanitize_identifier(callee));
+                }
                 self.write("(");
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -294,7 +394,7 @@ impl WgslEmitter {
                 self.write(")");
             }
             MirExpr::ConstructStruct(name, fields) => {
-                self.write(name);
+                self.write(&sanitize_identifier(name));
                 self.write("(");
                 for (i, field) in fields.iter().enumerate() {
                     if i > 0 {
@@ -306,7 +406,7 @@ impl WgslEmitter {
             }
             MirExpr::FieldAccess(expr, field, _) => {
                 self.emit_expr(expr);
-                self.write(&format!(".{}", field));
+                self.write(&format!(".{}", sanitize_identifier(field)));
             }
             MirExpr::Index(array, index, _) => {
                 self.emit_expr(array);
@@ -374,6 +474,18 @@ impl WgslEmitter {
     fn newline(&mut self) {
         self.output.push('\n');
     }
+}
+
+fn is_type_constructor_call(name: &str, ty: &MirType) -> bool {
+    matches!(
+        (name, ty),
+        ("vec2", MirType::Vec(2, _))
+            | ("vec3", MirType::Vec(3, _))
+            | ("vec4", MirType::Vec(4, _))
+            | ("mat2x2", MirType::Mat(2, 2, _))
+            | ("mat3x3", MirType::Mat(3, 3, _))
+            | ("mat4x4", MirType::Mat(4, 4, _))
+    )
 }
 
 /// Convenience function to emit a [`MirProgram`] as WGSL source text.
@@ -541,7 +653,7 @@ mod tests {
         assert!(wgsl.contains("fn vs_main("));
         assert!(wgsl.contains("@builtin(vertex_index) vid: u32"));
         assert!(wgsl.contains("-> vec4<f32>"));
-        assert!(wgsl.contains("return vec4(0.0, 0.0, 0.0, 1.0);"));
+        assert!(wgsl.contains("return vec4<f32>(0.0, 0.0, 0.0, 1.0);"));
     }
 
     #[test]

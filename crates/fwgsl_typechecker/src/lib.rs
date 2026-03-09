@@ -71,7 +71,10 @@ impl Ty {
         match self {
             Ty::Var(v) => {
                 if let Some(ty) = subst.lookup(*v) {
-                    ty.clone()
+                    match ty {
+                        Ty::Var(v2) if v2 == v => ty.clone(),
+                        _ => ty.apply_subst(subst),
+                    }
                 } else {
                     self.clone()
                 }
@@ -277,6 +280,17 @@ impl TypeEnv {
         vars.dedup();
         vars
     }
+
+    pub fn max_var_id(&self) -> Option<TyVarId> {
+        self.bindings
+            .values()
+            .flat_map(|scheme| {
+                let mut vars = scheme.vars.clone();
+                vars.extend(scheme.ty.free_vars());
+                vars
+            })
+            .max()
+    }
 }
 
 /// Type inference engine.
@@ -306,6 +320,10 @@ impl InferEngine {
         let var = self.next_var;
         self.next_var += 1;
         Ty::Var(var)
+    }
+
+    pub fn reserve_above(&mut self, next_var: TyVarId) {
+        self.next_var = self.next_var.max(next_var);
     }
 
     /// Unify two types.

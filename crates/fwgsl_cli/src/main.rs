@@ -100,7 +100,8 @@ fn cmd_compile(file: &str, emit_ast: bool) {
     let hir = lowering.lower_program(&program);
 
     if lowering.has_errors() {
-        eprintln!("error: HIR lowering failed");
+        let diags: Vec<_> = lowering.diagnostics().iter().collect();
+        print_diagnostics(&diags, file, &source);
         process::exit(1);
     }
 

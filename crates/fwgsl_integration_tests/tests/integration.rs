@@ -18,6 +18,7 @@ use fwgsl_parser::parser::{Decl, Expr, Parser, Program};
 use fwgsl_parser::resolve_layout;
 use fwgsl_semantic::SemanticAnalyzer;
 use fwgsl_syntax::SyntaxKind;
+use fwgsl_typechecker::Ty;
 use fwgsl_wgsl_codegen::emit_wgsl;
 
 // =========================================================================
@@ -948,6 +949,9 @@ mod fixture_tests {
     const HELLO_FWGSL: &str = include_str!("../../../fixtures/hello.fwgsl");
     const ADT_FWGSL: &str = include_str!("../../../fixtures/adt.fwgsl");
     const PARTICLE_FWGSL: &str = include_str!("../../../fixtures/particle.fwgsl");
+    const OPTION_RESULT_EXAMPLE: &str = include_str!("../../../examples/option-result.fwgsl");
+    const PRELUDE_UTILS_EXAMPLE: &str = include_str!("../../../examples/prelude-utils.fwgsl");
+    const TENSOR_ALIASES_EXAMPLE: &str = include_str!("../../../examples/tensor-aliases.fwgsl");
 
     #[test]
     fn fixture_hello_lexes_without_errors() {
@@ -1057,6 +1061,33 @@ mod fixture_tests {
         } else {
             panic!("ParticleState data declaration not found");
         }
+    }
+
+    #[test]
+    fn example_option_result_type_checks() {
+        let (_, has_errors) = parse_and_analyze(OPTION_RESULT_EXAMPLE);
+        assert!(
+            !has_errors,
+            "option-result example should pass semantic analysis"
+        );
+    }
+
+    #[test]
+    fn example_prelude_utils_type_checks() {
+        let (_, has_errors) = parse_and_analyze(PRELUDE_UTILS_EXAMPLE);
+        assert!(
+            !has_errors,
+            "prelude-utils example should pass semantic analysis"
+        );
+    }
+
+    #[test]
+    fn example_tensor_aliases_type_checks() {
+        let (_, has_errors) = parse_and_analyze(TENSOR_ALIASES_EXAMPLE);
+        assert!(
+            !has_errors,
+            "tensor-aliases example should pass semantic analysis"
+        );
     }
 }
 
@@ -1494,13 +1525,29 @@ mod pipeline_tests {
             .env
             .lookup("add")
             .expect("add should be in the environment");
-        let add_ty = sa.engine.finalize(&add_scheme.ty);
-        let add_ty_str = format!("{}", add_ty);
         assert_eq!(
-            add_ty_str, "(I32 -> (I32 -> I32))",
-            "add should have type I32 -> I32 -> I32, got: {}",
-            add_ty_str
+            add_scheme.vars.len(),
+            1,
+            "add should be generalized over one type variable"
         );
+        match &add_scheme.ty {
+            Ty::Arrow(lhs, rhs) => match rhs.as_ref() {
+                Ty::Arrow(mid, ret) => {
+                    assert_eq!(
+                        lhs.as_ref(),
+                        mid.as_ref(),
+                        "add should use one shared argument type"
+                    );
+                    assert_eq!(
+                        lhs.as_ref(),
+                        ret.as_ref(),
+                        "add should return the shared argument type"
+                    );
+                }
+                other => panic!("expected add result to be a curried arrow, got {:?}", other),
+            },
+            other => panic!("expected add to have a function type, got {:?}", other),
+        }
     }
 
     #[test]
@@ -1696,6 +1743,8 @@ show c = match c
 mod full_pipeline_tests {
     use super::*;
 
+    const VEC_LITERALS_EXAMPLE: &str = include_str!("../../../examples/vec-literals.fwgsl");
+
     /// Full pipeline helper: source -> WGSL
     fn compile_to_wgsl(source: &str) -> Result<String, String> {
         let mut parser = Parser::new(source);
@@ -1838,6 +1887,32 @@ mod full_pipeline_tests {
             wgsl2.contains("fn double("),
             "should contain fn double, got: {}",
             wgsl2
+        );
+    }
+
+    #[test]
+    fn test_full_pipeline_vec_literals_example() {
+        let wgsl =
+            compile_to_wgsl(VEC_LITERALS_EXAMPLE).expect("vec literals example should compile");
+        assert!(
+            wgsl.contains("fn main("),
+            "WGSL should contain main, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("vec3<"),
+            "WGSL should contain vec3 constructor, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("vec4<"),
+            "WGSL should contain vec4 constructor, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains(".x"),
+            "WGSL should contain swizzle field access, got: {}",
+            wgsl
         );
     }
 }

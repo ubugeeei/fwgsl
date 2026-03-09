@@ -24,23 +24,23 @@ easeOutBounce t =
   if t < 1.0 / 2.75
     then 7.5625 * t * t
     else if t < 2.0 / 2.75
-      then 7.5625 * t' * t' + 0.75
-        where t' = t - 1.5 / 2.75
+      then let t' = t - 1.5 / 2.75
+           in 7.5625 * t' * t' + 0.75
       else if t < 2.5 / 2.75
-        then 7.5625 * t' * t' + 0.9375
-          where t' = t - 2.25 / 2.75
-        else 7.5625 * t' * t' + 0.984375
-          where t' = t - 2.625 / 2.75
+        then let t' = t - 2.25 / 2.75
+             in 7.5625 * t' * t' + 0.9375
+        else let t' = t - 2.625 / 2.75
+             in 7.5625 * t' * t' + 0.984375
 
 circle : Vec 2 F32 -> Vec 2 F32 -> F32 -> F32 -> F32
 circle uv center radius pixelSize =
   1.0 - $smoothstep (radius - pixelSize) (radius + pixelSize) ($length (uv - center))
 
-@fragment
-main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
-main fragCoord time resolution = $vec4 ($vecX final'') ($vecY final'') ($vecZ final'') 1.0
+shade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+shade fragCoord time resolution = $vec4 ($vecX final'') ($vecY final'') ($vecZ final'') 1.0
   where
-    uv     = (fragCoord - 0.5 * resolution) / $vecY resolution
+    halfRes = resolution / $splat2 2.0
+    uv     = (fragCoord - halfRes) / $splat2 ($vecY resolution)
     period = 3.0
     t      = $mod time period / period
     r      = 0.03

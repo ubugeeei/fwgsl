@@ -7,9 +7,8 @@ drawWave y wave lineWidth opacity = line * opacity
     dist = $abs (y - wave)
     line = 1.0 - $smoothstep 0.0 lineWidth dist
 
-@fragment
-main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
-main fragCoord time resolution = $vec4 ($vecX color'') ($vecY color'') ($vecZ color'') 1.0
+shade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+shade fragCoord time resolution = $vec4 ($vecX color'') ($vecY color'') ($vecZ color'') 1.0
   where
     uv        = fragCoord / resolution
     x         = $vecX uv * 10.0

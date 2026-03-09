@@ -11,9 +11,8 @@ noise1d x = $mix (hash i) (hash (i + 1.0)) u
     f = $fract x
     u = f * f * (3.0 - 2.0 * f)
 
-@fragment
-main : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
-main fragCoord time resolution = $vec4 ($vecX color'') ($vecY color'') ($vecZ color'') 1.0
+shade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
+shade fragCoord time resolution = $vec4 ($vecX color'') ($vecY color'') ($vecZ color'') 1.0
   where
     uv        = fragCoord / resolution
     x         = $vecX uv * 8.0

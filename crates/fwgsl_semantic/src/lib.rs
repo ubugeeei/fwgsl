@@ -43,19 +43,24 @@ impl SemanticAnalyzer {
         self.add_builtin_data_types();
         self.add_builtin_value_schemes();
 
-        // Arithmetic: I32 -> I32 -> I32
-        let i32_binop = Scheme::mono(Ty::arrow(Ty::i32(), Ty::arrow(Ty::i32(), Ty::i32())));
-        let _f32_binop = Scheme::mono(Ty::arrow(Ty::f32(), Ty::arrow(Ty::f32(), Ty::f32())));
-
+        // Arithmetic: a -> a -> a
+        let scalar = fresh_var_id(&mut self.engine);
+        let numeric_binop = Scheme::poly(
+            vec![scalar],
+            Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::Var(scalar))),
+        );
         for op in ["+", "-", "*", "/", "%"] {
-            // For now, make these work on I32. We'll add overloading later via type classes.
-            self.env.insert(op.to_string(), i32_binop.clone());
+            self.env.insert(op.to_string(), numeric_binop.clone());
         }
 
-        // Comparison: I32 -> I32 -> Bool
-        let i32_cmp = Scheme::mono(Ty::arrow(Ty::i32(), Ty::arrow(Ty::i32(), Ty::bool())));
+        // Comparison: a -> a -> Bool
+        let scalar = fresh_var_id(&mut self.engine);
+        let numeric_cmp = Scheme::poly(
+            vec![scalar],
+            Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::bool())),
+        );
         for op in ["==", "/=", "<", ">", "<=", ">="] {
-            self.env.insert(op.to_string(), i32_cmp.clone());
+            self.env.insert(op.to_string(), numeric_cmp.clone());
         }
 
         // Boolean ops
@@ -318,6 +323,154 @@ impl SemanticAnalyzer {
                 vec![a],
                 Ty::arrow(Ty::Var(a), Ty::arrow(option_ty(Ty::Var(a)), Ty::Var(a))),
             ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        let unary_numeric = Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), Ty::Var(a)));
+        self.insert_builtin_names(
+            &[
+                "$sin", "$cos", "$abs", "$fract", "$floor", "$sign", "$sqrt", "negate",
+            ],
+            unary_numeric,
+        );
+
+        let dim = fresh_var_id(&mut self.engine);
+        let scalar = fresh_var_id(&mut self.engine);
+        let vector = Ty::app(
+            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
+            Ty::Var(scalar),
+        );
+        self.insert_builtin_names(
+            &["$normalize"],
+            Scheme::poly(vec![dim, scalar], Ty::arrow(vector.clone(), vector.clone())),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        let binary_numeric = Scheme::poly(
+            vec![a],
+            Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), Ty::Var(a))),
+        );
+        self.insert_builtin_names(
+            &["$max", "$min", "$step", "$mod", "$pow", "$reflect", "$atan"],
+            binary_numeric,
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$clamp"],
+            Scheme::poly(
+                vec![a],
+                Ty::arrow(
+                    Ty::Var(a),
+                    Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), Ty::Var(a))),
+                ),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$mix", "$smoothstep"],
+            Scheme::poly(
+                vec![a, b],
+                Ty::arrow(
+                    Ty::Var(a),
+                    Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::Var(a))),
+                ),
+            ),
+        );
+
+        let dim = fresh_var_id(&mut self.engine);
+        let scalar = fresh_var_id(&mut self.engine);
+        let vector = Ty::app(
+            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
+            Ty::Var(scalar),
+        );
+        self.insert_builtin_names(
+            &["$length"],
+            Scheme::poly(
+                vec![dim, scalar],
+                Ty::arrow(vector.clone(), Ty::Var(scalar)),
+            ),
+        );
+
+        let dim = fresh_var_id(&mut self.engine);
+        let scalar = fresh_var_id(&mut self.engine);
+        let vector = Ty::app(
+            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
+            Ty::Var(scalar),
+        );
+        self.insert_builtin_names(
+            &["$dot"],
+            Scheme::poly(
+                vec![dim, scalar],
+                Ty::arrow(vector.clone(), Ty::arrow(vector.clone(), Ty::Var(scalar))),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$vec2"],
+            Scheme::poly(
+                vec![a],
+                Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), vector_ty(2, Ty::Var(a)))),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$vec3"],
+            Scheme::poly(
+                vec![a],
+                Ty::arrow(
+                    Ty::Var(a),
+                    Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), vector_ty(3, Ty::Var(a)))),
+                ),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$vec4"],
+            Scheme::poly(
+                vec![a],
+                Ty::arrow(
+                    Ty::Var(a),
+                    Ty::arrow(
+                        Ty::Var(a),
+                        Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), vector_ty(4, Ty::Var(a)))),
+                    ),
+                ),
+            ),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$splat2"],
+            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), vector_ty(2, Ty::Var(a)))),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$splat3"],
+            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), vector_ty(3, Ty::Var(a)))),
+        );
+
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$splat4"],
+            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), vector_ty(4, Ty::Var(a)))),
+        );
+
+        let dim = fresh_var_id(&mut self.engine);
+        let scalar = fresh_var_id(&mut self.engine);
+        let vector = Ty::app(
+            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
+            Ty::Var(scalar),
+        );
+        self.insert_builtin_names(
+            &["$vecX", "$vecY", "$vecZ", "$vecW"],
+            Scheme::poly(vec![dim, scalar], Ty::arrow(vector, Ty::Var(scalar))),
         );
     }
 
