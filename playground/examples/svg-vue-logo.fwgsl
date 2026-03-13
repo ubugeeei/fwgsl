@@ -1,0 +1,85 @@
+-- Vue logo SVG effect playground sample
+-- Source asset: https://github.com/vuejs/art/blob/master/logo.svg
+
+use svg::asset("./assets/vue-logo.svg") as vue
+
+viewport =
+  canvas 960 600
+    |> background "#030816"
+    |> background2 "#102246"
+    |> accent "#7dd3fc"
+    |> duration 4200
+
+base =
+  vue
+    |> center 480 310
+    |> resize 312 270
+    |> opacity 0.98
+    |> blend sourceOver
+
+mist =
+  vue
+    |> center 480 310
+    |> resize 336 292
+    |> opacity 0.24
+    |> blend screen
+    |> blur 18
+    |> tint "#8de6ff" 1.0
+
+shards =
+  vue
+    |> center 480 310
+    |> resize 312 270
+    |> opacity 0.78
+    |> blend lighter
+    |> tint "#dff8ff" 0.28
+
+baseFade =
+  fade base 0.08 1.0
+    |> during 0 1200
+    |> ease (cubicBezier 0.22 1.0 0.36 1.0)
+
+baseColor =
+  color base "#35495e" "#42b883"
+    |> during 220 1500
+    |> ease (cubicBezier 0.33 1.0 0.68 1.0)
+
+baseTransform =
+  transform base (translate -74 26 . scale 0.76 . rotate (-15)) (translate 0 0 . scale 1.0 . rotate 0)
+    |> during 0 1700
+    |> ease (cubicBezier 0.18 1.0 0.32 1.0)
+
+baseParticles =
+  particles base 240
+    |> spread 240
+    |> size 3.0
+    |> drift 0.34
+    |> during 540 2200
+    |> ease (cubicBezier 0.15 0.9 0.25 1.0)
+
+mistFade =
+  fade mist 0.0 0.26
+    |> during 280 1400
+    |> ease (cubicBezier 0.22 1.0 0.36 1.0)
+
+mistTransform =
+  transform mist (translate -24 (-18) . scale 0.92 . rotate (-6)) (translate 0 0 . scale 1.06 . rotate 3)
+    |> during 0 2200
+    |> ease (cubicBezier 0.2 0.9 0.25 1.0)
+
+shardsFade =
+  fade shards 0.0 0.72
+    |> during 760 900
+    |> ease (cubicBezier 0.34 1.14 0.64 1.0)
+
+shardsColor =
+  color shards "#ffffff" "#7dd3fc"
+    |> during 880 1700
+    |> ease (cubicBezier 0.25 1.0 0.5 1.0)
+
+shardsGlass =
+  glass shards 26
+    |> spread 300
+    |> rotation 1.45
+    |> during 980 2300
+    |> ease (cubicBezier 0.16 1.0 0.3 1.0)

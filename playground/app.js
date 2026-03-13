@@ -74,13 +74,14 @@ const WGSL_OUTPUT_URI = 'inmemory://fwgsl/output.wgsl';
 const FEATURED_PRESETS = [
     { key: 'shadorial-14', shortLabel: 'Water' },
     { key: 'shadorial-15', shortLabel: 'Smoke' },
+    { key: 'svg-vue-logo', shortLabel: 'SVG FX' },
     { key: 'shadorial-13', shortLabel: 'Particles' },
     { key: 'graph', shortLabel: 'Graph' },
     { key: 'compute', shortLabel: 'Compute' },
 ];
 const FEATURED_PRESET_KEY_SET = new Set(FEATURED_PRESETS.map((preset) => preset.key));
 const FWGSL_KEYWORD_SET = new Set([
-    'module', 'where', 'import', 'data', 'type', 'class', 'instance',
+    'module', 'where', 'import', 'use', 'mod', 'pub', 'as', 'data', 'type', 'class', 'instance',
     'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else', 'do',
     'forall', 'infixl', 'infixr', 'infix', 'deriving',
 ]);
@@ -163,6 +164,15 @@ const STATIC_EDITOR_ITEMS = [
         detail: 'Module declaration',
         documentation: 'Declare the module name at the top of the file.',
         insertText: 'module ${1:Main}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
+    },
+    {
+        label: 'use',
+        detail: 'Rust-inspired import binding',
+        documentation: 'Import an item or a playground SVG asset.\n\n```fwgsl\nuse svg::asset("./assets/logo.svg") as Logo;\n```',
+        insertText: 'use ${1:path} as ${2:Name};',
         snippet: true,
         kind: 'Keyword',
         contexts: ['value', 'type'],
@@ -419,7 +429,7 @@ const FWGSL_LANGUAGE = {
     defaultToken: '',
     tokenPostfix: '.fwgsl',
     keywords: [
-        'module', 'where', 'import', 'data', 'type', 'class', 'instance',
+        'module', 'where', 'import', 'use', 'mod', 'pub', 'as', 'data', 'type', 'class', 'instance',
         'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else', 'do',
         'forall', 'infixl', 'infixr', 'infix', 'deriving',
     ],
@@ -539,6 +549,10 @@ const SHADORIAL_EXAMPLES = [
     ['shadorial-19', 'Shadorial 19 · Surface Shader', '../examples/shadorial/19-three-interactive.fwgsl'],
 ].map(([key, label, path]) => ({ key, label, path }));
 
+const PLAYGROUND_EXAMPLES = [
+    ['svg-vue-logo', 'SVG FX · Vue Logo', './examples/svg-vue-logo.fwgsl'],
+].map(([key, label, path]) => ({ key, label, path }));
+
 const EMBEDDED_EXAMPLES = window.FWGSL_EMBEDDED_EXAMPLES || {};
 
 const EXAMPLE_LIBRARY = {
@@ -556,11 +570,23 @@ for (const example of SHADORIAL_EXAMPLES) {
     };
 }
 
+for (const example of PLAYGROUND_EXAMPLES) {
+    EXAMPLE_LIBRARY[example.key] = {
+        ...example,
+        source: EMBEDDED_EXAMPLES[example.key] || example.source,
+    };
+}
+
 const PRESET_GROUPS = [
     {
         id: 'core',
         label: 'Core',
         keys: ['hello', 'adt', 'compute', 'ifexpr', 'graph'],
+    },
+    {
+        id: 'playground',
+        label: 'Playground',
+        keys: PLAYGROUND_EXAMPLES.map((example) => example.key),
     },
     {
         id: 'shadorial',
@@ -985,6 +1011,11 @@ function collectDocumentSymbols(source) {
                 }
             }
         }
+
+        const svgUseMatch = line.match(/^\s*use\s+svg::asset\(\s*['"][^'"]+['"]\s*\)\s+as\s+([A-Za-z_]\w*)\s*;?\s*$/);
+        if (svgUseMatch) {
+            identifiers.add(svgUseMatch[1]);
+        }
     }
 
     for (const match of source.matchAll(/\b[A-Za-z_][\w']*\b/g)) {
@@ -1053,6 +1084,8 @@ let previewStartTime = 0;
 let previewFrameCount = 0;
 let previewMouse = { x: -1, y: -1 };
 let currentExampleKey = DEFAULT_EXAMPLE_KEY;
+let activeSvgPreview = null;
+let previewRequestSerial = 0;
 
 // ============================================================
 // Initialize
@@ -1412,6 +1445,10 @@ function renderPreviewCanvas() {
     return document.getElementById('render-canvas');
 }
 
+function svgPreviewCanvas() {
+    return document.getElementById('svg-canvas');
+}
+
 function previewStageElement() {
     return document.getElementById('preview-stage');
 }
@@ -1421,11 +1458,16 @@ function stopActivePreview() {
         cancelAnimationFrame(previewAnimationFrame);
         previewAnimationFrame = 0;
     }
+    if (activeSvgPreview && typeof activeSvgPreview.stop === 'function') {
+        activeSvgPreview.stop();
+    }
+    activeSvgPreview = null;
 }
 
 function activatePreviewCanvas(mode) {
     computePreviewCanvas().classList.toggle('active', mode === 'compute');
     renderPreviewCanvas().classList.toggle('active', mode === 'render');
+    svgPreviewCanvas().classList.toggle('active', mode === 'svg');
 }
 
 function resizeCanvasToDisplaySize(canvas) {
@@ -2159,25 +2201,44 @@ function compile(options = {}) {
 
     window.clearTimeout(pendingCompileHandle);
     const source = editor.getValue();
+    const svgPreview = window.FWGSL_SVG_PREVIEW || null;
+    const preprocessed = svgPreview
+        ? svgPreview.preprocessSource(source)
+        : {
+            compilerSource: source,
+            svgScene: null,
+            diagnostics: [],
+        };
+    const compilerSource = preprocessed.compilerSource;
+    const previewRequestId = ++previewRequestSerial;
     document.body.classList.add('compiling');
     document.getElementById('editor-status').textContent = 'compiling...';
 
     const startTime = performance.now();
 
     try {
-        const resultJson = wasmModule.compile(source);
-        const result = JSON.parse(resultJson);
+        const result = compilerSource.trim()
+            ? JSON.parse(wasmModule.compile(compilerSource))
+            : { wgsl: '', diagnostics: [] };
         const elapsed = (performance.now() - startTime).toFixed(1);
+        const diagnostics = [
+            ...(result.diagnostics || []),
+            ...(preprocessed.diagnostics || []),
+        ];
+
+        if (preprocessed.svgScene && svgPreview) {
+            result.wgsl = svgPreview.buildOutput(preprocessed.svgScene);
+        }
 
         // Update WGSL output
         wgslEditor.setValue(result.wgsl || '// No output');
 
         // Update diagnostics
-        updateDiagnostics(result.diagnostics || []);
+        updateDiagnostics(diagnostics);
 
         // Update status
-        const issueCount = (result.diagnostics || []).length;
-        const hasErrors = (result.diagnostics || []).some((diag) => diag.severity === 'error');
+        const issueCount = diagnostics.length;
+        const hasErrors = diagnostics.some((diag) => diag.severity === 'error');
         document.getElementById('editor-status').textContent = options.reason === 'typing'
             ? hasErrors
                 ? `live errors (${issueCount})`
@@ -2190,8 +2251,26 @@ function compile(options = {}) {
             ? `${elapsed}ms · ${issueCount} issue${issueCount === 1 ? '' : 's'}`
             : `${elapsed}ms`;
 
-        // Run WebGPU preview for compute shaders and fullscreen render shaders
-        if (result.wgsl && !result.wgsl.startsWith('//')) {
+        if (preprocessed.svgScene && svgPreview) {
+            stopActivePreview();
+            svgPreview.runPreview(preprocessed.svgScene, {
+                canvas: svgPreviewCanvas(),
+                overlay: previewOverlayElement(),
+                activate: () => activatePreviewCanvas('svg'),
+                resizeCanvasToDisplaySize,
+            }).then((controller) => {
+                if (previewRequestId !== previewRequestSerial) {
+                    controller.stop();
+                    return;
+                }
+                activeSvgPreview = controller;
+            }).catch((error) => {
+                if (previewRequestId !== previewRequestSerial) {
+                    return;
+                }
+                showPreviewMessage(`SVG preview error: ${error.message}`);
+            });
+        } else if (result.wgsl && !result.wgsl.startsWith('//')) {
             runShaderPreview(result.wgsl);
         } else {
             showPreviewMessage('Compile a compute shader, `shade` function, or `graph` function to preview.');

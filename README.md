@@ -285,4 +285,11 @@ This repository uses `mise` for task entry points and keeps the workspace split 
 
 ## License
 
-MIT
+The repository's original source code is licensed under MIT. See
+[LICENSE](./LICENSE).
+
+The Vue logo sample asset at
+[playground/assets/vue-logo.svg](./playground/assets/vue-logo.svg)
+is a third-party asset from `vuejs/art` and remains subject to the Vue.js
+artwork license rather than MIT. Details are documented in
+[THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md).
