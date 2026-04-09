@@ -373,19 +373,23 @@ impl AstLowering {
             }
         }
 
-        let body = desugar_where(body, where_binds, span);
-        let (hir_body, body_ty) = self.lower_expr(&body, &mut local_env);
-
-        // Build function type and unify with declared type
-        let mut fun_ty = body_ty.clone();
+        // Unify parameter types with declared type signature BEFORE lowering
+        // the body, so that record update expressions can resolve concrete types.
+        let ret_ty_var = self.engine.fresh_var();
+        let mut fun_ty = ret_ty_var.clone();
         for pt in param_types.iter().rev() {
             fun_ty = Ty::arrow(pt.clone(), fun_ty);
         }
-
         if let Some(scheme) = self.env.lookup(name) {
             let declared = self.engine.instantiate(scheme);
             self.engine.unify(&fun_ty, &declared, span);
         }
+
+        let body = desugar_where(body, where_binds, span);
+        let (hir_body, body_ty) = self.lower_expr(&body, &mut local_env);
+
+        // Unify body type with the return type from the signature
+        self.engine.unify(&body_ty, &ret_ty_var, span);
 
         // Finalize types
         let final_params: Vec<(String, Ty)> = hir_params
@@ -525,9 +529,10 @@ impl AstLowering {
             }
         }
 
-        let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
-
-        let mut fun_ty = body_ty.clone();
+        // Unify parameter types with declared type signature BEFORE lowering
+        // the body, so that record update expressions can resolve concrete types.
+        let ret_ty_var = self.engine.fresh_var();
+        let mut fun_ty = ret_ty_var.clone();
         for pt in param_types.iter().rev() {
             fun_ty = Ty::arrow(pt.clone(), fun_ty);
         }
@@ -536,6 +541,9 @@ impl AstLowering {
             let declared = self.engine.instantiate(scheme);
             self.engine.unify(&fun_ty, &declared, span);
         }
+
+        let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
+        self.engine.unify(&body_ty, &ret_ty_var, span);
 
         let final_params: Vec<(String, Ty)> = hir_params
             .into_iter()
@@ -909,7 +917,45 @@ impl AstLowering {
                         return self.lower_bitfield_construct(bf_name, &bf_fields, fields, env, *span);
                     }
                 }
-                // Regular record: lower fields, emit first field value as fallback
+                // Regular record construction: Name { f1 = e1, f2 = e2 }
+                if let Some(con_name) = name {
+                    if let Some(con_info) = self.constructors.get(con_name).cloned() {
+                        let con_info = con_info.instantiate(&mut self.engine);
+                        if let ConstructorFields::Record(con_fields) = &con_info.fields {
+                            let field_map: HashMap<&str, &Expr> =
+                                fields.iter().map(|(n, e)| (n.as_str(), e)).collect();
+                            let mut args = Vec::new();
+                            for (field_name, field_ty) in con_fields {
+                                if let Some(val_expr) = field_map.get(field_name.as_str()) {
+                                    let (hir_val, val_ty) = self.lower_expr(val_expr, env);
+                                    self.engine.unify(&val_ty, field_ty, *span);
+                                    args.push(hir_val);
+                                } else {
+                                    self.engine.diagnostics.push(
+                                        fwgsl_diagnostics::Diagnostic::error(format!(
+                                            "missing field `{}` in record construction of `{}`",
+                                            field_name, con_name
+                                        ))
+                                        .with_label(fwgsl_diagnostics::Label::primary(*span, "missing field")),
+                                    );
+                                    args.push(HirExpr::Lit(HirLit::Int(0), field_ty.clone(), *span));
+                                }
+                            }
+                            let result_ty = con_info.result_ty.clone();
+                            return (
+                                HirExpr::ConstructorCall(
+                                    con_name.clone(),
+                                    con_info.tag,
+                                    args,
+                                    result_ty.clone(),
+                                    *span,
+                                ),
+                                result_ty,
+                            );
+                        }
+                    }
+                }
+                // Fallback for anonymous records or unknown constructors
                 if let Some((_, expr)) = fields.first() {
                     self.lower_expr(expr, env)
                 } else {
@@ -1123,10 +1169,92 @@ impl AstLowering {
                     return self.lower_bitfield_update(&type_name, hir_base, &bf_fields, fields, env, *span);
                 }
 
-                // Non-bitfield record update: not yet supported
+                // Non-bitfield record update: expr { field1 = val1, field2 = val2 }
+                // Look up the constructor for this record type.
+                let base_ty_final = self.engine.finalize(&base_ty);
+                let type_name = if let Ty::Con(ref name) = base_ty_final {
+                    Some(name.clone())
+                } else {
+                    None
+                };
+
+                // Find a record constructor for this type
+                let con_match = type_name.as_ref().and_then(|tn| {
+                    let dt = self.data_types.get(tn)?;
+                    for con_name in &dt.constructors {
+                        if let Some(con_info) = self.constructors.get(con_name) {
+                            if matches!(con_info.fields, ConstructorFields::Record(_)) {
+                                return Some(con_info.clone());
+                            }
+                        }
+                    }
+                    None
+                });
+
+                if let Some(con_info) = con_match {
+                    let con_info = con_info.instantiate(&mut self.engine);
+                    if let ConstructorFields::Record(con_fields) = &con_info.fields {
+                        self.engine.unify(&base_ty, &con_info.result_ty, *span);
+
+                        // Bind base expression to a temp variable to avoid re-evaluation
+                        let base_var = format!("_rec_base_{}", span.start);
+                        let base_var_ty = base_ty.clone();
+
+                        // Lower the updated field values
+                        let update_map: HashMap<&str, &Expr> =
+                            fields.iter().map(|(n, e)| (n.as_str(), e)).collect();
+
+                        // Build constructor args: updated fields use new values,
+                        // unchanged fields use FieldAccess on the base variable
+                        let mut args = Vec::new();
+                        for (field_name, field_ty) in con_fields {
+                            if let Some(val_expr) = update_map.get(field_name.as_str()) {
+                                let (hir_val, val_ty) = self.lower_expr(val_expr, env);
+                                self.engine.unify(&val_ty, field_ty, *span);
+                                args.push(hir_val);
+                            } else {
+                                // Copy from base: base_var.field_name
+                                args.push(HirExpr::FieldAccess(
+                                    Box::new(HirExpr::Var(
+                                        base_var.clone(),
+                                        base_var_ty.clone(),
+                                        *span,
+                                    )),
+                                    field_name.clone(),
+                                    field_ty.clone(),
+                                    *span,
+                                ));
+                            }
+                        }
+
+                        let result_ty = con_info.result_ty.clone();
+                        let constructor_call = HirExpr::ConstructorCall(
+                            con_info.type_name.clone(),
+                            con_info.tag,
+                            args,
+                            result_ty.clone(),
+                            *span,
+                        );
+
+                        // Wrap in let to bind the base: let _rec_base = <base> in Constructor(...)
+                        return (
+                            HirExpr::Let(
+                                vec![(base_var, hir_base)],
+                                Box::new(constructor_call),
+                                result_ty.clone(),
+                                *span,
+                            ),
+                            result_ty,
+                        );
+                    }
+                }
+
+                // Fallback: not a record type
                 self.engine.diagnostics.push(
-                    fwgsl_diagnostics::Diagnostic::error("Record update syntax is only supported for bitfield types")
-                        .with_label(fwgsl_diagnostics::Label::primary(*span, "not a bitfield type")),
+                    fwgsl_diagnostics::Diagnostic::error(
+                        "Record update syntax requires a record type (data type with named fields)",
+                    )
+                    .with_label(fwgsl_diagnostics::Label::primary(*span, "not a record type")),
                 );
                 (hir_base, base_ty)
             }

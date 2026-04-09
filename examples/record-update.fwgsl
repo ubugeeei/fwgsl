@@ -1,0 +1,27 @@
+-- Record update syntax: expr { field = newVal, ... }
+-- Unchanged fields are copied from the base expression automatically.
+
+data Particle = Particle {
+  x  : F32,
+  y  : F32,
+  vx : F32,
+  vy : F32,
+}
+
+-- Update a single field
+nudgeX : F32 -> Particle -> Particle
+nudgeX dx p = p { x = p.x + dx }
+
+-- Update multiple fields at once
+applyVelocity : F32 -> Particle -> Particle
+applyVelocity dt p = p { x = p.x + p.vx * dt, y = p.y + p.vy * dt }
+
+-- Record construction (for reference)
+makeParticle : F32 -> F32 -> Particle
+makeParticle px py = Particle { x = px, y = py, vx = 0.0, vy = 0.0 }
+
+-- Compose updates with let
+step : F32 -> F32 -> Particle -> Particle
+step dt dx p =
+  let p2 = applyVelocity dt p
+  in nudgeX dx p2
