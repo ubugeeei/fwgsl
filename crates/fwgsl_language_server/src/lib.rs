@@ -23,11 +23,20 @@ use tower_lsp::{Client, LanguageServer};
 
 use fwgsl_diagnostics::{Diagnostic as FwgslDiag, Severity as FwgslSeverity};
 use fwgsl_parser::lexer::Token;
+use fwgsl_parser::parser::Program;
 use fwgsl_parser::{lex, Parser};
 use fwgsl_semantic::SemanticAnalyzer;
 use fwgsl_span::Span;
 use fwgsl_syntax::SyntaxKind;
 use fwgsl_typechecker::{InferEngine, Scheme};
+
+/// Prepend prelude declarations to a parsed program.
+fn with_prelude(program: &mut Program) {
+    let prelude = fwgsl_parser::prelude_program();
+    let mut combined = prelude.decls.clone();
+    combined.append(&mut program.decls);
+    program.decls = combined;
+}
 
 // ============================================================================
 // Semantic token legend
@@ -108,7 +117,7 @@ impl FwgslBackend {
 
         // Phase 1: Parse
         let mut parser = Parser::new(text);
-        let program = parser.parse_program();
+        let mut program = parser.parse_program();
 
         // Collect parser diagnostics
         for diag in parser.diagnostics().iter() {
@@ -116,6 +125,9 @@ impl FwgslBackend {
                 all_diagnostics.push(lsp_diag);
             }
         }
+
+        // Prepend prelude
+        with_prelude(&mut program);
 
         // Phase 2: Semantic analysis
         let mut analyzer = SemanticAnalyzer::new();
@@ -317,7 +329,8 @@ pub fn build_completions(source: &str, pos: Position) -> Vec<CompletionItem> {
     }
 
     let mut parser = Parser::new(source);
-    let program = parser.parse_program();
+    let mut program = parser.parse_program();
+    with_prelude(&mut program);
     let mut analyzer = SemanticAnalyzer::new();
     analyzer.analyze(&program);
     let mut document_seen = HashSet::new();
@@ -529,7 +542,8 @@ pub fn build_hover(source: &str, pos: Position) -> Option<Hover> {
             }
 
             let mut parser = Parser::new(source);
-            let program = parser.parse_program();
+            let mut program = parser.parse_program();
+            with_prelude(&mut program);
             let mut analyzer = SemanticAnalyzer::new();
             analyzer.analyze(&program);
 

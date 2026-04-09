@@ -5,10 +5,6 @@ promote value = match value
   | Some x -> Ok x
   | None -> Err "missing value"
 
-withDefault defaultValue value = $unwrapOr defaultValue value
-
-increment value = $map (\x -> x + 1) value
-
 recover value = match value
   | Ok x -> x
   | Err _ -> 0

@@ -57,7 +57,7 @@ pub struct DataTypeInfo {
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
-        let mut sa = Self {
+        Self {
             env: TypeEnv::new(),
             engine: InferEngine::new(),
             constructors: HashMap::new(),
@@ -65,551 +65,6 @@ impl SemanticAnalyzer {
             type_aliases: HashMap::new(),
             traits: HashMap::new(),
             impls: Vec::new(),
-        };
-        sa.add_builtins();
-        sa
-    }
-
-    fn add_builtins(&mut self) {
-        self.add_builtin_data_types();
-        self.add_builtin_value_schemes();
-
-        // Arithmetic: a -> a -> a
-        let scalar = fresh_var_id(&mut self.engine);
-        let numeric_binop = Scheme::poly(
-            vec![scalar],
-            Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::Var(scalar))),
-        );
-        for op in ["+", "-", "*", "/", "%"] {
-            self.env.insert(op.to_string(), numeric_binop.clone());
-        }
-
-        // Built-in operator trait classes: Add(+), Sub(-), Mul(*), Div(/)
-        let binop_ty = Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::Var(scalar)));
-        for (trait_name, op) in [("Add", "+"), ("Sub", "-"), ("Mul", "*"), ("Div", "/")] {
-            self.traits.insert(
-                trait_name.to_string(),
-                TraitInfo {
-                    name: trait_name.to_string(),
-                    var: "a".to_string(),
-                    methods: vec![(op.to_string(), binop_ty.clone())],
-                },
-            );
-        }
-
-        // Comparison: a -> a -> Bool
-        let scalar = fresh_var_id(&mut self.engine);
-        let numeric_cmp = Scheme::poly(
-            vec![scalar],
-            Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::bool())),
-        );
-        for op in ["==", "/=", "<", ">", "<=", ">="] {
-            self.env.insert(op.to_string(), numeric_cmp.clone());
-        }
-
-        // Boolean ops
-        let bool_binop = Scheme::mono(Ty::arrow(Ty::bool(), Ty::arrow(Ty::bool(), Ty::bool())));
-        self.env.insert("&&".to_string(), bool_binop.clone());
-        self.env.insert("||".to_string(), bool_binop);
-    }
-
-    fn add_builtin_data_types(&mut self) {
-        self.register_builtin_data_type(
-            "Option",
-            &["a"],
-            vec![
-                ConDecl {
-                    name: "Some".into(),
-                    fields: ConFields::Positional(vec![builtin_type_var("a")]),
-                    discriminant: None,
-                    span: builtin_span(),
-                },
-                ConDecl {
-                    name: "None".into(),
-                    fields: ConFields::Empty,
-                    discriminant: None,
-                    span: builtin_span(),
-                },
-            ],
-        );
-
-        self.register_builtin_data_type(
-            "Result",
-            &["a"],
-            vec![
-                ConDecl {
-                    name: "Ok".into(),
-                    fields: ConFields::Positional(vec![builtin_type_var("a")]),
-                    discriminant: None,
-                    span: builtin_span(),
-                },
-                ConDecl {
-                    name: "Err".into(),
-                    fields: ConFields::Positional(vec![builtin_type_con("String")]),
-                    discriminant: None,
-                    span: builtin_span(),
-                },
-            ],
-        );
-
-        self.register_builtin_data_type(
-            "Pair",
-            &["a", "b"],
-            vec![ConDecl {
-                name: "Pair".into(),
-                fields: ConFields::Positional(vec![builtin_type_var("a"), builtin_type_var("b")]),
-                discriminant: None,
-                span: builtin_span(),
-            }],
-        );
-    }
-
-    fn add_builtin_value_schemes(&mut self) {
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["id"],
-            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), Ty::Var(a))),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["const"],
-            Scheme::poly(
-                vec![a, b],
-                Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::Var(a))),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let c = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["flip"],
-            Scheme::poly(
-                vec![a, b, c],
-                Ty::arrow(
-                    Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::Var(c))),
-                    Ty::arrow(Ty::Var(b), Ty::arrow(Ty::Var(a), Ty::Var(c))),
-                ),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let c = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["compose"],
-            Scheme::poly(
-                vec![a, b, c],
-                Ty::arrow(
-                    Ty::arrow(Ty::Var(b), Ty::Var(c)),
-                    Ty::arrow(
-                        Ty::arrow(Ty::Var(a), Ty::Var(b)),
-                        Ty::arrow(Ty::Var(a), Ty::Var(c)),
-                    ),
-                ),
-            ),
-        );
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["pure"],
-            Scheme::poly(
-                vec![f, a],
-                Ty::arrow(Ty::Var(a), Ty::app(Ty::Var(f), Ty::Var(a))),
-            ),
-        );
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
-        let fb = Ty::app(Ty::Var(f), Ty::Var(b));
-        self.insert_builtin_names(
-            &["bind"],
-            Scheme::poly(
-                vec![f, a, b],
-                Ty::arrow(fa.clone(), Ty::arrow(Ty::arrow(Ty::Var(a), fb.clone()), fb)),
-            ),
-        );
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
-        let fb = Ty::app(Ty::Var(f), Ty::Var(b));
-        let map_scheme = Scheme::poly(
-            vec![f, a, b],
-            Ty::arrow(
-                Ty::arrow(Ty::Var(a), Ty::Var(b)),
-                Ty::arrow(fa.clone(), fb.clone()),
-            ),
-        );
-        self.insert_builtin_names(&["fmap", "map", "$map"], map_scheme);
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
-        let filter_scheme = Scheme::poly(
-            vec![f, a],
-            Ty::arrow(Ty::arrow(Ty::Var(a), Ty::bool()), Ty::arrow(fa.clone(), fa)),
-        );
-        self.insert_builtin_names(&["filter", "$filter"], filter_scheme);
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
-        let fold_scheme = Scheme::poly(
-            vec![f, a, b],
-            Ty::arrow(
-                Ty::arrow(Ty::Var(b), Ty::arrow(Ty::Var(a), Ty::Var(b))),
-                Ty::arrow(Ty::Var(b), Ty::arrow(fa, Ty::Var(b))),
-            ),
-        );
-        self.insert_builtin_names(&["foldl", "fold", "$fold"], fold_scheme);
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let fa = Ty::app(Ty::Var(f), Ty::Var(a));
-        let foldr_scheme = Scheme::poly(
-            vec![f, a, b],
-            Ty::arrow(
-                Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::Var(b))),
-                Ty::arrow(Ty::Var(b), Ty::arrow(fa, Ty::Var(b))),
-            ),
-        );
-        self.insert_builtin_names(&["foldr", "$foldr"], foldr_scheme);
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        let nested = Ty::app(Ty::Var(f), Ty::app(Ty::Var(f), Ty::Var(a)));
-        let flat_scheme = Scheme::poly(
-            vec![f, a],
-            Ty::arrow(nested, Ty::app(Ty::Var(f), Ty::Var(a))),
-        );
-        self.insert_builtin_names(&["flat", "$flat"], flat_scheme);
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let fb = Ty::app(Ty::Var(f), Ty::Var(b));
-        let flat_map_scheme = Scheme::poly(
-            vec![f, a, b],
-            Ty::arrow(
-                Ty::arrow(Ty::Var(a), fb.clone()),
-                Ty::arrow(Ty::app(Ty::Var(f), Ty::Var(a)), fb),
-            ),
-        );
-        self.insert_builtin_names(&["flatMap", "$flatMap"], flat_map_scheme);
-
-        let f = fresh_var_id(&mut self.engine);
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let pair_ab = pair_ty(Ty::Var(a), Ty::Var(b));
-        let zip_scheme = Scheme::poly(
-            vec![f, a, b],
-            Ty::arrow(
-                Ty::app(Ty::Var(f), Ty::Var(a)),
-                Ty::arrow(
-                    Ty::app(Ty::Var(f), Ty::Var(b)),
-                    Ty::app(Ty::Var(f), pair_ab),
-                ),
-            ),
-        );
-        self.insert_builtin_names(&["zip", "$zip"], zip_scheme);
-
-        let f = fresh_var_id(&mut self.engine);
-        let bools = Ty::app(Ty::Var(f), Ty::bool());
-        let all_scheme = Scheme::poly(vec![f], Ty::arrow(bools.clone(), Ty::bool()));
-        self.insert_builtin_names(&["all", "$all"], all_scheme);
-
-        let f = fresh_var_id(&mut self.engine);
-        let bools = Ty::app(Ty::Var(f), Ty::bool());
-        let any_scheme = Scheme::poly(vec![f], Ty::arrow(bools, Ty::bool()));
-        self.insert_builtin_names(&["any", "$any"], any_scheme);
-
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["fst", "$fst"],
-            Scheme::poly(
-                vec![a, b],
-                Ty::arrow(pair_ty(Ty::Var(a), Ty::Var(b)), Ty::Var(a)),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["snd", "$snd"],
-            Scheme::poly(
-                vec![a, b],
-                Ty::arrow(pair_ty(Ty::Var(a), Ty::Var(b)), Ty::Var(b)),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["swap", "$swap"],
-            Scheme::poly(
-                vec![a, b],
-                Ty::arrow(
-                    pair_ty(Ty::Var(a), Ty::Var(b)),
-                    pair_ty(Ty::Var(b), Ty::Var(a)),
-                ),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["unwrapOr", "$unwrapOr"],
-            Scheme::poly(
-                vec![a],
-                Ty::arrow(Ty::Var(a), Ty::arrow(option_ty(Ty::Var(a)), Ty::Var(a))),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        let unary_numeric = Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), Ty::Var(a)));
-        self.insert_builtin_names(
-            &[
-                "$sin", "$cos", "$abs", "$fract", "$floor", "$sign", "$sqrt", "negate",
-                "$log", "$log2", "$exp", "$ceil", "$round", "$trunc",
-                "$dpdx", "$dpdy", "$dpdxCoarse", "$dpdxFine", "$dpdyCoarse", "$dpdyFine",
-                "$fwidth", "$fwidthCoarse", "$fwidthFine",
-            ],
-            unary_numeric,
-        );
-
-        let dim = fresh_var_id(&mut self.engine);
-        let scalar = fresh_var_id(&mut self.engine);
-        let vector = Ty::app(
-            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
-            Ty::Var(scalar),
-        );
-        self.insert_builtin_names(
-            &["$normalize"],
-            Scheme::poly(vec![dim, scalar], Ty::arrow(vector.clone(), vector.clone())),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        let binary_numeric = Scheme::poly(
-            vec![a],
-            Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), Ty::Var(a))),
-        );
-        self.insert_builtin_names(
-            &["$max", "$min", "$step", "$mod", "$pow", "$reflect", "$atan", "$atan2"],
-            binary_numeric,
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$clamp"],
-            Scheme::poly(
-                vec![a],
-                Ty::arrow(
-                    Ty::Var(a),
-                    Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), Ty::Var(a))),
-                ),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$mix", "$smoothstep"],
-            Scheme::poly(
-                vec![a, b],
-                Ty::arrow(
-                    Ty::Var(a),
-                    Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::Var(a))),
-                ),
-            ),
-        );
-
-        let dim = fresh_var_id(&mut self.engine);
-        let scalar = fresh_var_id(&mut self.engine);
-        let vector = Ty::app(
-            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
-            Ty::Var(scalar),
-        );
-        self.insert_builtin_names(
-            &["$length"],
-            Scheme::poly(
-                vec![dim, scalar],
-                Ty::arrow(vector.clone(), Ty::Var(scalar)),
-            ),
-        );
-
-        let dim = fresh_var_id(&mut self.engine);
-        let scalar = fresh_var_id(&mut self.engine);
-        let vector = Ty::app(
-            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
-            Ty::Var(scalar),
-        );
-        self.insert_builtin_names(
-            &["$dot"],
-            Scheme::poly(
-                vec![dim, scalar],
-                Ty::arrow(vector.clone(), Ty::arrow(vector.clone(), Ty::Var(scalar))),
-            ),
-        );
-
-        // $distance : Vec<n, a> -> Vec<n, a> -> a
-        let dim = fresh_var_id(&mut self.engine);
-        let scalar = fresh_var_id(&mut self.engine);
-        let vector = Ty::app(
-            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
-            Ty::Var(scalar),
-        );
-        self.insert_builtin_names(
-            &["$distance"],
-            Scheme::poly(
-                vec![dim, scalar],
-                Ty::arrow(vector.clone(), Ty::arrow(vector.clone(), Ty::Var(scalar))),
-            ),
-        );
-
-        // $cross : Vec<3, a> -> Vec<3, a> -> Vec<3, a>
-        let a = fresh_var_id(&mut self.engine);
-        let vec3_ty = vector_ty(3, Ty::Var(a));
-        self.insert_builtin_names(
-            &["$cross"],
-            Scheme::poly(
-                vec![a],
-                Ty::arrow(vec3_ty.clone(), Ty::arrow(vec3_ty.clone(), vec3_ty.clone())),
-            ),
-        );
-
-        // $select : a -> a -> Bool -> a  (WGSL: select(false_val, true_val, cond))
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$select"],
-            Scheme::poly(
-                vec![a],
-                Ty::arrow(
-                    Ty::Var(a),
-                    Ty::arrow(
-                        Ty::Var(a),
-                        Ty::arrow(Ty::Con("Bool".into()), Ty::Var(a)),
-                    ),
-                ),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$vec2"],
-            Scheme::poly(
-                vec![a],
-                Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), vector_ty(2, Ty::Var(a)))),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$vec3"],
-            Scheme::poly(
-                vec![a],
-                Ty::arrow(
-                    Ty::Var(a),
-                    Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), vector_ty(3, Ty::Var(a)))),
-                ),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$vec4"],
-            Scheme::poly(
-                vec![a],
-                Ty::arrow(
-                    Ty::Var(a),
-                    Ty::arrow(
-                        Ty::Var(a),
-                        Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), vector_ty(4, Ty::Var(a)))),
-                    ),
-                ),
-            ),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$splat2"],
-            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), vector_ty(2, Ty::Var(a)))),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$splat3"],
-            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), vector_ty(3, Ty::Var(a)))),
-        );
-
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["$splat4"],
-            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), vector_ty(4, Ty::Var(a)))),
-        );
-
-        let dim = fresh_var_id(&mut self.engine);
-        let scalar = fresh_var_id(&mut self.engine);
-        let vector = Ty::app(
-            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
-            Ty::Var(scalar),
-        );
-        self.insert_builtin_names(
-            &["$vecX", "$vecY", "$vecZ", "$vecW"],
-            Scheme::poly(vec![dim, scalar], Ty::arrow(vector, Ty::Var(scalar))),
-        );
-
-        // load : a -> a  (loads value from a Uniform/Storage resource)
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["load"],
-            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), Ty::Var(a))),
-        );
-
-        // toF32 : a -> F32  (numeric cast to F32)
-        let a = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["toF32"],
-            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), Ty::f32())),
-        );
-
-        // writeAt : a -> b -> c -> ()  (write to storage resource at index)
-        let a = fresh_var_id(&mut self.engine);
-        let b = fresh_var_id(&mut self.engine);
-        let c = fresh_var_id(&mut self.engine);
-        self.insert_builtin_names(
-            &["writeAt"],
-            Scheme::poly(
-                vec![a, b, c],
-                Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::arrow(Ty::Var(c), Ty::unit()))),
-            ),
-        );
-    }
-
-    fn register_builtin_data_type(
-        &mut self,
-        name: &str,
-        type_params: &[&str],
-        constructors: Vec<ConDecl>,
-    ) {
-        let type_params: Vec<String> = type_params
-            .iter()
-            .map(|param| (*param).to_string())
-            .collect();
-        self.register_data_type(name, &type_params, &constructors, builtin_span());
-    }
-
-    fn insert_builtin_names(&mut self, names: &[&str], scheme: Scheme) {
-        for name in names {
-            self.env.insert((*name).to_string(), scheme.clone());
         }
     }
 
@@ -664,6 +119,14 @@ impl SemanticAnalyzer {
                 // so that in the body, the variable has the inner type.
                 let inner_ty = unwrap_resource_type(&inferred_ty.ty);
                 self.env.insert(name.clone(), Scheme::mono(inner_ty));
+            }
+            if let Decl::ExternDecl { name, ty, .. } = decl {
+                let inferred_ty = self.convert_syntax_type(ty);
+                let flattened = Scheme {
+                    vars: inferred_ty.vars.clone(),
+                    ty: flatten_tuple_arrows(&inferred_ty.ty),
+                };
+                self.env.insert(name.clone(), flattened);
             }
         }
 
@@ -1427,18 +890,6 @@ impl Default for SemanticAnalyzer {
     }
 }
 
-fn builtin_span() -> Span {
-    Span::new(0, 0)
-}
-
-fn builtin_type_con(name: &str) -> Type {
-    Type::Con(name.to_string(), builtin_span())
-}
-
-fn builtin_type_var(name: &str) -> Type {
-    Type::Var(name.to_string(), builtin_span())
-}
-
 /// Produce a short suffix string from a Ty for name-mangling.
 pub fn format_type_suffix(ty: &Ty) -> String {
     match ty {
@@ -1623,10 +1074,18 @@ mod tests {
         Span::new(0, 0)
     }
 
+    fn with_prelude(program: &mut Program) {
+        let prelude = fwgsl_parser::prelude_program();
+        let mut combined = prelude.decls.clone();
+        combined.append(&mut program.decls);
+        program.decls = combined;
+    }
+
     #[test]
     fn test_empty_program() {
         let mut sa = SemanticAnalyzer::new();
-        let program = Program { decls: vec![] };
+        let mut program = Program { decls: vec![] };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
     }
@@ -1635,7 +1094,7 @@ mod tests {
     fn test_simple_function_inference() {
         let mut sa = SemanticAnalyzer::new();
         // f x = x + 1
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::FunDecl {
                 name: "f".into(),
                 params: vec![Pat::Var("x".into(), span())],
@@ -1650,6 +1109,7 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
         // f should have type I32 -> I32
@@ -1662,7 +1122,7 @@ mod tests {
     fn test_data_type_registration() {
         let mut sa = SemanticAnalyzer::new();
         // data Color = Red | Green | Blue
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::DataDecl {
                 name: "Color".into(),
                 type_params: vec![],
@@ -1690,6 +1150,7 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
         assert!(sa.constructors.contains_key("Red"));
@@ -1704,7 +1165,7 @@ mod tests {
     fn test_unbound_variable_error() {
         let mut sa = SemanticAnalyzer::new();
         // f x = y  (y is unbound)
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::FunDecl {
                 name: "f".into(),
                 params: vec![Pat::Var("x".into(), span())],
@@ -1714,6 +1175,7 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(sa.has_errors());
     }
@@ -1723,7 +1185,7 @@ mod tests {
         let mut sa = SemanticAnalyzer::new();
         // add :: I32 -> I32 -> I32
         // add x y = x + y
-        let program = Program {
+        let mut program = Program {
             decls: vec![
                 Decl::TypeSig {
                     name: "add".into(),
@@ -1754,6 +1216,7 @@ mod tests {
                 },
             ],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
     }
@@ -1761,7 +1224,7 @@ mod tests {
     #[test]
     fn test_generic_type_signature_reuses_type_variable() {
         let mut sa = SemanticAnalyzer::new();
-        let program = Program {
+        let mut program = Program {
             decls: vec![
                 Decl::TypeSig {
                     name: "id".into(),
@@ -1784,6 +1247,7 @@ mod tests {
             ],
         };
 
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
 
@@ -1798,7 +1262,7 @@ mod tests {
     #[test]
     fn test_generic_constructor_pattern_inference() {
         let mut sa = SemanticAnalyzer::new();
-        let program = Program {
+        let mut program = Program {
             decls: vec![
                 Decl::DataDecl {
                     name: "Box".into(),
@@ -1827,6 +1291,7 @@ mod tests {
             ],
         };
 
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
 
@@ -1844,7 +1309,7 @@ mod tests {
     #[test]
     fn test_phantom_constructor_is_polymorphic() {
         let mut sa = SemanticAnalyzer::new();
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::DataDecl {
                 name: "Phantom".into(),
                 type_params: vec!["a".into()],
@@ -1859,6 +1324,7 @@ mod tests {
             }],
         };
 
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
 
@@ -1874,7 +1340,7 @@ mod tests {
     fn test_if_expr_type_check() {
         let mut sa = SemanticAnalyzer::new();
         // f x = if x == 0 then 1 else 2
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::FunDecl {
                 name: "f".into(),
                 params: vec![Pat::Var("x".into(), span())],
@@ -1894,6 +1360,7 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
     }
@@ -1902,7 +1369,7 @@ mod tests {
     fn test_let_expr() {
         let mut sa = SemanticAnalyzer::new();
         // f = let x = 42 in x + 1
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::FunDecl {
                 name: "f".into(),
                 params: vec![],
@@ -1921,6 +1388,7 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
     }
@@ -1929,7 +1397,7 @@ mod tests {
     fn test_where_clause() {
         let mut sa = SemanticAnalyzer::new();
         // f x = y + 1 where y = x
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::FunDecl {
                 name: "f".into(),
                 params: vec![Pat::Var("x".into(), span())],
@@ -1944,6 +1412,7 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
 
@@ -1956,7 +1425,7 @@ mod tests {
     fn test_lambda_inference() {
         let mut sa = SemanticAnalyzer::new();
         // f = \x -> x + 1
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::FunDecl {
                 name: "f".into(),
                 params: vec![],
@@ -1975,6 +1444,7 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
     }
@@ -1984,7 +1454,7 @@ mod tests {
         let mut sa = SemanticAnalyzer::new();
         // data Bool2 = True2 | False2
         // f x = match x | True2 -> 1 | False2 -> 0
-        let program = Program {
+        let mut program = Program {
             decls: vec![
                 Decl::DataDecl {
                     name: "Bool2".into(),
@@ -2029,13 +1499,17 @@ mod tests {
                 },
             ],
         };
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
     }
 
     #[test]
     fn test_builtin_option_result_and_tensor_utilities_are_registered() {
-        let sa = SemanticAnalyzer::new();
+        let mut sa = SemanticAnalyzer::new();
+        let mut program = Program { decls: vec![] };
+        with_prelude(&mut program);
+        sa.analyze(&program);
 
         for name in [
             "Some",
@@ -2043,16 +1517,15 @@ mod tests {
             "Ok",
             "Err",
             "Pair",
-            "$map",
-            "$filter",
-            "$fold",
-            "$foldr",
-            "$zip",
-            "$flat",
-            "$flatMap",
-            "$all",
-            "$any",
-            "$unwrapOr",
+            "$sin",
+            "$cos",
+            "$normalize",
+            "$length",
+            "$vec2",
+            "$vec4",
+            "load",
+            "toF32",
+            "writeAt",
         ] {
             assert!(sa.env.lookup(name).is_some(), "missing builtin: {}", name);
         }
@@ -2061,8 +1534,10 @@ mod tests {
     #[test]
     fn test_builtin_option_result_and_map_type_check() {
         let mut sa = SemanticAnalyzer::new();
-        let program = Program {
+        let mut program = Program {
             decls: vec![
+                // lift : Option I32 -> Option I32
+                // lift value = match value | Some x -> Some (x + 1) | None -> None
                 Decl::TypeSig {
                     name: "lift".into(),
                     ty: Type::Arrow(
@@ -2084,22 +1559,27 @@ mod tests {
                 Decl::FunDecl {
                     name: "lift".into(),
                     params: vec![Pat::Var("value".into(), span())],
-                    body: Expr::App(
-                        Box::new(Expr::App(
-                            Box::new(Expr::Var("$map".into(), span())),
-                            Box::new(Expr::Lambda(
-                                vec![Pat::Var("x".into(), span())],
-                                Box::new(Expr::Infix(
-                                    Box::new(Expr::Var("x".into(), span())),
-                                    "+".into(),
-                                    Box::new(Expr::Lit(Lit::Int(1), span())),
-                                    span(),
-                                )),
-                                span(),
-                            )),
-                            span(),
-                        )),
+                    body: Expr::Case(
                         Box::new(Expr::Var("value".into(), span())),
+                        vec![
+                            (
+                                Pat::Con("Some".into(), vec![Pat::Var("x".into(), span())], span()),
+                                Expr::App(
+                                    Box::new(Expr::Var("Some".into(), span())),
+                                    Box::new(Expr::Infix(
+                                        Box::new(Expr::Var("x".into(), span())),
+                                        "+".into(),
+                                        Box::new(Expr::Lit(Lit::Int(1), span())),
+                                        span(),
+                                    )),
+                                    span(),
+                                ),
+                            ),
+                            (
+                                Pat::Con("None".into(), vec![], span()),
+                                Expr::Var("None".into(), span()),
+                            ),
+                        ],
                         span(),
                     ),
                     where_binds: vec![],
@@ -2144,6 +1624,7 @@ mod tests {
             ],
         };
 
+        with_prelude(&mut program);
         sa.analyze(&program);
         assert!(!sa.has_errors());
     }

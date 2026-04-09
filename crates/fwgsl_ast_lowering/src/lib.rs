@@ -32,7 +32,7 @@ impl AstLowering {
         if let Some(max_var_id) = sa.env.max_var_id() {
             engine.reserve_above(max_var_id + 1);
         }
-        let mut lowering = Self {
+        Self {
             env: sa.env.clone(),
             engine,
             constructors: sa.constructors.clone(),
@@ -40,31 +40,7 @@ impl AstLowering {
             type_aliases: sa.type_aliases.clone(),
             traits: sa.traits.clone(),
             impls: sa.impls.clone(),
-        };
-        lowering.add_builtins();
-        lowering
-    }
-
-    fn add_builtins(&mut self) {
-        let scalar = fresh_var_id(&mut self.engine);
-        let numeric_binop = Scheme::poly(
-            vec![scalar],
-            Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::Var(scalar))),
-        );
-        for op in ["+", "-", "*", "/", "%"] {
-            self.env.insert(op.to_string(), numeric_binop.clone());
         }
-        let scalar = fresh_var_id(&mut self.engine);
-        let numeric_cmp = Scheme::poly(
-            vec![scalar],
-            Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::bool())),
-        );
-        for op in ["==", "/=", "<", ">", "<=", ">="] {
-            self.env.insert(op.to_string(), numeric_cmp.clone());
-        }
-        let bool_binop = Scheme::mono(Ty::arrow(Ty::bool(), Ty::arrow(Ty::bool(), Ty::bool())));
-        self.env.insert("&&".to_string(), bool_binop.clone());
-        self.env.insert("||".to_string(), bool_binop);
     }
 
     /// Lower the entire program.
@@ -123,6 +99,14 @@ impl AstLowering {
             if let Decl::ConstDecl { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type_scheme(ty);
                 self.env.insert(name.clone(), inferred_ty);
+            }
+            if let Decl::ExternDecl { name, ty, .. } = decl {
+                let inferred_ty = self.convert_syntax_type_scheme(ty);
+                let flattened = Scheme {
+                    vars: inferred_ty.vars.clone(),
+                    ty: flatten_tuple_arrows(&inferred_ty.ty),
+                };
+                self.env.insert(name.clone(), flattened);
             }
         }
 
@@ -257,7 +241,7 @@ impl AstLowering {
                         span: *span,
                     });
                 }
-                Decl::TypeSig { .. } | Decl::TypeAlias { .. } => {}
+                Decl::TypeSig { .. } | Decl::TypeAlias { .. } | Decl::ExternDecl { .. } => {}
                 Decl::TraitDecl { .. } => {
                     // Trait declarations are type-level only — no HIR output.
                 }
@@ -1689,9 +1673,16 @@ mod tests {
         Span::new(0, 0)
     }
 
+    fn with_prelude(program: &mut Program) {
+        let prelude = fwgsl_parser::prelude_program();
+        let mut combined = prelude.decls.clone();
+        combined.append(&mut program.decls);
+        program.decls = combined;
+    }
+
     #[test]
     fn test_lower_add_function() {
-        let program = Program {
+        let mut program = Program {
             decls: vec![
                 Decl::TypeSig {
                     name: "add".into(),
@@ -1722,6 +1713,7 @@ mod tests {
                 },
             ],
         };
+        with_prelude(&mut program);
 
         let mut sa = SemanticAnalyzer::new();
         sa.analyze(&program);
@@ -1739,19 +1731,19 @@ mod tests {
 
     #[test]
     fn test_lower_empty_program() {
-        let program = Program { decls: vec![] };
+        let mut program = Program { decls: vec![] };
+        with_prelude(&mut program);
         let mut sa = SemanticAnalyzer::new();
         sa.analyze(&program);
         let mut lowering = AstLowering::new(&sa);
         let hir = lowering.lower_program(&program);
-        assert!(hir.functions.is_empty());
-        assert!(hir.data_types.is_empty());
+        // Prelude contributes data types but no user functions or entry points
         assert!(hir.entry_points.is_empty());
     }
 
     #[test]
     fn test_lower_where_clause() {
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::FunDecl {
                 name: "f".into(),
                 params: vec![Pat::Var("x".into(), span())],
@@ -1766,6 +1758,7 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
 
         let mut sa = SemanticAnalyzer::new();
         sa.analyze(&program);
@@ -1791,7 +1784,7 @@ mod tests {
 
     #[test]
     fn test_lower_data_type() {
-        let program = Program {
+        let mut program = Program {
             decls: vec![Decl::DataDecl {
                 name: "Color".into(),
                 type_params: vec![],
@@ -1819,14 +1812,14 @@ mod tests {
                 comments: vec![],
             }],
         };
+        with_prelude(&mut program);
 
         let mut sa = SemanticAnalyzer::new();
         sa.analyze(&program);
         let mut lowering = AstLowering::new(&sa);
         let hir = lowering.lower_program(&program);
 
-        assert_eq!(hir.data_types.len(), 1);
-        let dt = &hir.data_types[0];
+        let dt = hir.data_types.iter().find(|dt| dt.name == "Color").expect("Color data type");
         assert_eq!(dt.name, "Color");
         assert_eq!(dt.constructors.len(), 3);
         assert_eq!(dt.constructors[0].name, "Red");

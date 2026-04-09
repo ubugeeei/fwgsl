@@ -25,11 +25,25 @@ use fwgsl_wgsl_codegen::emit_wgsl;
 // Helper utilities
 // =========================================================================
 
-/// Parse fwgsl source and return (program, has_parser_errors).
-fn parse(source: &str) -> (Program, bool) {
+fn with_prelude(program: &mut Program) {
+    let prelude = fwgsl_parser::prelude_program();
+    let mut combined = prelude.decls.clone();
+    combined.append(&mut program.decls);
+    program.decls = combined;
+}
+
+/// Parse fwgsl source without prelude. Use for parse-only tests that inspect decl counts/indices.
+fn parse_raw(source: &str) -> (Program, bool) {
     let mut parser = Parser::new(source);
     let program = parser.parse_program();
     let has_errors = parser.diagnostics().has_errors();
+    (program, has_errors)
+}
+
+/// Parse fwgsl source with prelude prepended. Use for semantic analysis and compilation tests.
+fn parse(source: &str) -> (Program, bool) {
+    let (mut program, has_errors) = parse_raw(source);
+    with_prelude(&mut program);
     (program, has_errors)
 }
 
@@ -52,7 +66,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_single_type_signature() {
         let source = "add : I32 -> I32 -> I32";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "single type sig should parse without errors");
         assert_eq!(program.decls.len(), 1);
         assert!(
@@ -65,7 +79,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_dependent_array_type_signature() {
         let source = "grid : Tensor 2 (Tensor 4 F32)";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(
             !has_errors,
             "dependent array type sig should parse without errors"
@@ -81,7 +95,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_single_function() {
         let source = "add x y = x + y";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "single function should parse without errors");
         assert_eq!(program.decls.len(), 1);
         assert!(
@@ -94,7 +108,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_data_type_declaration() {
         let source = "data Color = Red | Green | Blue";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "data declaration should parse without errors");
         assert_eq!(program.decls.len(), 1);
         if let Decl::DataDecl {
@@ -118,7 +132,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_generic_data_type_declaration() {
         let source = "data Box a = Box a";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(
             !has_errors,
             "generic data declaration should parse without errors"
@@ -143,7 +157,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_function_with_inline_let() {
         let source = "f x = let y = x + 1 in y";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "function with let should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -159,7 +173,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_function_with_where_clause() {
         let source = "f x = y + 1 where y = x";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(
             !has_errors,
             "function with where should parse without errors"
@@ -183,7 +197,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_lambda_expression() {
         let source = "f = \\x y -> x + y";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "lambda should parse without errors");
         assert_eq!(program.decls.len(), 1);
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
@@ -200,7 +214,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_if_expression() {
         let source = "f x = if x == 0 then 1 else 2";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "if expression should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -216,7 +230,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_case_expression() {
         let source = "f c = match c\n  | Red -> 0\n  | Green -> 1\n  | Blue -> 2";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "case expression should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -232,7 +246,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_infix_operators() {
         let source = "f x y = x + y * 2 - 1";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "infix operators should parse without errors");
         assert_eq!(program.decls.len(), 1);
     }
@@ -240,7 +254,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_operator_section() {
         let source = "f = (+)";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "operator section should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -256,7 +270,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_negation() {
         let source = "neg x = -x";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "negation should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -272,7 +286,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_parenthesized_expression() {
         let source = "f x = (x + 1) * 2";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(
             !has_errors,
             "parenthesized expression should parse without errors"
@@ -283,7 +297,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_tuple() {
         let source = "f = (1, 2, 3)";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "tuple should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -299,7 +313,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_unit() {
         let source = "f = ()";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "unit should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -315,7 +329,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_entry_point() {
         let source = "@vertex\nmain x = x + 1";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "entry point should parse without errors");
         assert_eq!(program.decls.len(), 1);
         if let Decl::EntryPoint {
@@ -334,7 +348,7 @@ mod parse_single_decl_tests {
     fn parse_compute_entry_point_with_workgroup_size() {
         // The parser requires parenthesized attribute arguments: @workgroup_size(64, 1, 1)
         let source = "@compute @workgroup_size(64, 1, 1)\nmain x = x + 1";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(
             !has_errors,
             "compute entry point should parse without errors"
@@ -357,7 +371,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_precedence_mul_over_add() {
         let source = "f = 1 + 2 * 3";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors);
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -373,7 +387,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_nested_let() {
         let source = "f x = let a = 1 in let b = 2 in a + b";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "nested let should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -389,7 +403,7 @@ mod parse_single_decl_tests {
     #[test]
     fn parse_multiline_let_in() {
         let source = "f x =\n  let y = x + 1\n  in y * 2";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "multiline let-in should parse without errors");
         if let Decl::FunDecl { body, .. } = &program.decls[0] {
             assert!(
@@ -429,7 +443,7 @@ main x =
   let y = add x 1
   in show Red
 ";
-        let (program, _has_errors) = parse(source);
+        let (program, _has_errors) = parse_raw(source);
         assert!(
             program.decls.len() >= 4,
             "full program should produce at least 4 declarations, got {}",
@@ -447,7 +461,7 @@ show c = match c
   | Green -> 1
   | Blue -> 2
 ";
-        let (program, _has_errors) = parse(source);
+        let (program, _has_errors) = parse_raw(source);
         assert!(
             matches!(&program.decls[0], Decl::DataDecl { name, .. } if name == "Color"),
             "first declaration should be DataDecl Color, got {:?}",
@@ -458,7 +472,7 @@ show c = match c
     #[test]
     fn parse_comments_are_ignored_by_lexer() {
         let source = "-- This is a comment\nadd x y = x + y";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "comments should not cause parse errors");
         assert!(
             program.decls.len() >= 1,
@@ -469,7 +483,7 @@ show c = match c
     #[test]
     fn parse_block_comment_is_ignored() {
         let source = "{- block comment -} add x y = x + y";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "block comments should not cause parse errors");
         assert_eq!(program.decls.len(), 1);
     }
@@ -1394,14 +1408,14 @@ mod error_recovery_tests {
 
     #[test]
     fn parser_handles_empty_input() {
-        let (program, has_errors) = parse("");
+        let (program, has_errors) = parse_raw("");
         assert!(!has_errors, "empty input should not be a parse error");
         assert!(program.decls.is_empty());
     }
 
     #[test]
     fn parser_handles_only_whitespace() {
-        let (_program, has_errors) = parse("   \n\n  \n");
+        let (_program, has_errors) = parse_raw("   \n\n  \n");
         assert!(!has_errors, "whitespace-only input should not error");
     }
 
@@ -1512,7 +1526,7 @@ mod error_recovery_tests {
     #[test]
     fn parser_handles_nested_block_comments() {
         let source = "{- outer {- inner -} still outer -} f x = x";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "nested block comments should not cause errors");
         assert!(
             !program.decls.is_empty(),
@@ -1782,11 +1796,13 @@ mod full_pipeline_tests {
     /// Full pipeline helper: source -> WGSL
     fn compile_to_wgsl(source: &str) -> Result<String, String> {
         let mut parser = Parser::new(source);
-        let program = parser.parse_program();
+        let mut program = parser.parse_program();
 
         if parser.diagnostics().has_errors() {
             return Err("parse error".into());
         }
+
+        with_prelude(&mut program);
 
         let mut sa = SemanticAnalyzer::new();
         sa.analyze(&program);
@@ -1992,11 +2008,13 @@ mod trait_tests {
 
     fn compile_to_wgsl(source: &str) -> Result<String, String> {
         let mut parser = Parser::new(source);
-        let program = parser.parse_program();
+        let mut program = parser.parse_program();
 
         if parser.diagnostics().has_errors() {
             return Err("parse error".into());
         }
+
+        with_prelude(&mut program);
 
         let mut sa = SemanticAnalyzer::new();
         sa.analyze(&program);
@@ -2020,7 +2038,7 @@ mod trait_tests {
     #[test]
     fn parse_trait_decl() {
         let source = "trait Num a where\n  add : a -> a -> a\n  sub : a -> a -> a";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "trait decl should parse without errors");
         assert_eq!(program.decls.len(), 1);
         match &program.decls[0] {
@@ -2038,7 +2056,7 @@ mod trait_tests {
     #[test]
     fn parse_impl_decl() {
         let source = "impl Num F32 where\n  add x y = x + y\n  sub x y = x - y";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "impl decl should parse without errors");
         assert_eq!(program.decls.len(), 1);
         match &program.decls[0] {
@@ -2055,7 +2073,7 @@ mod trait_tests {
     #[test]
     fn parse_trait_with_operator_methods() {
         let source = "trait Num a where\n  (+) : a -> a -> a\n  (-) : a -> a -> a";
-        let (program, has_errors) = parse(source);
+        let (program, has_errors) = parse_raw(source);
         assert!(!has_errors, "trait with operators should parse without errors");
         match &program.decls[0] {
             Decl::TraitDecl { methods, .. } => {

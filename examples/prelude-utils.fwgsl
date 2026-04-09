@@ -1,24 +1,11 @@
--- Higher-order prelude utilities.
+-- Prelude utility functions available via extern declarations.
 -- This file is intended for `fwgsl check`.
 
-keepPositive values = $filter (\x -> x > 0) values
+clampedAdd : F32 -> F32 -> F32
+clampedAdd x y = $clamp (x + y) 0.0 1.0
 
-sumValues values = $fold (\acc x -> acc + x) 0 values
+safeLength : Vec<3, F32> -> F32
+safeLength v = $max ($length v) 0.001
 
-sumValuesR values = $foldr (\x acc -> x + acc) 0 values
-
-zipSelf values = $zip values values
-
-flatten nested = $flat nested
-
-stepAll values = $flatMap (\x -> Some (x + 1)) values
-
-allReady flags = $all flags
-
-anyReady flags = $any flags
-
-leftOf pair = $fst pair
-
-rightOf pair = $snd pair
-
-swapped pair = $swap pair
+lerp : F32 -> F32 -> F32 -> F32
+lerp a b t = $mix a b t

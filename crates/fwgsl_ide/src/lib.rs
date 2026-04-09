@@ -401,9 +401,10 @@ impl<'a> IndexBuilder<'a> {
                         self.top_level_values.insert(m.name.clone(), mid);
                     }
                 }
-                Decl::ImplDecl { .. } => {
+                Decl::ImplDecl { .. } | Decl::ExternDecl { .. } => {
                     // Impl methods are lowered as mangled functions;
-                    // no separate top-level symbols needed.
+                    // Extern declarations are type-level only.
+                    // No separate top-level symbols needed.
                 }
             }
         }
@@ -539,6 +540,9 @@ impl<'a> IndexBuilder<'a> {
                 for m in methods {
                     self.walk_expr(&m.body, frames);
                 }
+            }
+            Decl::ExternDecl { ty, .. } => {
+                self.walk_type(ty, frames);
             }
         }
     }
@@ -1107,7 +1111,14 @@ pub fn build_references(
 
 fn build_ide_state(source: &str) -> IdeState<'_> {
     let mut parser = Parser::new(source);
-    let program = parser.parse_program();
+    let mut program = parser.parse_program();
+
+    // Prepend prelude declarations for type environment
+    let prelude = fwgsl_parser::prelude_program();
+    let mut combined = prelude.decls.clone();
+    combined.append(&mut program.decls);
+    program.decls = combined;
+
     let mut analyzer = SemanticAnalyzer::new();
     analyzer.analyze(&program);
     let index = IndexBuilder::new(source).build(&program);

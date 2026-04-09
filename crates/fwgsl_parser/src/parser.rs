@@ -32,7 +32,8 @@ impl Decl {
             | Decl::BitfieldDecl { comments, .. }
             | Decl::ConstDecl { comments, .. }
             | Decl::TraitDecl { comments, .. }
-            | Decl::ImplDecl { comments, .. } => comments,
+            | Decl::ImplDecl { comments, .. }
+            | Decl::ExternDecl { comments, .. } => comments,
         }
     }
 
@@ -48,7 +49,8 @@ impl Decl {
             | Decl::BitfieldDecl { comments, .. }
             | Decl::ConstDecl { comments, .. }
             | Decl::TraitDecl { comments, .. }
-            | Decl::ImplDecl { comments, .. } => comments,
+            | Decl::ImplDecl { comments, .. }
+            | Decl::ExternDecl { comments, .. } => comments,
         }
     }
 
@@ -64,7 +66,8 @@ impl Decl {
             | Decl::BitfieldDecl { span, .. }
             | Decl::ConstDecl { span, .. }
             | Decl::TraitDecl { span, .. }
-            | Decl::ImplDecl { span, .. } => *span,
+            | Decl::ImplDecl { span, .. }
+            | Decl::ExternDecl { span, .. } => *span,
         }
     }
 }
@@ -147,6 +150,14 @@ pub enum Decl {
         /// The concrete type this impl is for.
         ty: Type,
         methods: Vec<ImplMethod>,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Extern declaration: `extern sin : a -> a`
+    /// Declares a built-in name with its type signature (no body).
+    ExternDecl {
+        name: String,
+        ty: Type,
         span: Span,
         comments: Vec<String>,
     },
@@ -643,7 +654,7 @@ impl Parser {
             }
             SyntaxKind::KwData => Some(self.parse_data_decl()),
             SyntaxKind::KwAlias => Some(self.parse_alias_decl()),
-            SyntaxKind::KwExtern => Some(self.parse_extern_resource_decl()),
+            SyntaxKind::KwExtern => Some(self.parse_extern_decl()),
             SyntaxKind::KwResource => Some(self.parse_resource_decl(false)),
             SyntaxKind::KwBitfield => Some(self.parse_bitfield_decl()),
             SyntaxKind::KwConst => Some(self.parse_const_decl()),
@@ -991,10 +1002,42 @@ impl Parser {
     }
 
 
-    fn parse_extern_resource_decl(&mut self) -> Decl {
+    /// Parse `extern resource ...` or `extern name : type`.
+    fn parse_extern_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
         self.expect(SyntaxKind::KwExtern);
         self.skip_trivia();
-        self.parse_resource_decl(true)
+
+        // Disambiguate: if next token is `resource`, delegate to resource parsing.
+        if self.at(SyntaxKind::KwResource) {
+            return self.parse_resource_decl(true);
+        }
+
+        // Otherwise: `extern name : type` or `extern (+) : type`
+        let name = if self.at(SyntaxKind::LParen) {
+            // Operator in parens: `(+)`, `(==)`, etc.
+            self.bump(); // consume `(`
+            self.skip_trivia();
+            let op_tok = self.bump();
+            let op = self.text_of(&op_tok).to_owned();
+            self.skip_trivia();
+            self.expect(SyntaxKind::RParen);
+            op
+        } else {
+            let name_tok = self.expect(SyntaxKind::Ident);
+            self.text_of(&name_tok).to_owned()
+        };
+        self.skip_trivia();
+        self.expect(SyntaxKind::Colon);
+        self.skip_trivia();
+        let ty = self.parse_type();
+        let span = self.span_from(start);
+        Decl::ExternDecl {
+            name,
+            ty,
+            span,
+            comments: vec![],
+        }
     }
 
     fn parse_resource_decl(&mut self, extern_consumed: bool) -> Decl {

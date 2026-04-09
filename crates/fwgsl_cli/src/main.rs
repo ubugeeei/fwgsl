@@ -68,12 +68,19 @@ OPTIONS:
     );
 }
 
+fn with_prelude(program: &mut fwgsl_parser::parser::Program) {
+    let prelude = fwgsl_parser::prelude_program();
+    let mut combined = prelude.decls.clone();
+    combined.append(&mut program.decls);
+    program.decls = combined;
+}
+
 fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool) {
     let source = read_file(file);
 
     // Parse
     let mut parser = fwgsl_parser::parser::Parser::new(&source);
-    let program = parser.parse_program();
+    let mut program = parser.parse_program();
 
     if emit_ast {
         println!("{:#?}", program);
@@ -89,6 +96,9 @@ fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool) {
         );
         process::exit(1);
     }
+
+    // Prepend prelude declarations
+    with_prelude(&mut program);
 
     // Semantic analysis
     let mut analyzer = fwgsl_semantic::SemanticAnalyzer::new();
@@ -141,7 +151,7 @@ fn cmd_check(file: &str) {
     let source = read_file(file);
 
     let mut parser = fwgsl_parser::parser::Parser::new(&source);
-    let program = parser.parse_program();
+    let mut program = parser.parse_program();
 
     let mut has_errors = false;
 
@@ -153,6 +163,8 @@ fn cmd_check(file: &str) {
         );
         has_errors = true;
     }
+
+    with_prelude(&mut program);
 
     let mut analyzer = fwgsl_semantic::SemanticAnalyzer::new();
     analyzer.analyze(&program);
