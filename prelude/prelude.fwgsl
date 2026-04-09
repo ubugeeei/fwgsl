@@ -51,76 +51,76 @@ extern (||) : Bool -> Bool -> Bool
 
 -- WGSL math — unary (a -> a)
 
-extern $sin   : a -> a
-extern $cos   : a -> a
-extern $abs   : a -> a
-extern $fract : a -> a
-extern $floor : a -> a
-extern $sign  : a -> a
-extern $sqrt  : a -> a
-extern $log   : a -> a
-extern $log2  : a -> a
-extern $exp   : a -> a
-extern $ceil  : a -> a
-extern $round : a -> a
-extern $trunc : a -> a
+extern sin   : a -> a
+extern cos   : a -> a
+extern abs   : a -> a
+extern fract : a -> a
+extern floor : a -> a
+extern sign  : a -> a
+extern sqrt  : a -> a
+extern log   : a -> a
+extern log2  : a -> a
+extern exp   : a -> a
+extern ceil  : a -> a
+extern round : a -> a
+extern trunc : a -> a
 extern negate : a -> a
 
 -- WGSL math — binary (a -> a -> a)
 
-extern $max     : a -> a -> a
-extern $min     : a -> a -> a
-extern $step    : a -> a -> a
-extern $mod     : a -> a -> a
-extern $pow     : a -> a -> a
-extern $reflect : a -> a -> a
-extern $atan    : a -> a -> a
-extern $atan2   : a -> a -> a
+extern max     : a -> a -> a
+extern min     : a -> a -> a
+extern step    : a -> a -> a
+extern mod     : a -> a -> a
+extern pow     : a -> a -> a
+extern reflect : a -> a -> a
+extern atan    : a -> a -> a
+extern atan2   : a -> a -> a
 
 -- WGSL math — ternary
 
-extern $clamp      : a -> a -> a -> a
-extern $mix        : a -> a -> b -> a
-extern $smoothstep : a -> a -> b -> a
+extern clamp      : a -> a -> a -> a
+extern mix        : a -> a -> b -> a
+extern smoothstep : a -> a -> b -> a
 
 -- WGSL vector operations
 
-extern $normalize : Vec<n, a> -> Vec<n, a>
-extern $length    : Vec<n, a> -> a
-extern $dot       : Vec<n, a> -> Vec<n, a> -> a
-extern $distance  : Vec<n, a> -> Vec<n, a> -> a
-extern $cross     : Vec<3, a> -> Vec<3, a> -> Vec<3, a>
+extern normalize : Vec<n, a> -> Vec<n, a>
+extern length    : Vec<n, a> -> a
+extern dot       : Vec<n, a> -> Vec<n, a> -> a
+extern distance  : Vec<n, a> -> Vec<n, a> -> a
+extern cross     : Vec<3, a> -> Vec<3, a> -> Vec<3, a>
 
-extern $select : a -> a -> Bool -> a
+extern select : a -> a -> Bool -> a
 
 -- Vector constructors
 
-extern $vec2 : a -> a -> Vec<2, a>
-extern $vec3 : a -> a -> a -> Vec<3, a>
-extern $vec4 : a -> a -> a -> a -> Vec<4, a>
+extern vec2 : a -> a -> Vec<2, a>
+extern vec3 : a -> a -> a -> Vec<3, a>
+extern vec4 : a -> a -> a -> a -> Vec<4, a>
 
-extern $splat2 : a -> Vec<2, a>
-extern $splat3 : a -> Vec<3, a>
-extern $splat4 : a -> Vec<4, a>
+extern splat2 : a -> Vec<2, a>
+extern splat3 : a -> Vec<3, a>
+extern splat4 : a -> Vec<4, a>
 
 -- Vector component accessors
 
-extern $vecX : Vec<n, a> -> a
-extern $vecY : Vec<n, a> -> a
-extern $vecZ : Vec<n, a> -> a
-extern $vecW : Vec<n, a> -> a
+extern vecX : Vec<n, a> -> a
+extern vecY : Vec<n, a> -> a
+extern vecZ : Vec<n, a> -> a
+extern vecW : Vec<n, a> -> a
 
 -- Fragment shader derivatives
 
-extern $dpdx       : a -> a
-extern $dpdy       : a -> a
-extern $dpdxCoarse : a -> a
-extern $dpdxFine   : a -> a
-extern $dpdyCoarse : a -> a
-extern $dpdyFine   : a -> a
-extern $fwidth      : a -> a
-extern $fwidthCoarse : a -> a
-extern $fwidthFine   : a -> a
+extern dpdx       : a -> a
+extern dpdy       : a -> a
+extern dpdxCoarse : a -> a
+extern dpdxFine   : a -> a
+extern dpdyCoarse : a -> a
+extern dpdyFine   : a -> a
+extern fwidth      : a -> a
+extern fwidthCoarse : a -> a
+extern fwidthFine   : a -> a
 
 -- Resource operations (compiler-special codegen)
 

@@ -27,5 +27,5 @@ extern resource output : Storage<ReadWrite, Array<Vec<4, F32>, 64>> @group 0 @bi
 main idx =
   let p      = load params
       scaled = applyScale p.intensity p.factor
-      color  = $vec4 scaled scaled scaled 1.0
+      color  = vec4 scaled scaled scaled 1.0
   in writeAt output idx color

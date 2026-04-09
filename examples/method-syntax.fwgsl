@@ -7,9 +7,9 @@
 trait Clampable a where
   clampVal : a -> a -> a -> a
 
--- F32 clamping via the built-in $clamp.
+-- F32 clamping via the built-in clamp.
 impl Clampable F32 where
-  clampVal x lo hi = $clamp x lo hi
+  clampVal x lo hi = clamp x lo hi
 
 -- A standalone helper (not in a trait) to demonstrate method sugar.
 half : F32 -> F32
@@ -37,5 +37,5 @@ main idx =
       cl = p.value.clampVal p.lo p.hi
       -- Pipeline compatibility: value |> half |> double
       d  = p.value |> half |> double
-      color = $vec4 h cl d 1.0
+      color = vec4 h cl d 1.0
   in writeAt output idx color

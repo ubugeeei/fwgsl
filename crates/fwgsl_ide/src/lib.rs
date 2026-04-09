@@ -1211,7 +1211,7 @@ fn completion_kind_for_symbol(symbol: &Symbol) -> CompletionItemKind {
 }
 
 fn builtin_completion_kind(label: &str) -> CompletionItemKind {
-    if label.starts_with('$') || label.chars().next().is_some_and(char::is_lowercase) {
+    if label.chars().next().is_some_and(char::is_lowercase) {
         CompletionItemKind::FUNCTION
     } else {
         CompletionItemKind::VARIABLE
@@ -1247,14 +1247,7 @@ fn generic_builtin_markdown(state: &IdeState<'_>, label: &str) -> Option<String>
 
 fn generic_builtin_markdown_text(label: &str, signature: &str) -> String {
     let mut sections = vec![format!("```fwgsl\n{} : {}\n```", label, signature)];
-    if label.starts_with('$') {
-        sections.push(
-            "Builtin prelude symbol that lowers directly to WGSL or a compiler intrinsic."
-                .to_owned(),
-        );
-    } else {
-        sections.push("Builtin symbol from the default prelude.".to_owned());
-    }
+    sections.push("Builtin prelude symbol.".to_owned());
     sections.push("Available everywhere without an explicit import.".to_owned());
     sections.join("\n\n")
 }
@@ -1505,8 +1498,8 @@ mod tests {
 
     #[test]
     fn completions_include_generic_prefixed_builtin_docs() {
-        let items = build_completions("$l", Position::new(0, 2));
-        let item = items.iter().find(|item| item.label == "$length").unwrap();
+        let items = build_completions("le", Position::new(0, 2));
+        let item = items.iter().find(|item| item.label == "length").unwrap();
         assert!(item
             .detail
             .as_deref()
@@ -1514,7 +1507,7 @@ mod tests {
             .contains("builtin"));
         match &item.documentation {
             Some(Documentation::MarkupContent(markup)) => {
-                assert!(markup.value.contains("$length"));
+                assert!(markup.value.contains("length"));
                 assert!(markup.value.contains("Builtin prelude symbol"));
             }
             other => panic!("expected builtin docs, got {other:?}"),
@@ -1523,11 +1516,11 @@ mod tests {
 
     #[test]
     fn hover_on_prefixed_builtin_includes_signature() {
-        let source = "main x = $length x";
+        let source = "main x = length x";
         let hover = build_hover(source, Position::new(0, 10)).unwrap();
         match hover.contents {
             HoverContents::Markup(markup) => {
-                assert!(markup.value.contains("$length"));
+                assert!(markup.value.contains("length"));
                 assert!(markup.value.contains("Builtin prelude symbol"));
                 assert!(markup.value.contains("```fwgsl"));
             }

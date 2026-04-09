@@ -1066,7 +1066,7 @@ impl AstLowering {
 
                 // Construct vecN call: App(App(...(Var("vecN"), arg1), arg2), argN)
                 let n = total_components.clamp(2, 4);
-                let vec_name = format!("$vec{}", n);
+                let vec_name = format!("vec{}", n);
                 let result_ty = Ty::app(
                     Ty::app(Ty::Con("Vec".into()), Ty::Nat(n)),
                     scalar_ty.clone(),

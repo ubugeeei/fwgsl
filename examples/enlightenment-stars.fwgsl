@@ -23,33 +23,33 @@ extern resource output : Storage<ReadWrite, Array<Color4, 1024>> @group 0 @bindi
 
 -- Canonical pipeline-friendly helper
 normalizeTime : F32 -> F32
-normalizeTime t = $fract (t * 0.15)
+normalizeTime t = fract (t * 0.15)
 
 lineMask : Float2 -> F32 -> F32
 lineMask uv thickness =
-  1.0 - $smoothstep 0.0 thickness ($abs ($vecY uv))
+  1.0 - smoothstep 0.0 thickness (abs (vecY uv))
 
 starMask : Float2 -> F32 -> F32
 starMask uv radius =
-  -- let a = $atan2 ($vecY uv) ($vecX uv)
-  let a = $atan2 uv.y uv.x
-      r = $length uv
-      spokes = $abs ($sin (a * 5.0))
-  in 1.0 - $smoothstep (radius * spokes) (radius * spokes + 0.01) r
+  -- let a = atan2 (vecY uv) (vecX uv)
+  let a = atan2 uv.y uv.x
+      r = length uv
+      spokes = abs (sin (a * 5.0))
+  in 1.0 - smoothstep (radius * spokes) (radius * spokes + 0.01) r
 
 motifMask : Motif -> Float2 -> F32 -> F32
 motifMask motif uv t =
   match motif
-    | Line w -> lineMask uv (w + 0.01 * $sin (t * 3.0))
-    | Star r -> starMask uv (r + 0.02 * $sin (t * 5.0))
+    | Line w -> lineMask uv (w + 0.01 * sin (t * 3.0))
+    | Star r -> starMask uv (r + 0.02 * sin (t * 5.0))
     | Enlightenment k ->
-        let glow = 0.5 + 0.5 * $sin (t * 8.0)
+        let glow = 0.5 + 0.5 * sin (t * 8.0)
         in starMask uv (k * glow)
 
 palette : F32 -> Color4 -> Color4
 palette x tint =
-  let base = $vec3 (0.1 + x) (0.2 + x * 0.7) (0.5 + x * 0.4)
-  in $vec4 (($vecX base) * tint.r) (($vecY base) * tint.g) (($vecZ base) * tint.b) tint.a
+  let base = vec3 (0.1 + x) (0.2 + x * 0.7) (0.5 + x * 0.4)
+  in vec4 ((vecX base) * tint.r) ((vecY base) * tint.g) ((vecZ base) * tint.b) tint.a
 
 -- Demonstrates:
 -- - resource load
@@ -63,7 +63,7 @@ main idx =
   let p = load frame
       t = p.time |> normalizeTime
       scale = p.basis[0][0]
-      uv = ($vec2 (toF32 idx * 0.002) 0.0).xy
+      uv = (vec2 (toF32 idx * 0.002) 0.0).xy
       lines = motifMask (Line 0.03) uv t
       stars = motifMask (Star 0.25) uv t
       flash = motifMask (Enlightenment 0.35) uv (t + scale)

@@ -1004,29 +1004,14 @@ mod tests {
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
 
         for f in [
-            "map",
-            "filter",
-            "foldl",
-            "foldr",
-            "id",
-            "const",
-            "flip",
-            "pure",
-            "bind",
-            "fmap",
-            "$map",
-            "$filter",
-            "$fold",
-            "$foldr",
-            "$zip",
-            "$flat",
-            "$flatMap",
-            "$all",
-            "$any",
-            "$fst",
-            "$snd",
-            "$swap",
-            "$unwrapOr",
+            "vec2",
+            "vec3",
+            "vec4",
+            "sin",
+            "cos",
+            "mix",
+            "dot",
+            "normalize",
         ] {
             assert!(
                 labels.contains(&f),
@@ -1072,8 +1057,8 @@ mod tests {
         let i32_item = items.iter().find(|i| i.label == "I32").unwrap();
         assert_eq!(i32_item.kind, Some(CompletionItemKind::TYPE_PARAMETER));
 
-        let map_item = items.iter().find(|i| i.label == "map").unwrap();
-        assert_eq!(map_item.kind, Some(CompletionItemKind::FUNCTION));
+        let sin_item = items.iter().find(|i| i.label == "sin").unwrap();
+        assert_eq!(sin_item.kind, Some(CompletionItemKind::FUNCTION));
     }
 
     #[test]

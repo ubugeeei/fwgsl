@@ -6,11 +6,6 @@
 
 use fwgsl_mir::*;
 
-/// Strip the `$` prefix from builtin identifiers for WGSL output.
-fn strip_builtin_prefix(name: &str) -> &str {
-    name.strip_prefix('$').unwrap_or(name)
-}
-
 fn sanitize_identifier(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for ch in name.chars() {
@@ -527,7 +522,7 @@ impl WgslEmitter {
     fn emit_expr(&mut self, expr: &MirExpr) {
         match expr {
             MirExpr::Lit(lit) => self.emit_lit(lit),
-            MirExpr::Var(name, _) => self.write(&sanitize_identifier(strip_builtin_prefix(name))),
+            MirExpr::Var(name, _) => self.write(&sanitize_identifier(name)),
             MirExpr::BinOp(op, lhs, rhs, _) => {
                 self.write("(");
                 self.emit_expr(lhs);
@@ -540,11 +535,10 @@ impl WgslEmitter {
                 self.emit_expr(operand);
             }
             MirExpr::Call(name, args, ty) => {
-                let callee = strip_builtin_prefix(name);
-                if is_type_constructor_call(callee, ty) {
+                if is_type_constructor_call(name, ty) {
                     self.write(&self.format_type(ty));
                 } else {
-                    self.write(&sanitize_identifier(callee));
+                    self.write(&sanitize_identifier(name));
                 }
                 self.write("(");
                 for (i, arg) in args.iter().enumerate() {

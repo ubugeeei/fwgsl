@@ -55,5 +55,5 @@ main idx =
       endF   = capFactor Round
       visF   = if vis then 1.0 else 0.0
       selF   = if sel then 1.0 else 0.0
-      color  = $vec4 (startF + endF) visF selF p.tint.a
+      color  = vec4 (startF + endF) visF selF p.tint.a
   in writeAt output idx color

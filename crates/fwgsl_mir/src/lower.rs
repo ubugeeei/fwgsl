@@ -762,7 +762,7 @@ fn lower_bitfield_construct(
         let coerced = if bf_info.width == 1 {
             // Bool → u32: select(0u, 1u, val)
             MirExpr::Call(
-                "$select".to_string(),
+                "select".to_string(),
                 vec![
                     MirExpr::Lit(MirLit::U32(0)),
                     MirExpr::Lit(MirLit::U32(1)),
@@ -850,7 +850,7 @@ fn lower_bitfield_update(
 
         let coerced = if bf_info.width == 1 {
             MirExpr::Call(
-                "$select".to_string(),
+                "select".to_string(),
                 vec![
                     MirExpr::Lit(MirLit::U32(0)),
                     MirExpr::Lit(MirLit::U32(1)),
@@ -1007,14 +1007,14 @@ fn lower_app_with_args(
             Box::new(arg.clone()),
             mir_ty,
         )),
-        ("$mod", [lhs, rhs]) => {
+        ("mod", [lhs, rhs]) => {
             let div = MirExpr::BinOp(
                 MirBinOp::Div,
                 Box::new(lhs.clone()),
                 Box::new(rhs.clone()),
                 mir_ty.clone(),
             );
-            let floored = MirExpr::Call("$floor".to_string(), vec![div], mir_ty.clone());
+            let floored = MirExpr::Call("floor".to_string(), vec![div], mir_ty.clone());
             let product = MirExpr::BinOp(
                 MirBinOp::Mul,
                 Box::new(rhs.clone()),
@@ -1028,7 +1028,7 @@ fn lower_app_with_args(
                 mir_ty,
             ))
         }
-        ("$atan", [y, x]) | ("$atan2", [y, x]) => Ok(MirExpr::Call(
+        ("atan", [y, x]) | ("atan2", [y, x]) => Ok(MirExpr::Call(
             "atan2".to_string(),
             vec![y.clone(), x.clone()],
             mir_ty,
@@ -1038,37 +1038,37 @@ fn lower_app_with_args(
             Ok(arg.clone())
         }
         ("toF32", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::F32)),
-        ("$splat2", [arg]) => Ok(MirExpr::Call(
-            "$vec2".to_string(),
+        ("splat2", [arg]) => Ok(MirExpr::Call(
+            "vec2".to_string(),
             vec![arg.clone(), arg.clone()],
             mir_ty,
         )),
-        ("$splat3", [arg]) => Ok(MirExpr::Call(
-            "$vec3".to_string(),
+        ("splat3", [arg]) => Ok(MirExpr::Call(
+            "vec3".to_string(),
             vec![arg.clone(), arg.clone(), arg.clone()],
             mir_ty,
         )),
-        ("$splat4", [arg]) => Ok(MirExpr::Call(
-            "$vec4".to_string(),
+        ("splat4", [arg]) => Ok(MirExpr::Call(
+            "vec4".to_string(),
             vec![arg.clone(), arg.clone(), arg.clone(), arg.clone()],
             mir_ty,
         )),
-        ("$vecX", [arg]) => Ok(MirExpr::FieldAccess(
+        ("vecX", [arg]) => Ok(MirExpr::FieldAccess(
             Box::new(arg.clone()),
             "x".to_string(),
             mir_ty,
         )),
-        ("$vecY", [arg]) => Ok(MirExpr::FieldAccess(
+        ("vecY", [arg]) => Ok(MirExpr::FieldAccess(
             Box::new(arg.clone()),
             "y".to_string(),
             mir_ty,
         )),
-        ("$vecZ", [arg]) => Ok(MirExpr::FieldAccess(
+        ("vecZ", [arg]) => Ok(MirExpr::FieldAccess(
             Box::new(arg.clone()),
             "z".to_string(),
             mir_ty,
         )),
-        ("$vecW", [arg]) => Ok(MirExpr::FieldAccess(
+        ("vecW", [arg]) => Ok(MirExpr::FieldAccess(
             Box::new(arg.clone()),
             "w".to_string(),
             mir_ty,

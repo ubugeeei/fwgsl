@@ -54,7 +54,7 @@ decodeRoughness raw = toF32 raw * 0.03226
 metallicColor : F32 -> Vec<4, F32> -> Vec<4, F32>
 metallicColor metallic tint =
   if metallic > 0.5
-    then $vec4 (tint.r * 0.8) (tint.g * 0.7) (tint.b * 0.9) tint.a
+    then vec4 (tint.r * 0.8) (tint.g * 0.7) (tint.b * 0.9) tint.a
     else tint
 
 -- Bitfield construction: pack fields into a single u32 value.
@@ -79,5 +79,5 @@ main idx =
       layerF = toF32 obj.layer
       bf     = blendFactor Opaque
       base   = metallicColor metalF p.tint
-      color  = $vec4 (base.r * rough) (base.g * ior * 0.1) (base.b * bf) (base.a * layerF * 0.0625)
+      color  = vec4 (base.r * rough) (base.g * ior * 0.1) (base.b * bf) (base.a * layerF * 0.0625)
   in writeAt output idx color

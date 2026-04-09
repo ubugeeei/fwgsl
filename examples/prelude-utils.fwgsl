@@ -2,10 +2,10 @@
 -- This file is intended for `fwgsl check`.
 
 clampedAdd : F32 -> F32 -> F32
-clampedAdd x y = $clamp (x + y) 0.0 1.0
+clampedAdd x y = clamp (x + y) 0.0 1.0
 
 safeLength : Vec<3, F32> -> F32
-safeLength v = $max ($length v) 0.001
+safeLength v = max (length v) 0.001
 
 lerp : F32 -> F32 -> F32 -> F32
-lerp a b t = $mix a b t
+lerp a b t = mix a b t

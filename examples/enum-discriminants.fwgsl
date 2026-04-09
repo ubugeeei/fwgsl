@@ -49,5 +49,5 @@ main idx =
       cap   = capFactor Round
       join  = joinAngle Bevel
       blend = blendWeight Alpha
-      color = $vec4 cap join blend p.tint.a
+      color = vec4 cap join blend p.tint.a
   in writeAt output idx color
