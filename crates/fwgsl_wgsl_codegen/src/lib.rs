@@ -146,6 +146,17 @@ impl WgslEmitter {
         self.indent += 1;
         for field in &s.fields {
             self.write_indent();
+            // Emit field attributes (e.g. @location(0), @builtin(position))
+            for attr in &field.attributes {
+                self.write("@");
+                self.write(&attr.name);
+                if !attr.args.is_empty() {
+                    self.write("(");
+                    self.write(&attr.args.join(", "));
+                    self.write(")");
+                }
+                self.write(" ");
+            }
             self.write(&format!(
                 "{}: {},",
                 sanitize_identifier(&field.name),
@@ -601,14 +612,17 @@ mod tests {
                     MirField {
                         name: "tag".to_string(),
                         ty: MirType::U32,
+                        attributes: vec![],
                     },
                     MirField {
                         name: "position".to_string(),
                         ty: MirType::Vec(3, Box::new(MirType::F32)),
+                        attributes: vec![],
                     },
                     MirField {
                         name: "life".to_string(),
                         ty: MirType::F32,
+                        attributes: vec![],
                     },
                 ],
             }],
@@ -914,10 +928,12 @@ mod tests {
                     MirField {
                         name: "x".to_string(),
                         ty: MirType::F32,
+                        attributes: vec![],
                     },
                     MirField {
                         name: "y".to_string(),
                         ty: MirType::F32,
+                        attributes: vec![],
                     },
                 ],
             }],
@@ -1079,6 +1095,7 @@ mod tests {
                 fields: vec![MirField {
                     name: "values".to_string(),
                     ty: MirType::Array(Box::new(MirType::F32), 16),
+                    attributes: vec![],
                 }],
             }],
             globals: vec![],
@@ -1122,10 +1139,12 @@ mod tests {
                     MirField {
                         name: "pos".to_string(),
                         ty: MirType::Vec(3, Box::new(MirType::F32)),
+                        attributes: vec![],
                     },
                     MirField {
                         name: "vel".to_string(),
                         ty: MirType::Vec(3, Box::new(MirType::F32)),
+                        attributes: vec![],
                     },
                 ],
             }],
@@ -1232,5 +1251,66 @@ mod tests {
         let ep_pos = wgsl.find("@compute").unwrap();
         assert!(struct_pos < fn_pos);
         assert!(fn_pos < ep_pos);
+    }
+
+    #[test]
+    fn test_emit_struct_field_attributes() {
+        let program = MirProgram {
+            structs: vec![MirStruct {
+                name: "VertexOutput".to_string(),
+                fields: vec![
+                    MirField {
+                        name: "clip_position".to_string(),
+                        ty: MirType::Vec(4, Box::new(MirType::F32)),
+                        attributes: vec![MirAttribute {
+                            name: "builtin".to_string(),
+                            args: vec!["position".to_string()],
+                        }],
+                    },
+                    MirField {
+                        name: "color".to_string(),
+                        ty: MirType::Vec(4, Box::new(MirType::F32)),
+                        attributes: vec![MirAttribute {
+                            name: "location".to_string(),
+                            args: vec!["0".to_string()],
+                        }],
+                    },
+                    MirField {
+                        name: "uv".to_string(),
+                        ty: MirType::Vec(2, Box::new(MirType::F32)),
+                        attributes: vec![
+                            MirAttribute {
+                                name: "location".to_string(),
+                                args: vec!["1".to_string()],
+                            },
+                            MirAttribute {
+                                name: "interpolate".to_string(),
+                                args: vec!["linear".to_string(), "center".to_string()],
+                            },
+                        ],
+                    },
+                ],
+            }],
+            globals: vec![],
+            functions: vec![],
+            entry_points: vec![],
+        };
+
+        let wgsl = emit_wgsl(&program);
+        assert!(
+            wgsl.contains("@builtin(position) clip_position: vec4<f32>,"),
+            "expected @builtin(position) attribute, got:\n{}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("@location(0) color: vec4<f32>,"),
+            "expected @location(0) attribute, got:\n{}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("@location(1) @interpolate(linear, center) uv: vec2<f32>,"),
+            "expected multiple attributes, got:\n{}",
+            wgsl
+        );
     }
 }

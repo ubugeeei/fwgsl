@@ -428,8 +428,8 @@ impl<'a> IndexBuilder<'a> {
                             }
                         }
                         fwgsl_parser::parser::ConFields::Record(fields) => {
-                            for (_, field_ty) in fields {
-                                self.walk_type(field_ty, frames);
+                            for f in fields {
+                                self.walk_type(&f.ty, frames);
                             }
                         }
                         fwgsl_parser::parser::ConFields::Empty => {}

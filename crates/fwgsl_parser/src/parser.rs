@@ -84,8 +84,16 @@ pub struct ConDecl {
 #[derive(Debug, Clone)]
 pub enum ConFields {
     Positional(Vec<Type>),
-    Record(Vec<(String, Type)>),
+    Record(Vec<RecordField>),
     Empty,
+}
+
+/// A field in a record type declaration, optionally with attributes.
+#[derive(Debug, Clone)]
+pub struct RecordField {
+    pub name: String,
+    pub ty: Type,
+    pub attributes: Vec<Attribute>,
 }
 
 #[derive(Debug, Clone)]
@@ -714,7 +722,7 @@ impl Parser {
                 self.expect(SyntaxKind::Colon);
                 self.skip_trivia();
                 let ty = self.parse_type_atom();
-                flds.push((field_name, ty));
+                flds.push(RecordField { name: field_name, ty, attributes: vec![] });
                 self.skip_trivia();
                 if !self.eat(SyntaxKind::Comma) {
                     break;
@@ -782,6 +790,7 @@ impl Parser {
         self.skip_trivia();
         if self.at(SyntaxKind::LBrace) {
             // `type Name = { a : A, b : B }` desugars to one-constructor record ADT.
+            // Fields may have attributes: `@builtin(position) clip_pos : Vec<4, F32>`
             self.bump();
             let mut fields = Vec::new();
             loop {
@@ -789,13 +798,23 @@ impl Parser {
                 if self.at(SyntaxKind::RBrace) || self.at_end() {
                     break;
                 }
+                // Parse optional field attributes
+                let mut field_attrs = Vec::new();
+                while self.at(SyntaxKind::At) {
+                    field_attrs.push(self.parse_attribute());
+                    self.skip_trivia();
+                }
                 let field_name_tok = self.expect(SyntaxKind::Ident);
                 let field_name = self.text_of(&field_name_tok).to_owned();
                 self.skip_trivia();
                 self.expect(SyntaxKind::Colon);
                 self.skip_trivia();
                 let field_ty = self.parse_type();
-                fields.push((field_name, field_ty));
+                fields.push(RecordField {
+                    name: field_name,
+                    ty: field_ty,
+                    attributes: field_attrs,
+                });
                 self.skip_trivia();
                 if !self.eat(SyntaxKind::Comma) {
                     break;

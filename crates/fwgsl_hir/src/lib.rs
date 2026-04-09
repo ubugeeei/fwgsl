@@ -62,7 +62,7 @@ pub struct HirEntryPoint {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirAttribute {
     pub name: String,
     pub args: Vec<String>,
@@ -78,7 +78,15 @@ pub struct HirDataType {
 pub struct HirConstructor {
     pub name: String,
     pub tag: u32,
-    pub fields: Vec<(String, Ty)>,
+    pub fields: Vec<HirFieldDef>,
+}
+
+/// A field definition in a record constructor, with optional attributes.
+#[derive(Debug, Clone)]
+pub struct HirFieldDef {
+    pub name: String,
+    pub ty: Ty,
+    pub attributes: Vec<HirAttribute>,
 }
 
 #[derive(Debug)]

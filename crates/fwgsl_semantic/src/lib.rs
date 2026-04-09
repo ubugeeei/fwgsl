@@ -663,8 +663,8 @@ impl SemanticAnalyzer {
                 ConFields::Record(fields) => {
                     // Record constructor: takes all fields positionally
                     let mut ty = result_ty.clone();
-                    for (_, field_ty) in fields.iter().rev() {
-                        let ft = self.convert_syntax_type_with_scope(field_ty, &mut type_scope);
+                    for f in fields.iter().rev() {
+                        let ft = self.convert_syntax_type_with_scope(&f.ty, &mut type_scope);
                         ty = Ty::arrow(ft, ty);
                     }
                     ty
@@ -682,10 +682,10 @@ impl SemanticAnalyzer {
                 ConFields::Record(fields) => ConstructorFields::Record(
                     fields
                         .iter()
-                        .map(|(n, t)| {
+                        .map(|f| {
                             (
-                                n.clone(),
-                                self.convert_syntax_type_with_scope(t, &mut type_scope),
+                                f.name.clone(),
+                                self.convert_syntax_type_with_scope(&f.ty, &mut type_scope),
                             )
                         })
                         .collect(),
@@ -870,7 +870,13 @@ impl SemanticAnalyzer {
                 }
             }
             Pat::Lit(lit, span) => {
-                let lit_ty = self.lit_type(lit);
+                let lit_ty = match lit {
+                    // Integer literals in patterns should be polymorphic over
+                    // numeric types (I32, U32) — use a fresh var so the
+                    // scrutinee type drives the unification.
+                    Lit::Int(_) => self.engine.fresh_var(),
+                    _ => self.lit_type(lit),
+                };
                 self.engine.unify(ty, &lit_ty, *span);
             }
             Pat::Paren(inner, _) => self.bind_pattern(inner, ty, env),

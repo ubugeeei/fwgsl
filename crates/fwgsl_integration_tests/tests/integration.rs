@@ -1192,10 +1192,12 @@ mod codegen_tests {
                     MirField {
                         name: "pos".to_string(),
                         ty: MirType::Vec(3, Box::new(MirType::F32)),
+                        attributes: vec![],
                     },
                     MirField {
                         name: "life".to_string(),
                         ty: MirType::F32,
+                        attributes: vec![],
                     },
                 ],
             }],

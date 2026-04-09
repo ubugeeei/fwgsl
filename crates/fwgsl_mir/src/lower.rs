@@ -28,7 +28,7 @@ struct LowerCtx {
     /// Map from data type name to its constructors
     data_types: HashMap<String, Vec<HirConstructor>>,
     /// Map from constructor name to (data_type_name, tag, fields)
-    constructors: HashMap<String, (String, u32, Vec<(String, Ty)>)>,
+    constructors: HashMap<String, (String, u32, Vec<HirFieldDef>)>,
     /// Map from bitfield type name to its field metadata
     bitfields: HashMap<String, Vec<(String, BitfieldFieldInfo)>>,
 }
@@ -137,6 +137,7 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
             let mut fields = vec![MirField {
                 name: "tag".to_string(),
                 ty: MirType::U32,
+                attributes: vec![],
             }];
             // Collect all field names/types from the largest constructor
             let max_con = dt
@@ -144,11 +145,15 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
                 .iter()
                 .max_by_key(|c| c.fields.len())
                 .unwrap();
-            for (name, ty) in &max_con.fields {
-                let mir_ty = ty_to_mir_type_with_ctx(ty, Some(&ctx)).unwrap_or(MirType::I32);
+            for f in &max_con.fields {
+                let mir_ty = ty_to_mir_type_with_ctx(&f.ty, Some(&ctx)).unwrap_or(MirType::I32);
                 fields.push(MirField {
-                    name: name.clone(),
+                    name: f.name.clone(),
                     ty: mir_ty,
+                    attributes: f.attributes.iter().map(|a| MirAttribute {
+                        name: a.name.clone(),
+                        args: a.args.clone(),
+                    }).collect(),
                 });
             }
             structs.push(MirStruct {
@@ -162,11 +167,15 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
                 let fields = con
                     .fields
                     .iter()
-                    .map(|(name, ty)| {
-                        let mir_ty = ty_to_mir_type_with_ctx(ty, Some(&ctx)).unwrap_or(MirType::I32);
+                    .map(|f| {
+                        let mir_ty = ty_to_mir_type_with_ctx(&f.ty, Some(&ctx)).unwrap_or(MirType::I32);
                         MirField {
-                            name: name.clone(),
+                            name: f.name.clone(),
                             ty: mir_ty,
+                            attributes: f.attributes.iter().map(|a| MirAttribute {
+                                name: a.name.clone(),
+                                args: a.args.clone(),
+                            }).collect(),
                         }
                     })
                     .collect();
@@ -804,7 +813,7 @@ fn lower_case_arms(
                         for (i, pat) in sub_pats.iter().enumerate() {
                             if let HirPattern::Var(var_name, var_ty) = pat {
                                 let field_name = if i < con_fields.len() {
-                                    con_fields[i].0.clone()
+                                    con_fields[i].name.clone()
                                 } else {
                                     format!("field{}", i)
                                 };
@@ -856,7 +865,11 @@ fn lower_case_arms(
 
             HirPattern::Lit(hir_lit) => {
                 let mir_lit = match hir_lit {
-                    HirLit::Int(v) => MirLit::I32(*v as i32),
+                    HirLit::Int(v) => match scrut_ty {
+                        MirType::U32 => MirLit::U32(*v as u32),
+                        MirType::F32 => MirLit::F32(*v as f64),
+                        _ => MirLit::I32(*v as i32),
+                    },
                     HirLit::Float(v) => MirLit::F32(*v),
                     HirLit::Bool(v) => MirLit::Bool(*v),
                 };

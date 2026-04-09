@@ -55,6 +55,14 @@ pub struct MirStruct {
 pub struct MirField {
     pub name: String,
     pub ty: MirType,
+    pub attributes: Vec<MirAttribute>,
+}
+
+/// An attribute annotation (e.g. `@location(0)`, `@builtin(position)`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MirAttribute {
+    pub name: String,
+    pub args: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

@@ -91,9 +91,9 @@ impl AstLowering {
                         }
                         ConFields::Record(fields) => {
                             let mut ty = result_ty.clone();
-                            for (_, field_ty) in fields.iter().rev() {
+                            for f in fields.iter().rev() {
                                 let ft =
-                                    self.convert_syntax_type_with_scope(field_ty, &mut type_scope);
+                                    self.convert_syntax_type_with_scope(&f.ty, &mut type_scope);
                                 ty = Ty::arrow(ft, ty);
                             }
                             ty
@@ -323,14 +323,18 @@ impl AstLowering {
                     .enumerate()
                     .map(|(i, t)| {
                         let ty = self.convert_syntax_type_pure(t);
-                        (format!("field{}", i), ty)
+                        HirFieldDef { name: format!("field{}", i), ty, attributes: vec![] }
                     })
                     .collect(),
                 ConFields::Record(fields) => fields
                     .iter()
-                    .map(|(n, t)| {
-                        let ty = self.convert_syntax_type_pure(t);
-                        (n.clone(), ty)
+                    .map(|f| {
+                        let ty = self.convert_syntax_type_pure(&f.ty);
+                        let attrs = f.attributes.iter().map(|a| HirAttribute {
+                            name: a.name.clone(),
+                            args: a.args.clone(),
+                        }).collect();
+                        HirFieldDef { name: f.name.clone(), ty, attributes: attrs }
                     })
                     .collect(),
             };
@@ -914,7 +918,12 @@ impl AstLowering {
             }
             Pat::Lit(lit, span) => {
                 let lit_ty = match lit {
-                    Lit::Int(_) => Ty::i32(),
+                    Lit::Int(_) => {
+                        // Use a fresh var so integer literals can unify with
+                        // both I32 and U32 (determined by the scrutinee type).
+                        let v = self.engine.fresh_var();
+                        v
+                    }
                     Lit::Float(_) => Ty::f32(),
                     Lit::String(_) => Ty::Con("String".into()),
                     Lit::Char(_) => Ty::Con("Char".into()),
