@@ -874,6 +874,7 @@ impl SemanticAnalyzer {
     fn lit_type(&self, lit: &Lit) -> Ty {
         match lit {
             Lit::Int(_) => Ty::i32(),
+            Lit::UInt(_) => Ty::u32(),
             Lit::Float(_) => Ty::f32(),
             Lit::String(_) => Ty::Con("String".into()),
             Lit::Char(_) => Ty::Con("Char".into()),

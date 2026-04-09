@@ -1391,6 +1391,7 @@ impl AstLowering {
     fn lower_lit(&self, lit: &Lit) -> (HirLit, Ty) {
         match lit {
             Lit::Int(v) => (HirLit::Int(*v), Ty::i32()),
+            Lit::UInt(v) => (HirLit::UInt(*v), Ty::u32()),
             Lit::Float(v) => (HirLit::Float(*v), Ty::f32()),
             Lit::String(_) => (HirLit::Int(0), Ty::Con("String".into())),
             Lit::Char(_) => (HirLit::Int(0), Ty::Con("Char".into())),
@@ -1431,9 +1432,9 @@ impl AstLowering {
                     Lit::Int(_) => {
                         // Use a fresh var so integer literals can unify with
                         // both I32 and U32 (determined by the scrutinee type).
-                        let v = self.engine.fresh_var();
-                        v
+                        self.engine.fresh_var()
                     }
+                    Lit::UInt(_) => Ty::u32(),
                     Lit::Float(_) => Ty::f32(),
                     Lit::String(_) => Ty::Con("String".into()),
                     Lit::Char(_) => Ty::Con("Char".into()),

@@ -1038,6 +1038,9 @@ fn lower_app_with_args(
             Ok(arg.clone())
         }
         ("toF32", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::F32)),
+        ("toI32", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::I32)),
+        ("toU32", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::U32)),
+        ("toBool", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::Bool)),
         ("splat2", [arg]) => Ok(MirExpr::Call(
             "vec2".to_string(),
             vec![arg.clone(), arg.clone()],
@@ -1117,7 +1120,7 @@ fn flatten_app(expr: &HirExpr) -> (String, Vec<&HirExpr>) {
 /// Check if a pattern is compatible with WGSL switch emission (int lits, wilds, or-patterns of int lits).
 fn is_switch_compatible_pattern(pat: &HirPattern) -> bool {
     match pat {
-        HirPattern::Lit(HirLit::Int(_)) => true,
+        HirPattern::Lit(HirLit::Int(_)) | HirPattern::Lit(HirLit::UInt(_)) => true,
         HirPattern::Wild | HirPattern::Var(_, _) => true,
         HirPattern::Or(alts) => alts.iter().all(|p| is_switch_compatible_pattern(p)),
         _ => false,
@@ -1160,6 +1163,12 @@ fn lower_case_arms(
                             body: body_stmts,
                         });
                     }
+                    HirPattern::Lit(HirLit::UInt(v)) => {
+                        cases.push(MirSwitchCase {
+                            values: vec![MirLit::U32(*v as u32)],
+                            body: body_stmts,
+                        });
+                    }
                     HirPattern::Or(alts) => {
                         let values: Vec<MirLit> = alts
                             .iter()
@@ -1168,6 +1177,7 @@ fn lower_case_arms(
                                     MirType::U32 => MirLit::U32(*v as u32),
                                     _ => MirLit::I32(*v as i32),
                                 }),
+                                HirPattern::Lit(HirLit::UInt(v)) => Some(MirLit::U32(*v as u32)),
                                 _ => None,
                             })
                             .collect();
@@ -1270,6 +1280,7 @@ fn lower_case_arms(
                         MirType::F32 => MirLit::F32(*v as f64),
                         _ => MirLit::I32(*v as i32),
                     },
+                    HirLit::UInt(v) => MirLit::U32(*v as u32),
                     HirLit::Float(v) => MirLit::F32(*v),
                     HirLit::Bool(v) => MirLit::Bool(*v),
                 };
@@ -1301,6 +1312,7 @@ fn lower_case_arms(
                                 MirType::F32 => MirLit::F32(*v as f64),
                                 _ => MirLit::I32(*v as i32),
                             },
+                            HirLit::UInt(v) => MirLit::U32(*v as u32),
                             HirLit::Float(v) => MirLit::F32(*v),
                             HirLit::Bool(v) => MirLit::Bool(*v),
                         };
@@ -1365,6 +1377,7 @@ fn lower_hir_lit(lit: &HirLit, ty: &Ty) -> MirLit {
             Ty::Con(name) if name == "F32" => MirLit::F32(*v as f64),
             _ => MirLit::I32(*v as i32),
         },
+        HirLit::UInt(v) => MirLit::U32(*v as u32),
         HirLit::Float(v) => MirLit::F32(*v),
         HirLit::Bool(v) => MirLit::Bool(*v),
     }

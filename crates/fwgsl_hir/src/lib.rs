@@ -167,6 +167,7 @@ pub enum HirPattern {
 #[derive(Debug, Clone)]
 pub enum HirLit {
     Int(i64),
+    UInt(u64),
     Float(f64),
     Bool(bool),
 }

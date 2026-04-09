@@ -440,6 +440,20 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Try to consume an optional `u` or `i` suffix on an integer literal.
+    fn try_consume_int_suffix(&mut self) {
+        if !self.at_end() && (self.peek() == b'u' || self.peek() == b'i') {
+            let next_after = if self.pos + 1 < self.source.len() {
+                self.source[self.pos + 1]
+            } else {
+                0
+            };
+            if !is_ident_continue(next_after) {
+                self.advance();
+            }
+        }
+    }
+
     fn lex_number(&mut self, start: usize) {
         let first = self.advance();
 
@@ -451,6 +465,7 @@ impl<'a> Lexer<'a> {
                     while !self.at_end() && is_hex_digit(self.peek()) {
                         self.advance();
                     }
+                    self.try_consume_int_suffix();
                     self.emit(SyntaxKind::IntLiteral, start);
                     return;
                 }
@@ -459,6 +474,7 @@ impl<'a> Lexer<'a> {
                     while !self.at_end() && is_oct_digit(self.peek()) {
                         self.advance();
                     }
+                    self.try_consume_int_suffix();
                     self.emit(SyntaxKind::IntLiteral, start);
                     return;
                 }
@@ -467,6 +483,7 @@ impl<'a> Lexer<'a> {
                     while !self.at_end() && is_bin_digit(self.peek()) {
                         self.advance();
                     }
+                    self.try_consume_int_suffix();
                     self.emit(SyntaxKind::IntLiteral, start);
                     return;
                 }
@@ -497,6 +514,7 @@ impl<'a> Lexer<'a> {
             }
             self.emit(SyntaxKind::FloatLiteral, start);
         } else {
+            self.try_consume_int_suffix();
             self.emit(SyntaxKind::IntLiteral, start);
         }
     }

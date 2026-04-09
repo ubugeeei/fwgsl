@@ -266,6 +266,7 @@ pub enum DoStmt {
 #[derive(Debug, Clone)]
 pub enum Lit {
     Int(i64),
+    UInt(u64),
     Float(f64),
     String(String),
     Char(char),
@@ -1629,8 +1630,10 @@ impl Parser {
             SyntaxKind::IntLiteral => {
                 let tok = self.bump();
                 let text = self.text_of(&tok);
-                let val = parse_int_literal(text);
-                Expr::Lit(Lit::Int(val), tok.span)
+                match parse_int_literal_typed(text) {
+                    ParsedInt::Unsigned(v) => Expr::Lit(Lit::UInt(v), tok.span),
+                    ParsedInt::Signed(v) => Expr::Lit(Lit::Int(v), tok.span),
+                }
             }
             SyntaxKind::FloatLiteral => {
                 let tok = self.bump();
@@ -1941,8 +1944,10 @@ impl Parser {
             SyntaxKind::IntLiteral => {
                 let tok = self.bump();
                 let text = self.text_of(&tok);
-                let val = parse_int_literal(text);
-                Expr::Lit(Lit::Int(val), tok.span)
+                match parse_int_literal_typed(text) {
+                    ParsedInt::Unsigned(v) => Expr::Lit(Lit::UInt(v), tok.span),
+                    ParsedInt::Signed(v) => Expr::Lit(Lit::Int(v), tok.span),
+                }
             }
             SyntaxKind::LParen => self.parse_paren_expr(),
             _ => {
@@ -2193,8 +2198,10 @@ impl Parser {
             SyntaxKind::IntLiteral => {
                 let tok = self.bump();
                 let text = self.text_of(&tok);
-                let val = parse_int_literal(text);
-                Pat::Lit(Lit::Int(val), tok.span)
+                match parse_int_literal_typed(text) {
+                    ParsedInt::Unsigned(v) => Pat::Lit(Lit::UInt(v), tok.span),
+                    ParsedInt::Signed(v) => Pat::Lit(Lit::Int(v), tok.span),
+                }
             }
             SyntaxKind::FloatLiteral => {
                 let tok = self.bump();
@@ -2558,15 +2565,43 @@ fn is_operator_token(kind: SyntaxKind) -> bool {
     )
 }
 
-fn parse_int_literal(text: &str) -> i64 {
-    if text.starts_with("0x") || text.starts_with("0X") {
-        i64::from_str_radix(&text[2..], 16).unwrap_or(0)
-    } else if text.starts_with("0o") || text.starts_with("0O") {
-        i64::from_str_radix(&text[2..], 8).unwrap_or(0)
-    } else if text.starts_with("0b") || text.starts_with("0B") {
-        i64::from_str_radix(&text[2..], 2).unwrap_or(0)
+/// Result of parsing an integer literal — either signed (i64) or unsigned (u64).
+enum ParsedInt {
+    Signed(i64),
+    Unsigned(u64),
+}
+
+fn parse_int_literal_typed(text: &str) -> ParsedInt {
+    // Strip optional suffix
+    let (digits, is_unsigned) = if text.ends_with('u') {
+        (&text[..text.len() - 1], true)
+    } else if text.ends_with('i') {
+        (&text[..text.len() - 1], false)
     } else {
-        text.parse::<i64>().unwrap_or(0)
+        (text, false)
+    };
+
+    let value = if digits.starts_with("0x") || digits.starts_with("0X") {
+        u64::from_str_radix(&digits[2..], 16).unwrap_or(0)
+    } else if digits.starts_with("0o") || digits.starts_with("0O") {
+        u64::from_str_radix(&digits[2..], 8).unwrap_or(0)
+    } else if digits.starts_with("0b") || digits.starts_with("0B") {
+        u64::from_str_radix(&digits[2..], 2).unwrap_or(0)
+    } else {
+        digits.parse::<u64>().unwrap_or(0)
+    };
+
+    if is_unsigned {
+        ParsedInt::Unsigned(value)
+    } else {
+        ParsedInt::Signed(value as i64)
+    }
+}
+
+fn parse_int_literal(text: &str) -> i64 {
+    match parse_int_literal_typed(text) {
+        ParsedInt::Signed(v) => v,
+        ParsedInt::Unsigned(v) => v as i64,
     }
 }
 

@@ -126,4 +126,7 @@ extern fwidthFine   : a -> a
 
 extern load    : a -> a
 extern toF32   : a -> F32
+extern toI32   : a -> I32
+extern toU32   : a -> U32
+extern toBool  : a -> Bool
 extern writeAt : a -> b -> c -> ()
