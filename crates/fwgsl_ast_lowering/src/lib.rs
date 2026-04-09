@@ -15,6 +15,13 @@ use fwgsl_typechecker::*;
 ///
 /// Requires a `SemanticAnalyzer` that has already run `analyze()` so that
 /// constructor and data-type information is available.
+/// Bitfield field info used during AST lowering for construction/update.
+#[derive(Debug, Clone)]
+pub struct BitfieldFieldMeta {
+    pub offset: u32,
+    pub width: u32,
+}
+
 pub struct AstLowering {
     pub env: TypeEnv,
     pub engine: InferEngine,
@@ -23,6 +30,9 @@ pub struct AstLowering {
     pub type_aliases: HashMap<String, Ty>,
     pub traits: HashMap<String, fwgsl_semantic::TraitInfo>,
     pub impls: Vec<fwgsl_semantic::ImplInfo>,
+    /// Map from bitfield type name → ordered list of (field_name, meta).
+    /// Populated during `lower_program` before expressions are lowered.
+    pub bitfield_fields: HashMap<String, Vec<(String, BitfieldFieldMeta)>>,
 }
 
 impl AstLowering {
@@ -40,6 +50,7 @@ impl AstLowering {
             type_aliases: sa.type_aliases.clone(),
             traits: sa.traits.clone(),
             impls: sa.impls.clone(),
+            bitfield_fields: HashMap::new(),
         }
     }
 
@@ -187,10 +198,12 @@ impl AstLowering {
                     name,
                     base_ty,
                     fields,
+                    span,
                     ..
                 } => {
                     let base_scheme = self.convert_syntax_type_scheme(base_ty);
                     let mut offset = 0u32;
+                    let mut bf_meta = Vec::new();
                     let hir_fields: Vec<fwgsl_hir::HirBitfieldField> = fields
                         .iter()
                         .map(|f| {
@@ -208,6 +221,7 @@ impl AstLowering {
                                     }
                                 }
                             };
+                            bf_meta.push((f.name.clone(), BitfieldFieldMeta { offset, width }));
                             let hf = fwgsl_hir::HirBitfieldField {
                                 name: f.name.clone(),
                                 offset,
@@ -218,6 +232,23 @@ impl AstLowering {
                             hf
                         })
                         .collect();
+                    // Validate total bit width doesn't exceed base type
+                    let max_bits: u32 = match &base_scheme.ty {
+                        Ty::Con(n) if n == "U32" || n == "I32" => 32,
+                        Ty::Con(n) if n == "U16" => 16,
+                        Ty::Con(n) if n == "U8" => 8,
+                        _ => 32,
+                    };
+                    if offset > max_bits {
+                        self.engine.diagnostics.push(
+                            fwgsl_diagnostics::Diagnostic::error(format!(
+                                "bitfield '{}' uses {} bits, but base type allows only {}",
+                                name, offset, max_bits
+                            ))
+                            .with_label(fwgsl_diagnostics::Label::primary(*span, "too many bits")),
+                        );
+                    }
+                    self.bitfield_fields.insert(name.clone(), bf_meta);
                     bitfields.push(fwgsl_hir::HirBitfield {
                         name: name.clone(),
                         base_ty: base_scheme.ty,
@@ -871,8 +902,14 @@ impl AstLowering {
                 }
             }
 
-            Expr::Record(fields, span) => {
-                // Lower record fields; for now just emit first field value
+            Expr::Record(name, fields, span) => {
+                if let Some(bf_name) = name {
+                    if let Some(bf_fields) = self.bitfield_fields.get(bf_name).cloned() {
+                        // Bitfield construction: lower to shift+OR chain
+                        return self.lower_bitfield_construct(bf_name, &bf_fields, fields, env, *span);
+                    }
+                }
+                // Regular record: lower fields, emit first field value as fallback
                 if let Some((_, expr)) = fields.first() {
                     self.lower_expr(expr, env)
                 } else {
@@ -1055,6 +1092,43 @@ impl AstLowering {
                         body_ty,
                     )
                 }
+            }
+
+            Expr::RecordUpdate(base, fields, span) => {
+                let (hir_base, base_ty) = self.lower_expr(base, env);
+                let base_ty_final = self.engine.finalize(&base_ty);
+
+                // Try to resolve bitfield type from the finalized base type
+                let bf_match = if let Ty::Con(ref type_name) = base_ty_final {
+                    self.bitfield_fields.get(type_name).cloned().map(|bf| (type_name.clone(), bf))
+                } else {
+                    None
+                };
+
+                // Fallback: infer bitfield type from field names
+                let bf_match = bf_match.or_else(|| {
+                    if let Some((first_field, _)) = fields.first() {
+                        for (bf_name, bf_fields) in &self.bitfield_fields {
+                            if bf_fields.iter().any(|(n, _)| n == first_field) {
+                                return Some((bf_name.clone(), bf_fields.clone()));
+                            }
+                        }
+                    }
+                    None
+                });
+
+                if let Some((type_name, bf_fields)) = bf_match {
+                    let ty = Ty::Con(type_name.clone());
+                    self.engine.unify(&base_ty, &ty, *span);
+                    return self.lower_bitfield_update(&type_name, hir_base, &bf_fields, fields, env, *span);
+                }
+
+                // Non-bitfield record update: not yet supported
+                self.engine.diagnostics.push(
+                    fwgsl_diagnostics::Diagnostic::error("Record update syntax is only supported for bitfield types")
+                        .with_label(fwgsl_diagnostics::Label::primary(*span, "not a bitfield type")),
+                );
+                (hir_base, base_ty)
             }
 
             Expr::Loop(loop_name, bindings, body, span) => {
@@ -1395,6 +1469,82 @@ impl AstLowering {
         &self.engine.diagnostics
     }
 
+    /// Lower bitfield construction `Name { f1 = e1, f2 = e2 }`.
+    /// Produces `HirExpr::BitfieldConstruct` which the MIR lowering converts
+    /// to actual shift+OR bit manipulation.
+    fn lower_bitfield_construct(
+        &mut self,
+        bf_name: &str,
+        bf_fields: &[(String, BitfieldFieldMeta)],
+        user_fields: &[(String, Expr)],
+        env: &mut TypeEnv,
+        span: fwgsl_span::Span,
+    ) -> (HirExpr, Ty) {
+        let ty = Ty::Con(bf_name.to_string());
+        let mut hir_fields = Vec::new();
+
+        for (field_name, field_expr) in user_fields {
+            // Find the field metadata
+            let meta = bf_fields.iter().find(|(n, _)| n == field_name);
+            if meta.is_none() {
+                self.engine.diagnostics.push(
+                    fwgsl_diagnostics::Diagnostic::error(format!(
+                        "unknown bitfield field '{}' in '{}'",
+                        field_name, bf_name
+                    ))
+                    .with_label(fwgsl_diagnostics::Label::primary(span, "unknown field")),
+                );
+                continue;
+            }
+
+            let (hir_val, _val_ty) = self.lower_expr(field_expr, env);
+            hir_fields.push((field_name.clone(), hir_val));
+        }
+
+        (
+            HirExpr::BitfieldConstruct(bf_name.to_string(), hir_fields, ty.clone(), span),
+            ty,
+        )
+    }
+
+    /// Lower bitfield functional update `base { f1 = e1, f2 = e2 }`.
+    /// Produces `HirExpr::BitfieldUpdate` which the MIR lowering converts to
+    /// `(base & ~mask1 & ~mask2) | ((val1 & mask1) << offset1) | ...`
+    fn lower_bitfield_update(
+        &mut self,
+        type_name: &str,
+        hir_base: HirExpr,
+        bf_fields: &[(String, BitfieldFieldMeta)],
+        user_fields: &[(String, Expr)],
+        env: &mut TypeEnv,
+        span: fwgsl_span::Span,
+    ) -> (HirExpr, Ty) {
+        let ty = Ty::Con(type_name.to_string());
+        let mut hir_fields = Vec::new();
+
+        for (field_name, field_expr) in user_fields {
+            let meta = bf_fields.iter().find(|(n, _)| n == field_name);
+            if meta.is_none() {
+                self.engine.diagnostics.push(
+                    fwgsl_diagnostics::Diagnostic::error(format!(
+                        "unknown bitfield field '{}' in '{}'",
+                        field_name, type_name
+                    ))
+                    .with_label(fwgsl_diagnostics::Label::primary(span, "unknown field")),
+                );
+                continue;
+            }
+
+            let (hir_val, _val_ty) = self.lower_expr(field_expr, env);
+            hir_fields.push((field_name.clone(), hir_val));
+        }
+
+        (
+            HirExpr::BitfieldUpdate(type_name.to_string(), Box::new(hir_base), hir_fields, ty.clone(), span),
+            ty,
+        )
+    }
+
     fn finalize_expr(&self, expr: HirExpr) -> HirExpr {
         match expr {
             HirExpr::Lit(lit, ty, span) => HirExpr::Lit(lit, self.engine.finalize(&ty), span),
@@ -1491,6 +1641,25 @@ impl AstLowering {
                     .map(|(n, e)| (n, self.finalize_expr(e)))
                     .collect(),
                 Box::new(self.finalize_expr(*body)),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::BitfieldConstruct(name, fields, ty, span) => HirExpr::BitfieldConstruct(
+                name,
+                fields
+                    .into_iter()
+                    .map(|(n, e)| (n, self.finalize_expr(e)))
+                    .collect(),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::BitfieldUpdate(name, base, fields, ty, span) => HirExpr::BitfieldUpdate(
+                name,
+                Box::new(self.finalize_expr(*base)),
+                fields
+                    .into_iter()
+                    .map(|(n, e)| (n, self.finalize_expr(e)))
+                    .collect(),
                 self.engine.finalize(&ty),
                 span,
             ),

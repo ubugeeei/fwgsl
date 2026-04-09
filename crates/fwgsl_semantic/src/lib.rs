@@ -700,11 +700,16 @@ impl SemanticAnalyzer {
                 }
             }
 
-            Expr::Record(fields, _span) => {
+            Expr::Record(name, fields, _span) => {
                 for (_, expr) in fields {
                     self.infer_expr(expr, env);
                 }
-                self.engine.fresh_var()
+                // If named, resolve to the type constructor; otherwise fresh var
+                if let Some(type_name) = name {
+                    Ty::Con(type_name.clone())
+                } else {
+                    self.engine.fresh_var()
+                }
             }
 
             Expr::FieldAccess(expr, field, span) => {
@@ -854,6 +859,14 @@ impl SemanticAnalyzer {
                 let body_ty = self.infer_expr(body, &mut loop_env);
                 self.engine.unify(&result_ty, &body_ty, *span);
                 result_ty
+            }
+
+            Expr::RecordUpdate(base, fields, _span) => {
+                let base_ty = self.infer_expr(base, env);
+                for (_, expr) in fields {
+                    self.infer_expr(expr, env);
+                }
+                base_ty
             }
         }
     }

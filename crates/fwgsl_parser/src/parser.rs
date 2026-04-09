@@ -239,7 +239,9 @@ pub enum Expr {
     If(Box<Expr>, Box<Expr>, Box<Expr>, Span),
     Paren(Box<Expr>, Span),
     Tuple(Vec<Expr>, Span),
-    Record(Vec<(String, Expr)>, Span),
+    /// Record expression. `Some(name)` for named construction: `Name { f = e, ... }`.
+    /// `None` for anonymous: `{ f = e, ... }`.
+    Record(Option<String>, Vec<(String, Expr)>, Span),
     FieldAccess(Box<Expr>, String, Span),
     Index(Box<Expr>, Box<Expr>, Span),
     OpSection(String, Span),
@@ -250,6 +252,8 @@ pub enum Expr {
     /// Named loop (tail-recursive): `loop go (i = 0) (acc = 0) in body`
     /// Fields: (loop_name, bindings[(name, init)], body, span)
     Loop(String, Vec<(String, Expr)>, Box<Expr>, Span),
+    /// Record/bitfield functional update: `expr { field = val, ... }`
+    RecordUpdate(Box<Expr>, Vec<(String, Expr)>, Span),
 }
 
 #[derive(Debug, Clone)]
@@ -311,14 +315,15 @@ impl Expr {
             | Expr::If(_, _, _, s)
             | Expr::Paren(_, s)
             | Expr::Tuple(_, s)
-            | Expr::Record(_, s)
+            | Expr::Record(_, _, s)
             | Expr::FieldAccess(_, _, s)
             | Expr::Index(_, _, s)
             | Expr::OpSection(_, s)
             | Expr::Neg(_, s)
             | Expr::Do(_, s)
             | Expr::VecLit(_, s)
-            | Expr::Loop(_, _, _, s) => *s,
+            | Expr::Loop(_, _, _, s)
+            | Expr::RecordUpdate(_, _, s) => *s,
         }
     }
 }
@@ -454,6 +459,23 @@ impl Parser {
             }
             i += 1;
         }
+    }
+
+    /// Lookahead: check if the token stream has `{ ident = ...` starting at
+    /// the current position (for record/bitfield update syntax).
+    fn is_record_update_ahead(&self) -> bool {
+        let mut i = self.pos;
+        // Skip trivia to find `{`
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() { i += 1; }
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::LBrace { return false; }
+        i += 1;
+        // Skip trivia to find `ident`
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() { i += 1; }
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::Ident { return false; }
+        i += 1;
+        // Skip trivia to find `=`
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() { i += 1; }
+        i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::Equals
     }
 
     fn span_from(&self, start: u32) -> Span {
@@ -1571,6 +1593,28 @@ impl Parser {
                     let span = expr.span().merge(self.span_from(expr.span().start));
                     expr = Expr::Index(Box::new(expr), Box::new(index), span);
                 }
+                SyntaxKind::LBrace if self.is_record_update_ahead() => {
+                    self.skip_trivia();
+                    let start = expr.span().start;
+                    self.bump(); // consume `{`
+                    let mut fields = Vec::new();
+                    loop {
+                        self.skip_trivia();
+                        if self.at(SyntaxKind::RBrace) || self.at_end() { break; }
+                        let field_tok = self.expect(SyntaxKind::Ident);
+                        let field_name = self.text_of(&field_tok).to_owned();
+                        self.skip_trivia();
+                        self.expect(SyntaxKind::Equals);
+                        self.skip_trivia();
+                        let value = self.parse_expr();
+                        fields.push((field_name, value));
+                        self.skip_trivia();
+                        if !self.eat(SyntaxKind::Comma) { break; }
+                    }
+                    self.expect(SyntaxKind::RBrace);
+                    let span = self.span_from(start);
+                    expr = Expr::RecordUpdate(Box::new(expr), fields, span);
+                }
                 _ => break,
             }
         }
@@ -1616,6 +1660,11 @@ impl Parser {
             SyntaxKind::UpperIdent => {
                 let tok = self.bump();
                 let name = self.text_of(&tok).to_owned();
+                // Named record/bitfield construction: Name { field = expr, ... }
+                self.skip_trivia();
+                if self.at(SyntaxKind::LBrace) {
+                    return self.parse_named_record(name, tok.span.start);
+                }
                 Expr::Con(name, tok.span)
             }
             SyntaxKind::LParen => self.parse_paren_expr(),
@@ -1638,6 +1687,33 @@ impl Parser {
                 Expr::Var("<error>".to_owned(), span)
             }
         }
+    }
+
+    /// Parse a named record/bitfield construction: `Name { field = expr, ... }`
+    /// The `Name` has already been consumed; we're positioned at `{`.
+    fn parse_named_record(&mut self, name: String, start: u32) -> Expr {
+        self.expect(SyntaxKind::LBrace);
+        let mut fields = Vec::new();
+        loop {
+            self.skip_trivia();
+            if self.at(SyntaxKind::RBrace) || self.at_end() {
+                break;
+            }
+            let field_tok = self.expect(SyntaxKind::Ident);
+            let field_name = self.text_of(&field_tok).to_owned();
+            self.skip_trivia();
+            self.expect(SyntaxKind::Equals);
+            self.skip_trivia();
+            let value = self.parse_expr();
+            fields.push((field_name, value));
+            self.skip_trivia();
+            if !self.eat(SyntaxKind::Comma) {
+                break;
+            }
+        }
+        self.expect(SyntaxKind::RBrace);
+        let span = self.span_from(start);
+        Expr::Record(Some(name), fields, span)
     }
 
     fn parse_paren_expr(&mut self) -> Expr {
@@ -2434,9 +2510,10 @@ fn insert_pipeline_arg(rhs: Expr, lhs: Expr, span: Span) -> Expr {
                 | Expr::Case(_, _, s)
                 | Expr::If(_, _, _, s)
                 | Expr::Tuple(_, s)
-                | Expr::Record(_, s)
+                | Expr::Record(_, _, s)
                 | Expr::OpSection(_, s)
-                | Expr::Loop(_, _, _, s) => *s = span,
+                | Expr::Loop(_, _, _, s)
+                | Expr::RecordUpdate(_, _, s) => *s = span,
             }
             applied
         }

@@ -2172,4 +2172,102 @@ impl Nonexistent F32 where
             "diagnostics should contain error about unknown trait"
         );
     }
+
+    #[test]
+    fn bitfield_construction_produces_shift_or_chain() {
+        let source = r#"
+bitfield Flags : U32 = {
+  layer   : 4,
+  stencil : 8,
+}
+
+makeFlags : I32 -> I32 -> Flags
+makeFlags l s = Flags { layer = l, stencil = s }
+"#;
+        let wgsl = compile_to_wgsl(source).expect("bitfield construction should compile");
+        assert!(wgsl.contains("fn makeFlags("), "WGSL should contain fn makeFlags, got: {}", wgsl);
+        // Should contain bitwise ops: &, |, <<
+        assert!(wgsl.contains("&"), "WGSL should contain & for masking, got: {}", wgsl);
+        assert!(wgsl.contains("|"), "WGSL should contain | for combining, got: {}", wgsl);
+        assert!(wgsl.contains("<<"), "WGSL should contain << for shifting, got: {}", wgsl);
+        // Return type should be u32 (bitfield base type)
+        assert!(wgsl.contains("-> u32"), "WGSL should return u32, got: {}", wgsl);
+    }
+
+    #[test]
+    fn bitfield_construction_bool_field_uses_select() {
+        let source = r#"
+bitfield Flags : U32 = {
+  visible : 1,
+  layer   : 4,
+}
+
+makeFlags : Bool -> I32 -> Flags
+makeFlags v l = Flags { visible = v, layer = l }
+"#;
+        let wgsl = compile_to_wgsl(source).expect("bitfield construction with bool should compile");
+        // 1-bit bool fields should use select(0u, 1u, val)
+        assert!(wgsl.contains("select("), "WGSL should contain select for bool field, got: {}", wgsl);
+    }
+
+    #[test]
+    fn bitfield_functional_update_clears_and_sets_field() {
+        let source = r#"
+bitfield Flags : U32 = {
+  visible : 1,
+  layer   : 4,
+  stencil : 8,
+}
+
+updateLayer : Flags -> I32 -> Flags
+updateLayer f newLayer = f { layer = newLayer }
+"#;
+        let wgsl = compile_to_wgsl(source).expect("bitfield update should compile");
+        assert!(wgsl.contains("fn updateLayer("), "WGSL should contain fn updateLayer, got: {}", wgsl);
+        // Should clear bits with AND mask and set new bits with OR
+        assert!(wgsl.contains("&"), "WGSL should contain & for clearing, got: {}", wgsl);
+        assert!(wgsl.contains("|"), "WGSL should contain | for setting, got: {}", wgsl);
+    }
+
+    #[test]
+    fn bitfield_width_validation_error() {
+        let source = r#"
+bitfield TooWide : U32 = {
+  a : 16,
+  b : 16,
+  c : 1,
+}
+
+test : TooWide -> U32
+test x = x
+"#;
+        let (mut program, parse_errors) = parse_raw(source);
+        assert!(!parse_errors, "should parse without errors");
+        with_prelude(&mut program);
+        let mut sa = SemanticAnalyzer::new();
+        sa.analyze(&program);
+        let mut lowering = AstLowering::new(&sa);
+        lowering.lower_program(&program);
+        assert!(lowering.has_errors(), "bitfield exceeding 32 bits should produce an error");
+    }
+
+    #[test]
+    fn bitfield_construction_in_entry_point() {
+        let source = r#"
+bitfield Flags : U32 = {
+  layer   : 4,
+  stencil : 8,
+}
+
+extern resource output : Storage<ReadWrite, Array<U32, 64>> @group 0 @binding 0
+
+@compute @workgroup_size(64, 1, 1)
+main idx =
+  let f = Flags { layer = 5, stencil = 128 }
+  in writeAt output idx f
+"#;
+        let wgsl = compile_to_wgsl(source).expect("bitfield construction in entry point should compile");
+        assert!(wgsl.contains("@compute"), "WGSL should contain @compute, got: {}", wgsl);
+        assert!(wgsl.contains("0u |"), "WGSL should start accumulator from 0u, got: {}", wgsl);
+    }
 }

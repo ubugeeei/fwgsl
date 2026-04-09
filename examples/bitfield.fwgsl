@@ -57,6 +57,16 @@ metallicColor metallic tint =
     then $vec4 (tint.r * 0.8) (tint.g * 0.7) (tint.b * 0.9) tint.a
     else tint
 
+-- Bitfield construction: pack fields into a single u32 value.
+-- Each field is masked and shifted to its bit position.
+packMaterial : I32 -> I32 -> MaterialFlags
+packMaterial rough iorEnc = MaterialFlags { metallic = 0, emissive = 0, transparent = 0, roughness = rough, ior = iorEnc }
+
+-- Bitfield functional update: change specific fields, preserving all others.
+-- Produces: `(base & ~mask) | ((newval & mask) << offset)`
+setMetallic : MaterialFlags -> I32 -> MaterialFlags
+setMetallic flags m = flags { metallic = m }
+
 -- Compute entry point
 @compute @workgroup_size(64, 1, 1)
 main idx =

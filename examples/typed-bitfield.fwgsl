@@ -27,6 +27,14 @@ capFactor style = match style
   | Round -> 1.0
   | Butt  -> 0.75
 
+-- Bitfield construction: pack all fields at once
+defaultLineFlags : LineFlags
+defaultLineFlags = LineFlags { capStart = 0, capEnd = 0, joinStyle = 0, visible = 1, selected = 0 }
+
+-- Bitfield functional update: change one field while preserving others
+selectLine : LineFlags -> LineFlags
+selectLine flags = flags { selected = 1 }
+
 data DrawParams = DrawParams {
   tint : Vec<4, F32>,
 }

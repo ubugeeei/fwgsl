@@ -671,7 +671,7 @@ impl<'a> IndexBuilder<'a> {
                     self.walk_expr(item, frames);
                 }
             }
-            Expr::Record(fields, _) => {
+            Expr::Record(_, fields, _) => {
                 for (_, value) in fields {
                     self.walk_expr(value, frames);
                 }
@@ -748,6 +748,12 @@ impl<'a> IndexBuilder<'a> {
                 }
                 self.walk_expr(body, frames);
                 frames.pop();
+            }
+            Expr::RecordUpdate(base, fields, _) => {
+                self.walk_expr(base, frames);
+                for (_, value) in fields {
+                    self.walk_expr(value, frames);
+                }
             }
         }
     }

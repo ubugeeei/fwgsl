@@ -121,6 +121,10 @@ pub enum HirExpr {
     Index(Box<HirExpr>, Box<HirExpr>, Ty, Span),
     /// Named tail-recursive loop: loop name, bindings [(name, init)], body, result type, span.
     Loop(String, Vec<(String, HirExpr)>, Box<HirExpr>, Ty, Span),
+    /// Bitfield construction: type_name, field values [(name, expr)], result type, span.
+    BitfieldConstruct(String, Vec<(String, HirExpr)>, Ty, Span),
+    /// Bitfield functional update: type_name, base_expr, field updates [(name, expr)], result type, span.
+    BitfieldUpdate(String, Box<HirExpr>, Vec<(String, HirExpr)>, Ty, Span),
 }
 
 impl HirExpr {
@@ -138,6 +142,8 @@ impl HirExpr {
             HirExpr::FieldAccess(_, _, ty, _) => ty,
             HirExpr::Index(_, _, ty, _) => ty,
             HirExpr::Loop(_, _, _, ty, _span) => ty,
+            HirExpr::BitfieldConstruct(_, _, ty, _) => ty,
+            HirExpr::BitfieldUpdate(_, _, _, ty, _) => ty,
         }
     }
 }

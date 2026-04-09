@@ -729,7 +729,171 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
         HirExpr::Loop(_, _, _, _, _) => {
             Err("Loop-expression in pure expression context; use lower_hir_expr_to_stmts".into())
         }
+
+        HirExpr::BitfieldConstruct(type_name, fields, _ty, _span) => {
+            lower_bitfield_construct(type_name, fields, ctx)
+        }
+
+        HirExpr::BitfieldUpdate(type_name, base, fields, _ty, _span) => {
+            lower_bitfield_update(type_name, base, fields, ctx)
+        }
     }
+}
+
+/// Lower a bitfield construction to `((v1 & mask1) << off1) | ((v2 & mask2) << off2) | ...`
+fn lower_bitfield_construct(
+    type_name: &str,
+    fields: &[(String, HirExpr)],
+    ctx: &LowerCtx,
+) -> Result<MirExpr, String> {
+    let mut result = MirExpr::Lit(MirLit::U32(0));
+
+    for (field_name, field_expr) in fields {
+        let bf_info = ctx.lookup_bitfield_field(type_name, field_name)
+            .ok_or_else(|| format!("unknown bitfield field '{}' in '{}'", field_name, type_name))?;
+
+        let mir_val = lower_hir_expr(field_expr, ctx)?;
+        let mask = (1u32 << bf_info.width) - 1;
+
+        // For 1-bit bool fields: select(0u, 1u, val)  →  if val then 1u else 0u
+        // At MIR level we just do: u32(val) which maps to a cast, but simpler:
+        // just mask the value which already works for u32, and for bool we
+        // wrap in a conditional
+        let coerced = if bf_info.width == 1 {
+            // Bool → u32: select(0u, 1u, val)
+            MirExpr::Call(
+                "$select".to_string(),
+                vec![
+                    MirExpr::Lit(MirLit::U32(0)),
+                    MirExpr::Lit(MirLit::U32(1)),
+                    mir_val,
+                ],
+                MirType::U32,
+            )
+        } else {
+            // Ensure value is u32 (integer literals default to i32)
+            let val_ty = mir_val.result_type();
+            if val_ty.as_ref() == Some(&MirType::U32) {
+                mir_val
+            } else {
+                MirExpr::Cast(Box::new(mir_val), MirType::U32)
+            }
+        };
+
+        // (val & mask)
+        let masked = MirExpr::BinOp(
+            MirBinOp::BitAnd,
+            Box::new(coerced),
+            Box::new(MirExpr::Lit(MirLit::U32(mask))),
+            MirType::U32,
+        );
+
+        // (masked << offset)
+        let shifted = if bf_info.offset > 0 {
+            MirExpr::BinOp(
+                MirBinOp::Shl,
+                Box::new(masked),
+                Box::new(MirExpr::Lit(MirLit::U32(bf_info.offset))),
+                MirType::U32,
+            )
+        } else {
+            masked
+        };
+
+        // result = result | shifted
+        result = MirExpr::BinOp(
+            MirBinOp::BitOr,
+            Box::new(result),
+            Box::new(shifted),
+            MirType::U32,
+        );
+    }
+
+    Ok(result)
+}
+
+/// Lower a bitfield functional update to:
+/// `(base & ~mask_combined) | ((val1 & mask1) << off1) | ((val2 & mask2) << off2) | ...`
+/// where `mask_combined` is the OR of all field masks shifted to their positions.
+fn lower_bitfield_update(
+    type_name: &str,
+    base: &HirExpr,
+    fields: &[(String, HirExpr)],
+    ctx: &LowerCtx,
+) -> Result<MirExpr, String> {
+    let mir_base = lower_hir_expr(base, ctx)?;
+
+    // Build the clear-mask: AND-out all fields being updated
+    let mut clear_mask: u32 = !0u32; // start with all bits set
+    for (field_name, _) in fields {
+        let bf_info = ctx.lookup_bitfield_field(type_name, field_name)
+            .ok_or_else(|| format!("unknown bitfield field '{}' in '{}'", field_name, type_name))?;
+        let field_mask = ((1u32 << bf_info.width) - 1) << bf_info.offset;
+        clear_mask &= !field_mask;
+    }
+
+    // base & clear_mask
+    let mut result = MirExpr::BinOp(
+        MirBinOp::BitAnd,
+        Box::new(mir_base),
+        Box::new(MirExpr::Lit(MirLit::U32(clear_mask))),
+        MirType::U32,
+    );
+
+    // OR in each updated field
+    for (field_name, field_expr) in fields {
+        let bf_info = ctx.lookup_bitfield_field(type_name, field_name)
+            .ok_or_else(|| format!("unknown bitfield field '{}' in '{}'", field_name, type_name))?;
+
+        let mir_val = lower_hir_expr(field_expr, ctx)?;
+        let mask = (1u32 << bf_info.width) - 1;
+
+        let coerced = if bf_info.width == 1 {
+            MirExpr::Call(
+                "$select".to_string(),
+                vec![
+                    MirExpr::Lit(MirLit::U32(0)),
+                    MirExpr::Lit(MirLit::U32(1)),
+                    mir_val,
+                ],
+                MirType::U32,
+            )
+        } else {
+            let val_ty = mir_val.result_type();
+            if val_ty.as_ref() == Some(&MirType::U32) {
+                mir_val
+            } else {
+                MirExpr::Cast(Box::new(mir_val), MirType::U32)
+            }
+        };
+
+        let masked = MirExpr::BinOp(
+            MirBinOp::BitAnd,
+            Box::new(coerced),
+            Box::new(MirExpr::Lit(MirLit::U32(mask))),
+            MirType::U32,
+        );
+
+        let shifted = if bf_info.offset > 0 {
+            MirExpr::BinOp(
+                MirBinOp::Shl,
+                Box::new(masked),
+                Box::new(MirExpr::Lit(MirLit::U32(bf_info.offset))),
+                MirType::U32,
+            )
+        } else {
+            masked
+        };
+
+        result = MirExpr::BinOp(
+            MirBinOp::BitOr,
+            Box::new(result),
+            Box::new(shifted),
+            MirType::U32,
+        );
+    }
+
+    Ok(result)
 }
 
 /// Collect arguments from a chain of curried applications.
