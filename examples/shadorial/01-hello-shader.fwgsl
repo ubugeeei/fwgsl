@@ -2,6 +2,6 @@
 -- UV coordinates mapped to RGB color
 
 shade : Vec 2 F32 -> Vec 2 F32 -> Vec 4 F32
-shade fragCoord resolution = $vec4 ($vecX uv) ($vecY uv) 0.5 1.0
+shade fragCoord resolution = vec4 uv.x uv.y 0.5 1.0
   where
     uv = fragCoord / resolution

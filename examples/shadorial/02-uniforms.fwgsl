@@ -2,15 +2,15 @@
 -- Time animation, resolution, and mouse interaction
 
 shade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 2 F32 -> Vec 4 F32
-shade fragCoord time resolution mouse = $vec4 ($vecX color) ($vecY color) ($vecZ color) 1.0
+shade fragCoord time resolution mouse = vec4 color.x color.y color.z 1.0
   where
     uv     = fragCoord / resolution
     mouseN = mouse / resolution
-    r      = 0.5 + 0.5 * $sin time
-    g      = 0.5 + 0.5 * $sin (time + 2.094)
-    b      = 0.5 + 0.5 * $sin (time + 4.189)
-    dist   = $length (uv - mouseN)
-    circle = $smoothstep 0.15 0.14 dist
-    base   = $vec3 r g b
+    r      = 0.5 + 0.5 * sin time
+    g      = 0.5 + 0.5 * sin (time + 2.094)
+    b      = 0.5 + 0.5 * sin (time + 4.189)
+    dist   = length (uv - mouseN)
+    circle = smoothstep 0.15 0.14 dist
+    base   = vec3 r g b
     intensity = 0.3 + circle * 0.7
-    color  = base * $splat3 intensity
+    color  = base * splat3 intensity

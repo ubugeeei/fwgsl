@@ -2,48 +2,48 @@
 -- Smoke simulation using FBM turbulence with buoyancy
 
 hash2d : Vec 2 F32 -> F32
-hash2d p = $fract ($sin ($dot p ($vec2 127.1 311.7)) * 43758.5453123)
+hash2d p = fract (sin (dot p (vec2 127.1 311.7)) * 43758.5453123)
 
 noise2d : Vec 2 F32 -> F32
-noise2d p = $mix ($mix (hash2d i) (hash2d (i + $vec2 1.0 0.0)) ($vecX u))
-                ($mix (hash2d (i + $vec2 0.0 1.0)) (hash2d (i + $vec2 1.0 1.0)) ($vecX u))
-                ($vecY u)
+noise2d p = mix (mix (hash2d i) (hash2d (i + vec2 1.0 0.0)) u.x)
+                (mix (hash2d (i + vec2 0.0 1.0)) (hash2d (i + vec2 1.0 1.0)) u.x)
+                u.y
   where
-    i = $floor p
-    f = $fract p
-    u = f * f * ($vec2 3.0 3.0 - f * $splat2 2.0)
+    i = floor p
+    f = fract p
+    u = f * f * (vec2 3.0 3.0 - f * splat2 2.0)
 
 fbm : Vec 2 F32 -> F32
 fbm p = v0 + v1 + v2 + v3 + v4 + v5
   where
     v0 = 0.5 * noise2d p
-    v1 = 0.25 * noise2d (p * $splat2 2.0)
-    v2 = 0.125 * noise2d (p * $splat2 4.0)
-    v3 = 0.0625 * noise2d (p * $splat2 8.0)
-    v4 = 0.03125 * noise2d (p * $splat2 16.0)
-    v5 = 0.015625 * noise2d (p * $splat2 32.0)
+    v1 = 0.25 * noise2d (p * splat2 2.0)
+    v2 = 0.125 * noise2d (p * splat2 4.0)
+    v3 = 0.0625 * noise2d (p * splat2 8.0)
+    v4 = 0.03125 * noise2d (p * splat2 16.0)
+    v5 = 0.015625 * noise2d (p * splat2 32.0)
 
 shade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32
 shade fragCoord time resolution =
   let uv       = fragCoord / resolution
-      aspect   = $vecX resolution / $vecY resolution
-      p        = $vec2 ($vecX uv * aspect) ($vecY uv)
-      source   = $vec2 (aspect * 0.5) 0.0
-      rise     = $vec2 0.0 (time * 0.4)
-      turb     = $vec2 (fbm (p * $splat2 3.0 + rise)) (fbm (p * $splat2 3.0 + rise + $vec2 5.2 1.3))
-      distorted = p + turb * $splat2 0.3
-      dx       = $vecX distorted - $vecX source
-      dy       = $vecY distorted
-      dist     = $sqrt (dx * dx * 4.0 + dy * dy * 0.5)
-      density  = $smoothstep 1.5 0.0 dist * $smoothstep 0.0 0.1 ($vecY uv)
-      detail   = fbm (p * $splat2 6.0 + rise * $splat2 2.0) * 0.5 + 0.5
+      aspect   = resolution.x / resolution.y
+      p        = vec2 (uv.x * aspect) uv.y
+      source   = vec2 (aspect * 0.5) 0.0
+      rise     = vec2 0.0 (time * 0.4)
+      turb     = vec2 (fbm (p * splat2 3.0 + rise)) (fbm (p * splat2 3.0 + rise + vec2 5.2 1.3))
+      distorted = p + turb * splat2 0.3
+      dx       = distorted.x - source.x
+      dy       = distorted.y
+      dist     = sqrt (dx * dx * 4.0 + dy * dy * 0.5)
+      density  = smoothstep 1.5 0.0 dist * smoothstep 0.0 0.1 uv.y
+      detail   = fbm (p * splat2 6.0 + rise * splat2 2.0) * 0.5 + 0.5
       density' = density * detail
-      warmColor = $vec3 0.8 0.4 0.1
-      coolColor = $vec3 0.4 0.4 0.45
-      smokeCol  = $mix warmColor coolColor ($vecY uv)
-      bgColor   = $vec3 0.02 0.02 0.05
-      color     = $mix bgColor smokeCol density'
-      center    = uv - $vec2 0.5 0.5
-      vignette  = 1.0 - 0.5 * $dot center center
-      final     = color * $splat3 vignette
-  in $vec4 ($vecX final) ($vecY final) ($vecZ final) 1.0
+      warmColor = vec3 0.8 0.4 0.1
+      coolColor = vec3 0.4 0.4 0.45
+      smokeCol  = mix warmColor coolColor uv.y
+      bgColor   = vec3 0.02 0.02 0.05
+      color     = mix bgColor smokeCol density'
+      center    = uv - vec2 0.5 0.5
+      vignette  = 1.0 - 0.5 * dot center center
+      final     = color * splat3 vignette
+  in vec4 final.x final.y final.z 1.0

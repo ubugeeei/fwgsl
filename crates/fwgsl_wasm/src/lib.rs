@@ -65,10 +65,18 @@ struct EditorRangeOutput {
     end_column: u32,
 }
 
+fn with_prelude(program: &mut fwgsl_parser::parser::Program) {
+    let prelude = fwgsl_parser::prelude_program();
+    let mut combined = prelude.decls.clone();
+    combined.append(&mut program.decls);
+    program.decls = combined;
+}
+
 #[wasm_bindgen]
 pub fn compile(source: &str) -> String {
     let mut parser = fwgsl_parser::parser::Parser::new(source);
-    let program = parser.parse_program();
+    let mut program = parser.parse_program();
+    with_prelude(&mut program);
 
     let mut diagnostics = Vec::new();
 
@@ -120,7 +128,8 @@ pub fn format(source: &str) -> String {
 #[wasm_bindgen]
 pub fn get_diagnostics(source: &str) -> String {
     let mut parser = fwgsl_parser::parser::Parser::new(source);
-    let program = parser.parse_program();
+    let mut program = parser.parse_program();
+    with_prelude(&mut program);
 
     let mut diagnostics = Vec::new();
 
