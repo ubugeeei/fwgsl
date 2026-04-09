@@ -125,6 +125,7 @@ pub struct MirFunction {
     pub return_ty: MirType,
     pub body: Vec<MirStmt>,
     pub return_expr: Option<MirExpr>,
+    pub comments: Vec<String>,
 }
 
 /// A function parameter.
@@ -151,6 +152,7 @@ pub struct MirEntryPoint {
     pub return_ty: MirType,
     pub body: Vec<MirStmt>,
     pub return_expr: Option<MirExpr>,
+    pub comments: Vec<String>,
 }
 
 /// Shader stage.

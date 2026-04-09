@@ -430,6 +430,7 @@ impl<'a> IndexBuilder<'a> {
                 body,
                 where_binds,
                 span,
+                ..
             } => {
                 self.walk_callable(name, params, body, where_binds, *span, frames);
             }
@@ -439,6 +440,7 @@ impl<'a> IndexBuilder<'a> {
                 params,
                 body,
                 span,
+                ..
             } => {
                 for attribute in attributes {
                     self.walk_attribute(attribute);
@@ -450,6 +452,7 @@ impl<'a> IndexBuilder<'a> {
                 type_params,
                 constructors,
                 span,
+                ..
             } => {
                 frames.push(ScopeFrame::new(*span, Some(name.clone())));
                 for type_param in type_params {
@@ -492,6 +495,7 @@ impl<'a> IndexBuilder<'a> {
                 params,
                 ty,
                 span,
+                ..
             } => {
                 frames.push(ScopeFrame::new(*span, Some(name.clone())));
                 for type_param in params {

@@ -90,6 +90,7 @@ fn is_reserved_identifier(name: &str) -> bool {
 pub struct WgslEmitter {
     output: String,
     indent: usize,
+    preserve_comments: bool,
 }
 
 impl Default for WgslEmitter {
@@ -104,6 +105,16 @@ impl WgslEmitter {
         Self {
             output: String::new(),
             indent: 0,
+            preserve_comments: false,
+        }
+    }
+
+    /// Create a new emitter that preserves source comments.
+    pub fn with_comments() -> Self {
+        Self {
+            output: String::new(),
+            indent: 0,
+            preserve_comments: true,
         }
     }
 
@@ -129,12 +140,14 @@ impl WgslEmitter {
 
         // Emit functions
         for f in &program.functions {
+            self.emit_comments(&f.comments);
             self.emit_function(f);
             self.newline();
         }
 
         // Emit entry points
         for ep in &program.entry_points {
+            self.emit_comments(&ep.comments);
             self.emit_entry_point(ep);
             self.newline();
         }
@@ -147,6 +160,16 @@ impl WgslEmitter {
     // -----------------------------------------------------------------------
     // Constant emission
     // -----------------------------------------------------------------------
+
+    fn emit_comments(&mut self, comments: &[String]) {
+        if !self.preserve_comments || comments.is_empty() {
+            return;
+        }
+        for comment in comments {
+            self.write(&format!("//{}", comment));
+            self.newline();
+        }
+    }
 
     fn emit_const(&mut self, c: &MirConst) {
         self.write(&format!(
@@ -632,6 +655,11 @@ pub fn emit_wgsl(program: &MirProgram) -> String {
     WgslEmitter::new().emit_program(program)
 }
 
+/// Emit a [`MirProgram`] as WGSL, preserving source comments.
+pub fn emit_wgsl_with_comments(program: &MirProgram) -> String {
+    WgslEmitter::with_comments().emit_program(program)
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -665,6 +693,7 @@ mod tests {
                     Box::new(MirExpr::Var("y".to_string(), MirType::I32)),
                     MirType::I32,
                 )),
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -686,6 +715,7 @@ mod tests {
                 return_ty: MirType::Unit,
                 body: vec![],
                 return_expr: None,
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -762,6 +792,7 @@ mod tests {
                     ),
                 )],
                 return_expr: None,
+                comments: vec![],
             }],
             constants: vec![],
         };
@@ -796,6 +827,7 @@ mod tests {
                     ],
                     MirType::Vec(4, Box::new(MirType::F32)),
                 )),
+                comments: vec![],
             }],
             constants: vec![],
         };
@@ -832,6 +864,7 @@ mod tests {
                     ],
                     MirType::Vec(4, Box::new(MirType::F32)),
                 )),
+                comments: vec![],
             }],
             constants: vec![],
         };
@@ -869,6 +902,7 @@ mod tests {
                     vec![MirStmt::Return(MirExpr::Var("x".to_string(), MirType::I32))],
                 )],
                 return_expr: None,
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -919,6 +953,7 @@ mod tests {
                     ),
                 ],
                 return_expr: None,
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -948,6 +983,7 @@ mod tests {
                     ),
                 ],
                 return_expr: None,
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -982,6 +1018,7 @@ mod tests {
                     ),
                 ],
                 return_expr: None,
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -1012,6 +1049,7 @@ mod tests {
                     ],
                     MirType::F32,
                 )),
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -1052,6 +1090,7 @@ mod tests {
                         MirExpr::Lit(MirLit::F32(2.0)),
                     ],
                 )),
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -1082,6 +1121,7 @@ mod tests {
                     "x".to_string(),
                     MirType::F32,
                 )),
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -1112,6 +1152,7 @@ mod tests {
                     Box::new(MirExpr::Lit(MirLit::U32(0))),
                     MirType::F32,
                 )),
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -1138,6 +1179,7 @@ mod tests {
                     Box::new(MirExpr::Var("x".to_string(), MirType::I32)),
                     MirType::F32,
                 )),
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -1162,6 +1204,7 @@ mod tests {
                     MirExpr::Lit(MirLit::I32(1)),
                 )])],
                 return_expr: None,
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -1186,6 +1229,7 @@ mod tests {
                     vec![],
                     MirType::Mat(4, 4, Box::new(MirType::F32)),
                 )),
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],
@@ -1231,6 +1275,7 @@ mod tests {
                 return_ty: MirType::Unit,
                 body: vec![],
                 return_expr: None,
+                comments: vec![],
             }],
             constants: vec![],
         };
@@ -1318,6 +1363,7 @@ mod tests {
                         ),
                     ],
                 )),
+                comments: vec![],
             }],
             entry_points: vec![MirEntryPoint {
                 name: "main".to_string(),
@@ -1343,6 +1389,7 @@ mod tests {
                     ),
                 )],
                 return_expr: None,
+                comments: vec![],
             }],
             constants: vec![],
         };
@@ -1478,6 +1525,7 @@ mod tests {
                     ),
                 ],
                 return_expr: Some(MirExpr::Var("result".to_string(), MirType::I32)),
+                comments: vec![],
             }],
             entry_points: vec![],
             constants: vec![],

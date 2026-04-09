@@ -622,6 +622,7 @@ impl SemanticAnalyzer {
                 type_params,
                 constructors,
                 span,
+                ..
             } = decl
             {
                 self.register_data_type(name, type_params, constructors, *span);
@@ -672,7 +673,7 @@ impl SemanticAnalyzer {
                 name,
                 var,
                 methods,
-                span: _,
+                ..
             } = decl
             {
                 // Build a type variable scope seeded with the trait variable
@@ -706,6 +707,7 @@ impl SemanticAnalyzer {
                 ty,
                 methods,
                 span,
+                ..
             } = decl
             {
                 let impl_ty_scheme = self.convert_syntax_type(ty);
@@ -1645,6 +1647,7 @@ mod tests {
                 ),
                 where_binds: vec![],
                 span: span(),
+                comments: vec![],
             }],
         };
         sa.analyze(&program);
@@ -1684,6 +1687,7 @@ mod tests {
                     },
                 ],
                 span: span(),
+                comments: vec![],
             }],
         };
         sa.analyze(&program);
@@ -1707,6 +1711,7 @@ mod tests {
                 body: Expr::Var("y".into(), span()),
                 where_binds: vec![],
                 span: span(),
+                comments: vec![],
             }],
         };
         sa.analyze(&program);
@@ -1732,6 +1737,7 @@ mod tests {
                         span(),
                     ),
                     span: span(),
+                    comments: vec![],
                 },
                 Decl::FunDecl {
                     name: "add".into(),
@@ -1744,6 +1750,7 @@ mod tests {
                     ),
                     where_binds: vec![],
                     span: span(),
+                    comments: vec![],
                 },
             ],
         };
@@ -1764,6 +1771,7 @@ mod tests {
                         span(),
                     ),
                     span: span(),
+                    comments: vec![],
                 },
                 Decl::FunDecl {
                     name: "id".into(),
@@ -1771,6 +1779,7 @@ mod tests {
                     body: Expr::Var("x".into(), span()),
                     where_binds: vec![],
                     span: span(),
+                    comments: vec![],
                 },
             ],
         };
@@ -1801,6 +1810,7 @@ mod tests {
                         span: span(),
                     }],
                     span: span(),
+                    comments: vec![],
                 },
                 Decl::FunDecl {
                     name: "unbox".into(),
@@ -1812,6 +1822,7 @@ mod tests {
                     body: Expr::Var("x".into(), span()),
                     where_binds: vec![],
                     span: span(),
+                    comments: vec![],
                 },
             ],
         };
@@ -1844,6 +1855,7 @@ mod tests {
                     span: span(),
                 }],
                 span: span(),
+                comments: vec![],
             }],
         };
 
@@ -1879,6 +1891,7 @@ mod tests {
                 ),
                 where_binds: vec![],
                 span: span(),
+                comments: vec![],
             }],
         };
         sa.analyze(&program);
@@ -1905,6 +1918,7 @@ mod tests {
                 ),
                 where_binds: vec![],
                 span: span(),
+                comments: vec![],
             }],
         };
         sa.analyze(&program);
@@ -1927,6 +1941,7 @@ mod tests {
                 ),
                 where_binds: vec![("y".into(), Expr::Var("x".into(), span()))],
                 span: span(),
+                comments: vec![],
             }],
         };
         sa.analyze(&program);
@@ -1957,6 +1972,7 @@ mod tests {
                 ),
                 where_binds: vec![],
                 span: span(),
+                comments: vec![],
             }],
         };
         sa.analyze(&program);
@@ -1988,6 +2004,7 @@ mod tests {
                         },
                     ],
                     span: span(),
+                    comments: vec![],
                 },
                 Decl::FunDecl {
                     name: "f".into(),
@@ -2008,6 +2025,7 @@ mod tests {
                     ),
                     where_binds: vec![],
                     span: span(),
+                    comments: vec![],
                 },
             ],
         };
@@ -2061,6 +2079,7 @@ mod tests {
                         span(),
                     ),
                     span: span(),
+                    comments: vec![],
                 },
                 Decl::FunDecl {
                     name: "lift".into(),
@@ -2085,6 +2104,7 @@ mod tests {
                     ),
                     where_binds: vec![],
                     span: span(),
+                    comments: vec![],
                 },
                 Decl::TypeSig {
                     name: "unwrap".into(),
@@ -2098,6 +2118,7 @@ mod tests {
                         span(),
                     ),
                     span: span(),
+                    comments: vec![],
                 },
                 Decl::FunDecl {
                     name: "unwrap".into(),
@@ -2118,6 +2139,7 @@ mod tests {
                     ),
                     where_binds: vec![],
                     span: span(),
+                    comments: vec![],
                 },
             ],
         };

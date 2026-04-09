@@ -63,6 +63,7 @@ pub struct HirFunction {
     pub return_ty: Ty,
     pub body: HirExpr,
     pub span: Span,
+    pub comments: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -73,6 +74,7 @@ pub struct HirEntryPoint {
     pub return_ty: Ty,
     pub body: HirExpr,
     pub span: Span,
+    pub comments: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -291,6 +293,7 @@ mod tests {
                     Span::new(0, 5),
                 ),
                 span: Span::new(0, 20),
+                comments: vec![],
             }],
             data_types: vec![],
             entry_points: vec![],

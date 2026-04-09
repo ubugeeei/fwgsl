@@ -19,12 +19,63 @@ pub struct Program {
     pub decls: Vec<Decl>,
 }
 
+impl Decl {
+    /// Get the leading comments attached to this declaration.
+    pub fn comments(&self) -> &[String] {
+        match self {
+            Decl::TypeSig { comments, .. }
+            | Decl::FunDecl { comments, .. }
+            | Decl::DataDecl { comments, .. }
+            | Decl::EntryPoint { comments, .. }
+            | Decl::TypeAlias { comments, .. }
+            | Decl::ResourceDecl { comments, .. }
+            | Decl::BitfieldDecl { comments, .. }
+            | Decl::ConstDecl { comments, .. }
+            | Decl::TraitDecl { comments, .. }
+            | Decl::ImplDecl { comments, .. } => comments,
+        }
+    }
+
+    /// Get a mutable reference to the leading comments.
+    pub fn comments_mut(&mut self) -> &mut Vec<String> {
+        match self {
+            Decl::TypeSig { comments, .. }
+            | Decl::FunDecl { comments, .. }
+            | Decl::DataDecl { comments, .. }
+            | Decl::EntryPoint { comments, .. }
+            | Decl::TypeAlias { comments, .. }
+            | Decl::ResourceDecl { comments, .. }
+            | Decl::BitfieldDecl { comments, .. }
+            | Decl::ConstDecl { comments, .. }
+            | Decl::TraitDecl { comments, .. }
+            | Decl::ImplDecl { comments, .. } => comments,
+        }
+    }
+
+    /// Get the source span of this declaration.
+    pub fn span(&self) -> Span {
+        match self {
+            Decl::TypeSig { span, .. }
+            | Decl::FunDecl { span, .. }
+            | Decl::DataDecl { span, .. }
+            | Decl::EntryPoint { span, .. }
+            | Decl::TypeAlias { span, .. }
+            | Decl::ResourceDecl { span, .. }
+            | Decl::BitfieldDecl { span, .. }
+            | Decl::ConstDecl { span, .. }
+            | Decl::TraitDecl { span, .. }
+            | Decl::ImplDecl { span, .. } => *span,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Decl {
     TypeSig {
         name: String,
         ty: Type,
         span: Span,
+        comments: Vec<String>,
     },
     FunDecl {
         name: String,
@@ -32,12 +83,14 @@ pub enum Decl {
         body: Expr,
         where_binds: Vec<(String, Expr)>,
         span: Span,
+        comments: Vec<String>,
     },
     DataDecl {
         name: String,
         type_params: Vec<String>,
         constructors: Vec<ConDecl>,
         span: Span,
+        comments: Vec<String>,
     },
     EntryPoint {
         attributes: Vec<Attribute>,
@@ -45,12 +98,14 @@ pub enum Decl {
         params: Vec<Pat>,
         body: Expr,
         span: Span,
+        comments: Vec<String>,
     },
     TypeAlias {
         name: String,
         params: Vec<String>,
         ty: Type,
         span: Span,
+        comments: Vec<String>,
     },
     ResourceDecl {
         name: String,
@@ -58,18 +113,21 @@ pub enum Decl {
         group: u32,
         binding: u32,
         span: Span,
+        comments: Vec<String>,
     },
     BitfieldDecl {
         name: String,
         base_ty: Type,
         fields: Vec<BitfieldField>,
         span: Span,
+        comments: Vec<String>,
     },
     ConstDecl {
         name: String,
         ty: Type,
         value: Expr,
         span: Span,
+        comments: Vec<String>,
     },
     /// Trait declaration: `trait Num a where (+) : a -> a -> a ...`
     TraitDecl {
@@ -78,6 +136,7 @@ pub enum Decl {
         var: String,
         methods: Vec<TraitMethod>,
         span: Span,
+        comments: Vec<String>,
     },
     /// Impl declaration.
     /// Trait impl: `impl Add Fp64 where (+) a b = ...`
@@ -89,6 +148,7 @@ pub enum Decl {
         ty: Type,
         methods: Vec<ImplMethod>,
         span: Span,
+        comments: Vec<String>,
     },
 }
 
@@ -456,7 +516,55 @@ impl Parser {
                 self.bump();
             }
         }
+
+        // Post-pass: attach leading comments to each declaration by scanning
+        // backwards through the token stream from each decl's span start.
+        self.attach_leading_comments(&mut decls);
+
         Program { decls }
+    }
+
+    /// For each declaration, scan backwards in the token stream from its span
+    /// start to collect immediately preceding comment tokens.
+    fn attach_leading_comments(&self, decls: &mut [Decl]) {
+        for decl in decls.iter_mut() {
+            let decl_start = decl.span().start;
+            // Find the first token at or after the decl start
+            let tok_idx = match self.tokens.iter().position(|t| t.span.start >= decl_start) {
+                Some(i) => i,
+                None => continue,
+            };
+            // Walk backwards, collecting comments, skipping whitespace/newlines/layout
+            let mut comments = Vec::new();
+            let mut i = tok_idx;
+            while i > 0 {
+                i -= 1;
+                let kind = self.tokens[i].kind;
+                if kind == SyntaxKind::LineComment || kind == SyntaxKind::BlockComment {
+                    let text = self.text_of(&self.tokens[i]);
+                    let comment = if let Some(stripped) = text.strip_prefix("--") {
+                        stripped.to_string()
+                    } else if text.starts_with("{-") && text.ends_with("-}") {
+                        text[2..text.len() - 2].to_string()
+                    } else {
+                        text.to_string()
+                    };
+                    comments.push(comment);
+                } else if kind == SyntaxKind::Whitespace
+                    || kind == SyntaxKind::Newline
+                    || kind == SyntaxKind::LayoutSemicolon
+                    || kind == SyntaxKind::LayoutBraceOpen
+                    || kind == SyntaxKind::LayoutBraceClose
+                {
+                    continue;
+                } else {
+                    // Hit a real token belonging to the previous decl — stop
+                    break;
+                }
+            }
+            comments.reverse();
+            *decl.comments_mut() = comments;
+        }
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -530,6 +638,7 @@ impl Parser {
                     params,
                     body,
                     span,
+                    comments: vec![],
                 })
             }
             SyntaxKind::KwData => Some(self.parse_data_decl()),
@@ -566,7 +675,7 @@ impl Parser {
         self.skip_trivia();
         let ty = self.parse_type();
         let span = self.span_from(start);
-        Decl::TypeSig { name, ty, span }
+        Decl::TypeSig { name, ty, span, comments: vec![] }
     }
 
     fn parse_fun_decl(&mut self, name: String, start: u32) -> Decl {
@@ -607,6 +716,7 @@ impl Parser {
                 body,
                 where_binds,
                 span,
+                comments: vec![],
             };
         }
 
@@ -628,6 +738,7 @@ impl Parser {
             body,
             where_binds,
             span,
+            comments: vec![],
         }
     }
 
@@ -760,6 +871,7 @@ impl Parser {
             type_params,
             constructors,
             span,
+            comments: vec![],
         }
     }
 
@@ -919,6 +1031,7 @@ impl Parser {
                 type_params: params,
                 constructors: vec![con],
                 span,
+                comments: vec![],
             };
         }
 
@@ -930,6 +1043,7 @@ impl Parser {
             params,
             ty,
             span,
+            comments: vec![],
         }
     }
 
@@ -949,6 +1063,7 @@ impl Parser {
             params: vec![],
             ty,
             span,
+            comments: vec![],
         }
     }
 
@@ -973,6 +1088,7 @@ impl Parser {
                 span,
             }],
             span,
+            comments: vec![],
         }
     }
 
@@ -1023,6 +1139,7 @@ impl Parser {
             group: group.unwrap_or(0),
             binding: binding.unwrap_or(0),
             span,
+            comments: vec![],
         }
     }
 
@@ -1096,6 +1213,7 @@ impl Parser {
             base_ty,
             fields,
             span,
+            comments: vec![],
         }
     }
 
@@ -1124,6 +1242,7 @@ impl Parser {
             ty,
             value,
             span,
+            comments: vec![],
         }
     }
 
@@ -1191,6 +1310,7 @@ impl Parser {
             var,
             methods,
             span,
+            comments: vec![],
         }
     }
 
@@ -1290,6 +1410,7 @@ impl Parser {
             ty,
             methods,
             span,
+            comments: vec![],
         }
     }
 

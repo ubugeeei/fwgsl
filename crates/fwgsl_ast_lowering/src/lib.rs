@@ -76,6 +76,7 @@ impl AstLowering {
                 type_params,
                 constructors: cons,
                 span: _,
+                ..
             } = decl
             {
                 let mut type_scope = self.new_type_var_scope(type_params);
@@ -125,6 +126,17 @@ impl AstLowering {
             }
         }
 
+        // Collect comments from TypeSig decls so they can be attached to the
+        // corresponding FunDecl (type signatures don't produce output themselves).
+        let mut sig_comments: HashMap<String, Vec<String>> = HashMap::new();
+        for decl in &program.decls {
+            if let Decl::TypeSig { name, comments, .. } = decl {
+                if !comments.is_empty() {
+                    sig_comments.insert(name.clone(), comments.clone());
+                }
+            }
+        }
+
         let mut functions = Vec::new();
         let mut data_types = Vec::new();
         let mut entry_points = Vec::new();
@@ -140,9 +152,16 @@ impl AstLowering {
                     body,
                     where_binds,
                     span,
-                    ..
+                    comments,
                 } => {
-                    if let Some(f) = self.lower_fun_decl(name, params, body, where_binds, *span) {
+                    let merged_comments = if comments.is_empty() {
+                        sig_comments.get(name).cloned().unwrap_or_default()
+                    } else {
+                        let mut c = sig_comments.get(name).cloned().unwrap_or_default();
+                        c.extend(comments.iter().cloned());
+                        c
+                    };
+                    if let Some(f) = self.lower_fun_decl(name, params, body, where_binds, *span, merged_comments) {
                         functions.push(f);
                     }
                 }
@@ -152,8 +171,9 @@ impl AstLowering {
                     params,
                     body,
                     span,
+                    comments,
                 } => {
-                    if let Some(ep) = self.lower_entry_point(attributes, name, params, body, *span)
+                    if let Some(ep) = self.lower_entry_point(attributes, name, params, body, *span, comments.clone())
                     {
                         entry_points.push(ep);
                     }
@@ -225,6 +245,7 @@ impl AstLowering {
                     ty,
                     value,
                     span,
+                    ..
                 } => {
                     let scheme = self.convert_syntax_type_scheme(ty);
                     let mut local_env = self.env.clone();
@@ -245,6 +266,7 @@ impl AstLowering {
                     ty,
                     methods,
                     span: _,
+                    comments,
                 } => {
                     let impl_ty_scheme = self.convert_syntax_type_scheme(ty);
                     let type_suffix = fwgsl_semantic::format_type_suffix(&impl_ty_scheme.ty);
@@ -265,7 +287,7 @@ impl AstLowering {
                         }
                         for (i, m) in methods.iter().enumerate() {
                             if let Some((mangled, concrete_ty)) = method_info.get(i) {
-                                if let Some(f) = self.lower_impl_method(mangled, &m.params, &m.body, concrete_ty, m.span) {
+                                if let Some(f) = self.lower_impl_method(mangled, &m.params, &m.body, concrete_ty, m.span, comments.clone()) {
                                     functions.push(f);
                                 }
                             }
@@ -275,7 +297,7 @@ impl AstLowering {
                         // with the impl type as the first parameter type.
                         for m in methods {
                             let mangled = fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
-                            if let Some(f) = self.lower_standalone_impl_method(&mangled, &m.params, &m.body, &impl_ty_scheme.ty, m.span) {
+                            if let Some(f) = self.lower_standalone_impl_method(&mangled, &m.params, &m.body, &impl_ty_scheme.ty, m.span, comments.clone()) {
                                 // Register the inferred function type so subsequent
                                 // call sites (method-call syntax, pipelines) resolve
                                 // the correct return type.
@@ -311,6 +333,7 @@ impl AstLowering {
         body: &Expr,
         where_binds: &[(String, Expr)],
         span: Span,
+        comments: Vec<String>,
     ) -> Option<HirFunction> {
         let mut local_env = self.env.clone();
 
@@ -363,6 +386,7 @@ impl AstLowering {
             return_ty,
             body,
             span,
+            comments,
         })
     }
 
@@ -374,6 +398,7 @@ impl AstLowering {
         body: &Expr,
         concrete_ty: &Ty,
         span: Span,
+        comments: Vec<String>,
     ) -> Option<HirFunction> {
         let mut local_env = self.env.clone();
 
@@ -410,6 +435,7 @@ impl AstLowering {
             return_ty,
             body,
             span,
+            comments,
         })
     }
 
@@ -421,6 +447,7 @@ impl AstLowering {
         body: &Expr,
         impl_ty: &Ty,
         span: Span,
+        comments: Vec<String>,
     ) -> Option<HirFunction> {
         let mut local_env = self.env.clone();
         let mut hir_params = Vec::new();
@@ -448,6 +475,7 @@ impl AstLowering {
             return_ty,
             body,
             span,
+            comments,
         })
     }
 
@@ -458,6 +486,7 @@ impl AstLowering {
         params: &[Pat],
         body: &Expr,
         span: Span,
+        comments: Vec<String>,
     ) -> Option<HirEntryPoint> {
         let mut local_env = self.env.clone();
 
@@ -515,6 +544,7 @@ impl AstLowering {
             return_ty,
             body,
             span,
+            comments,
         })
     }
 
@@ -1675,6 +1705,7 @@ mod tests {
                         span(),
                     ),
                     span: span(),
+                    comments: vec![],
                 },
                 Decl::FunDecl {
                     name: "add".into(),
@@ -1687,6 +1718,7 @@ mod tests {
                     ),
                     where_binds: vec![],
                     span: span(),
+                    comments: vec![],
                 },
             ],
         };
@@ -1731,6 +1763,7 @@ mod tests {
                 ),
                 where_binds: vec![("y".into(), Expr::Var("x".into(), span()))],
                 span: span(),
+                comments: vec![],
             }],
         };
 
@@ -1783,6 +1816,7 @@ mod tests {
                     },
                 ],
                 span: span(),
+                comments: vec![],
             }],
         };
 

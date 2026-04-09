@@ -337,6 +337,7 @@ fn lower_hir_function(f: &HirFunction, ctx: &LowerCtx) -> Result<MirFunction, St
         return_ty,
         body: stmts,
         return_expr: Some(return_expr),
+        comments: f.comments.clone(),
     })
 }
 
@@ -427,6 +428,7 @@ fn lower_hir_entry_point(ep: &HirEntryPoint, ctx: &LowerCtx) -> Result<MirEntryP
         return_ty,
         body: stmts,
         return_expr,
+        comments: ep.comments.clone(),
     })
 }
 
@@ -1302,6 +1304,7 @@ mod tests {
                     span(),
                 ),
                 span: span(),
+                comments: vec![],
             }],
             data_types: vec![],
             entry_points: vec![],
@@ -1340,6 +1343,7 @@ mod tests {
                     span(),
                 ),
                 span: span(),
+                comments: vec![],
             }],
             data_types: vec![],
             entry_points: vec![],
@@ -1417,6 +1421,7 @@ mod tests {
                     span(),
                 ),
                 span: span(),
+                comments: vec![],
             }],
             data_types: vec![],
             entry_points: vec![],

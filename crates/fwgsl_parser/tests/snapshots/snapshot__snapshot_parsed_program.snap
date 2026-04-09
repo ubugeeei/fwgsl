@@ -40,6 +40,7 @@ Program {
                 start: 0,
                 end: 33,
             },
+            comments: [],
         },
         TypeSig {
             name: "show",
@@ -67,6 +68,7 @@ Program {
                 start: 33,
                 end: 53,
             },
+            comments: [],
         },
         FunDecl {
             name: "show",
@@ -156,6 +158,7 @@ Program {
                 start: 53,
                 end: 116,
             },
+            comments: [],
         },
         TypeSig {
             name: "add",
@@ -196,6 +199,7 @@ Program {
                 start: 116,
                 end: 140,
             },
+            comments: [],
         },
         FunDecl {
             name: "add",
@@ -241,6 +245,7 @@ Program {
                 start: 140,
                 end: 157,
             },
+            comments: [],
         },
         TypeSig {
             name: "main",
@@ -268,6 +273,7 @@ Program {
                 start: 157,
                 end: 175,
             },
+            comments: [],
         },
         FunDecl {
             name: "main",
@@ -351,6 +357,7 @@ Program {
                 start: 175,
                 end: 216,
             },
+            comments: [],
         },
     ],
 }

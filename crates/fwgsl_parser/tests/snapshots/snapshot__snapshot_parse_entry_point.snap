@@ -52,6 +52,7 @@ Program {
                 start: 0,
                 end: 22,
             },
+            comments: [],
         },
     ],
 }
