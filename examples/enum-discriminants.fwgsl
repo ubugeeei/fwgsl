@@ -1,0 +1,53 @@
+-- Enum discriminant values example.
+--
+-- Demonstrates explicit discriminant values on enum constructors,
+-- so that tag values match specific GPU protocol constants.
+
+-- Cap style with explicit discriminant values
+data CapStyle = NoCap = 0 | Arrow = 1 | Round = 2 | Butt = 3
+
+-- Join style with explicit discriminant values (non-sequential)
+data JoinStyle = Miter = 0 | Bevel = 1 | RoundJoin = 2
+
+-- Blend mode with explicit power-of-two discriminants
+data BlendMode = Opaque = 0 | Alpha = 1 | Additive = 2 | Multiply = 4
+
+-- Mixed: some with explicit, some auto-assigned
+data Severity = Low | Medium | High | Critical = 10
+
+-- Pattern match on enum with explicit discriminants
+capFactor : CapStyle -> F32
+capFactor style = match style
+  | NoCap -> 0.0
+  | Arrow -> 0.5
+  | Round -> 1.0
+  | Butt  -> 0.75
+
+joinAngle : JoinStyle -> F32
+joinAngle style = match style
+  | Miter     -> 0.0
+  | Bevel     -> 0.5
+  | RoundJoin -> 1.0
+
+blendWeight : BlendMode -> F32
+blendWeight mode = match mode
+  | Opaque   -> 1.0
+  | Alpha    -> 0.5
+  | Additive -> 1.0
+  | Multiply -> 0.0
+
+type DrawParams = {
+  tint : Vec<4, F32>,
+}
+
+extern resource params : Uniform<DrawParams> @group 0 @binding 0
+extern resource output : Storage<ReadWrite, Array<Vec<4, F32>, 64>> @group 0 @binding 1
+
+@compute @workgroup_size(64, 1, 1)
+main idx =
+  let p     = load params
+      cap   = capFactor Round
+      join  = joinAngle Bevel
+      blend = blendWeight Alpha
+      color = $vec4 cap join blend p.tint.a
+  in writeAt output idx color

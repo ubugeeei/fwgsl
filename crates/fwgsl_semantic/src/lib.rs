@@ -81,11 +81,13 @@ impl SemanticAnalyzer {
                 ConDecl {
                     name: "Some".into(),
                     fields: ConFields::Positional(vec![builtin_type_var("a")]),
+                    discriminant: None,
                     span: builtin_span(),
                 },
                 ConDecl {
                     name: "None".into(),
                     fields: ConFields::Empty,
+                    discriminant: None,
                     span: builtin_span(),
                 },
             ],
@@ -98,11 +100,13 @@ impl SemanticAnalyzer {
                 ConDecl {
                     name: "Ok".into(),
                     fields: ConFields::Positional(vec![builtin_type_var("a")]),
+                    discriminant: None,
                     span: builtin_span(),
                 },
                 ConDecl {
                     name: "Err".into(),
                     fields: ConFields::Positional(vec![builtin_type_con("String")]),
+                    discriminant: None,
                     span: builtin_span(),
                 },
             ],
@@ -114,6 +118,7 @@ impl SemanticAnalyzer {
             vec![ConDecl {
                 name: "Pair".into(),
                 fields: ConFields::Positional(vec![builtin_type_var("a"), builtin_type_var("b")]),
+                discriminant: None,
                 span: builtin_span(),
             }],
         );
@@ -703,11 +708,12 @@ impl SemanticAnalyzer {
                 ),
             };
 
+            let resolved_tag = con.discriminant.unwrap_or(tag as i64) as u32;
             self.constructors.insert(
                 con.name.clone(),
                 ConstructorInfo {
                     type_name: name.to_string(),
-                    tag: tag as u32,
+                    tag: resolved_tag,
                     scheme_vars: scheme_vars.clone(),
                     fields: field_info,
                     result_ty: result_ty.clone(),
@@ -1451,16 +1457,19 @@ mod tests {
                     ConDecl {
                         name: "Red".into(),
                         fields: ConFields::Empty,
+                        discriminant: None,
                         span: span(),
                     },
                     ConDecl {
                         name: "Green".into(),
                         fields: ConFields::Empty,
+                        discriminant: None,
                         span: span(),
                     },
                     ConDecl {
                         name: "Blue".into(),
                         fields: ConFields::Empty,
+                        discriminant: None,
                         span: span(),
                     },
                 ],
@@ -1578,6 +1587,7 @@ mod tests {
                     constructors: vec![ConDecl {
                         name: "Box".into(),
                         fields: ConFields::Positional(vec![Type::Var("a".into(), span())]),
+                        discriminant: None,
                         span: span(),
                     }],
                     span: span(),
@@ -1620,6 +1630,7 @@ mod tests {
                 constructors: vec![ConDecl {
                     name: "Phantom".into(),
                     fields: ConFields::Empty,
+                    discriminant: None,
                     span: span(),
                 }],
                 span: span(),
@@ -1756,11 +1767,13 @@ mod tests {
                         ConDecl {
                             name: "True2".into(),
                             fields: ConFields::Empty,
+                            discriminant: None,
                             span: span(),
                         },
                         ConDecl {
                             name: "False2".into(),
                             fields: ConFields::Empty,
+                            discriminant: None,
                             span: span(),
                         },
                     ],

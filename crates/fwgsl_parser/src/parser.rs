@@ -74,9 +74,17 @@ pub enum Decl {
 }
 
 #[derive(Debug, Clone)]
+pub enum BitfieldWidth {
+    /// An integer literal width (e.g. `field : 3`)
+    Literal(u32),
+    /// A type reference whose bit width is derived from the type (e.g. `field : CapStyle`)
+    TypeRef(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct BitfieldField {
     pub name: String,
-    pub width: u32,
+    pub width: BitfieldWidth,
     pub span: Span,
 }
 
@@ -84,6 +92,8 @@ pub struct BitfieldField {
 pub struct ConDecl {
     pub name: String,
     pub fields: ConFields,
+    /// Optional explicit discriminant value (e.g. `NoCap = 0`)
+    pub discriminant: Option<i64>,
     pub span: Span,
 }
 
@@ -721,6 +731,29 @@ impl Parser {
         let name = self.text_of(&name_tok).to_owned();
         self.skip_trivia();
 
+        // Optional explicit discriminant: `= <int>`
+        let discriminant = if self.at(SyntaxKind::Equals) {
+            // Peek ahead: if next non-trivia token after `=` is an IntLiteral,
+            // treat as discriminant. Otherwise it could be a different production.
+            let mut i = self.pos + 1;
+            while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+                i += 1;
+            }
+            let next_is_int = i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::IntLiteral;
+            if next_is_int {
+                self.bump(); // consume `=`
+                self.skip_trivia();
+                let int_tok = self.expect(SyntaxKind::IntLiteral);
+                let val = parse_int_literal(self.text_of(&int_tok));
+                self.skip_trivia();
+                Some(val)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Check for record syntax `{`
         let fields = if self.at(SyntaxKind::LBrace) {
             self.bump();
@@ -780,7 +813,7 @@ impl Parser {
         };
 
         let span = self.span_from(start);
-        ConDecl { name, fields, span }
+        ConDecl { name, fields, discriminant, span }
     }
 
     fn parse_type_alias_or_record(&mut self) -> Decl {
@@ -839,6 +872,7 @@ impl Parser {
             let con = ConDecl {
                 name: name.clone(),
                 fields: ConFields::Record(fields),
+                discriminant: None,
                 span: self.span_from(start),
             };
             let span = self.span_from(start);
@@ -897,6 +931,7 @@ impl Parser {
             constructors: vec![ConDecl {
                 name,
                 fields: ConFields::Positional(vec![wrapped]),
+                discriminant: None,
                 span,
             }],
             span,
@@ -986,8 +1021,24 @@ impl Parser {
             self.skip_trivia();
             self.expect(SyntaxKind::Colon);
             self.skip_trivia();
-            let width_tok = self.expect(SyntaxKind::IntLiteral);
-            let width = parse_int_literal(self.text_of(&width_tok)).max(0) as u32;
+            // Width can be an integer literal or a type name (UpperIdent)
+            let width = if self.at(SyntaxKind::IntLiteral) {
+                let width_tok = self.bump();
+                BitfieldWidth::Literal(parse_int_literal(self.text_of(&width_tok)).max(0) as u32)
+            } else if self.at(SyntaxKind::UpperIdent) {
+                let type_tok = self.bump();
+                let type_name = self.text_of(&type_tok).to_owned();
+                // Handle Bool as 1-bit
+                if type_name == "Bool" {
+                    BitfieldWidth::Literal(1)
+                } else {
+                    BitfieldWidth::TypeRef(type_name)
+                }
+            } else {
+                // Fallback: expect an int literal (will error)
+                let width_tok = self.expect(SyntaxKind::IntLiteral);
+                BitfieldWidth::Literal(parse_int_literal(self.text_of(&width_tok)).max(0) as u32)
+            };
             let field_span = self.span_from(field_start);
             fields.push(BitfieldField {
                 name: field_name,

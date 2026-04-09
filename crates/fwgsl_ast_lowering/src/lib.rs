@@ -186,12 +186,27 @@ impl AstLowering {
                     let hir_fields: Vec<fwgsl_hir::HirBitfieldField> = fields
                         .iter()
                         .map(|f| {
+                            let (width, enum_type) = match &f.width {
+                                BitfieldWidth::Literal(w) => (*w, None),
+                                BitfieldWidth::TypeRef(type_name) => {
+                                    // Look up the enum type to determine bit width
+                                    if let Some(dt_info) = self.data_types.get(type_name) {
+                                        let count = dt_info.constructors.len() as u32;
+                                        let bits = if count <= 1 { 1 } else { (count as f64).log2().ceil() as u32 };
+                                        (bits, Some(type_name.clone()))
+                                    } else {
+                                        // Unknown type — default to 1 bit
+                                        (1, None)
+                                    }
+                                }
+                            };
                             let hf = fwgsl_hir::HirBitfieldField {
                                 name: f.name.clone(),
                                 offset,
-                                width: f.width,
+                                width,
+                                enum_type,
                             };
-                            offset += f.width;
+                            offset += width;
                             hf
                         })
                         .collect();
@@ -385,9 +400,10 @@ impl AstLowering {
                     })
                     .collect(),
             };
+            let resolved_tag = con.discriminant.unwrap_or(tag as i64) as u32;
             hir_cons.push(HirConstructor {
                 name: con.name.clone(),
-                tag: tag as u32,
+                tag: resolved_tag,
                 fields,
             });
         }
@@ -1481,16 +1497,19 @@ mod tests {
                     ConDecl {
                         name: "Red".into(),
                         fields: ConFields::Empty,
+                        discriminant: None,
                         span: span(),
                     },
                     ConDecl {
                         name: "Green".into(),
                         fields: ConFields::Empty,
+                        discriminant: None,
                         span: span(),
                     },
                     ConDecl {
                         name: "Blue".into(),
                         fields: ConFields::Empty,
+                        discriminant: None,
                         span: span(),
                     },
                 ],

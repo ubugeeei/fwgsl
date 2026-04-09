@@ -11,6 +11,7 @@ Program {
                 ConDecl {
                     name: "Red",
                     fields: Empty,
+                    discriminant: None,
                     span: Span {
                         start: 13,
                         end: 17,
@@ -19,6 +20,7 @@ Program {
                 ConDecl {
                     name: "Green",
                     fields: Empty,
+                    discriminant: None,
                     span: Span {
                         start: 19,
                         end: 25,
@@ -27,6 +29,7 @@ Program {
                 ConDecl {
                     name: "Blue",
                     fields: Empty,
+                    discriminant: None,
                     span: Span {
                         start: 27,
                         end: 33,

@@ -1,0 +1,51 @@
+-- Typed bitfield fields example.
+--
+-- Demonstrates bitfield fields that reference enum types instead of
+-- raw integer widths. The compiler automatically computes the required
+-- bit width from the number of enum constructors.
+
+-- Cap style: 4 values -> needs 2 bits
+data CapStyle = NoCap = 0 | Arrow = 1 | Round = 2 | Butt = 3
+
+-- Join style: 3 values -> needs 2 bits (ceil(log2(3)) = 2)
+data JoinStyle = Miter = 0 | Bevel = 1 | RoundJoin = 2
+
+-- Bitfield with typed fields referencing enums
+bitfield LineFlags : U32 = {
+  capStart  : CapStyle,
+  capEnd    : CapStyle,
+  joinStyle : JoinStyle,
+  visible   : 1,
+  selected  : Bool,
+}
+
+-- Helper: decode cap style factor
+capFactor : CapStyle -> F32
+capFactor style = match style
+  | NoCap -> 0.0
+  | Arrow -> 0.5
+  | Round -> 1.0
+  | Butt  -> 0.75
+
+type DrawParams = {
+  tint : Vec<4, F32>,
+}
+
+extern resource flags  : Uniform<LineFlags>                          @group 0 @binding 0
+extern resource params : Uniform<DrawParams>                         @group 0 @binding 1
+extern resource output : Storage<ReadWrite, Array<Vec<4, F32>, 64>>  @group 0 @binding 2
+
+@compute @workgroup_size(64, 1, 1)
+main idx =
+  let f      = load flags
+      p      = load params
+      capS   = f.capStart
+      capE   = f.capEnd
+      vis    = f.visible
+      sel    = f.selected
+      startF = capFactor NoCap
+      endF   = capFactor Round
+      visF   = if vis then 1.0 else 0.0
+      selF   = if sel then 1.0 else 0.0
+      color  = $vec4 (startF + endF) visF selF p.tint.a
+  in writeAt output idx color
