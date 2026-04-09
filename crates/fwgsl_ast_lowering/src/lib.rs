@@ -109,6 +109,14 @@ impl AstLowering {
         for decl in &program.decls {
             if let Decl::TypeSig { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type_scheme(ty);
+                let flattened = Scheme {
+                    vars: inferred_ty.vars.clone(),
+                    ty: flatten_tuple_arrows(&inferred_ty.ty),
+                };
+                self.env.insert(name.clone(), flattened);
+            }
+            if let Decl::ConstDecl { name, ty, .. } = decl {
+                let inferred_ty = self.convert_syntax_type_scheme(ty);
                 self.env.insert(name.clone(), inferred_ty);
             }
         }
@@ -200,14 +208,14 @@ impl AstLowering {
                     span,
                 } => {
                     let scheme = self.convert_syntax_type_scheme(ty);
-                    if let Some(hir_expr) = self.lower_expr(value) {
-                        constants.push(fwgsl_hir::HirConst {
-                            name: name.clone(),
-                            ty: scheme.ty,
-                            value: hir_expr,
-                            span: *span,
-                        });
-                    }
+                    let mut local_env = self.env.clone();
+                    let (hir_expr, _val_ty) = self.lower_expr(value, &mut local_env);
+                    constants.push(fwgsl_hir::HirConst {
+                        name: name.clone(),
+                        ty: scheme.ty,
+                        value: hir_expr,
+                        span: *span,
+                    });
                 }
                 Decl::TypeSig { .. } | Decl::TypeAlias { .. } => {}
             }
@@ -236,11 +244,22 @@ impl AstLowering {
         let mut hir_params = Vec::new();
         let mut param_types = Vec::new();
         for pat in params {
-            let ty = self.engine.fresh_var();
-            let pname = pat_name(pat);
-            self.bind_pattern(pat, &ty, &mut local_env);
-            param_types.push(ty.clone());
-            hir_params.push((pname, ty));
+            // Flatten tuple patterns into individual parameters
+            if let Pat::Tuple(sub_pats, _) = pat {
+                for sub_pat in sub_pats {
+                    let ty = self.engine.fresh_var();
+                    let pname = pat_name(sub_pat);
+                    self.bind_pattern(sub_pat, &ty, &mut local_env);
+                    param_types.push(ty.clone());
+                    hir_params.push((pname, ty));
+                }
+            } else {
+                let ty = self.engine.fresh_var();
+                let pname = pat_name(pat);
+                self.bind_pattern(pat, &ty, &mut local_env);
+                param_types.push(ty.clone());
+                hir_params.push((pname, ty));
+            }
         }
 
         let body = desugar_where(body, where_binds, span);
@@ -287,11 +306,21 @@ impl AstLowering {
         let mut hir_params = Vec::new();
         let mut param_types = Vec::new();
         for pat in params {
-            let ty = self.engine.fresh_var();
-            let pname = pat_name(pat);
-            self.bind_pattern(pat, &ty, &mut local_env);
-            param_types.push(ty.clone());
-            hir_params.push((pname, ty));
+            if let Pat::Tuple(sub_pats, _) = pat {
+                for sub_pat in sub_pats {
+                    let ty = self.engine.fresh_var();
+                    let pname = pat_name(sub_pat);
+                    self.bind_pattern(sub_pat, &ty, &mut local_env);
+                    param_types.push(ty.clone());
+                    hir_params.push((pname, ty));
+                }
+            } else {
+                let ty = self.engine.fresh_var();
+                let pname = pat_name(pat);
+                self.bind_pattern(pat, &ty, &mut local_env);
+                param_types.push(ty.clone());
+                hir_params.push((pname, ty));
+            }
         }
 
         let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
@@ -488,6 +517,26 @@ impl AstLowering {
                         )
                     }
                 } else {
+                    // Flatten tuple arguments: f (a, b, c) => f a b c
+                    if let Expr::Tuple(elems, _) = arg.as_ref() {
+                        if !elems.is_empty() {
+                            let (mut expr, mut cur_ty) = self.lower_expr(func, env);
+                            for elem in elems {
+                                let (hir_arg, arg_ty) = self.lower_expr(elem, env);
+                                let ret_ty = self.engine.fresh_var();
+                                let expected = Ty::arrow(arg_ty, ret_ty.clone());
+                                self.engine.unify(&cur_ty, &expected, *span);
+                                expr = HirExpr::App(
+                                    Box::new(expr),
+                                    Box::new(hir_arg),
+                                    ret_ty.clone(),
+                                    *span,
+                                );
+                                cur_ty = ret_ty;
+                            }
+                            return (expr, cur_ty);
+                        }
+                    }
                     let (hir_func, func_ty) = self.lower_expr(func, env);
                     let (hir_arg, arg_ty) = self.lower_expr(arg, env);
                     let ret_ty = self.engine.fresh_var();
@@ -638,8 +687,14 @@ impl AstLowering {
                 if elems.is_empty() {
                     (HirExpr::Lit(HirLit::Int(0), Ty::unit(), *span), Ty::unit())
                 } else {
-                    // Lower first element as a simplification
-                    self.lower_expr(&elems[0], env)
+                    // Lower all elements and return the last one as a fallback.
+                    // Tuple expressions used as function arguments are handled
+                    // by the App flattening above; this path is for standalone tuples.
+                    let mut last = None;
+                    for e in elems {
+                        last = Some(self.lower_expr(e, env));
+                    }
+                    last.unwrap()
                 }
             }
 
@@ -756,16 +811,8 @@ impl AstLowering {
 
             Expr::Neg(inner, span) => {
                 let (hir_inner, inner_ty) = self.lower_expr(inner, env);
-                // Negation: emit as (0 - x)
-                let zero = HirExpr::Lit(HirLit::Int(0), inner_ty.clone(), *span);
                 (
-                    HirExpr::BinOp(
-                        BinOp::Sub,
-                        Box::new(zero),
-                        Box::new(hir_inner),
-                        inner_ty.clone(),
-                        *span,
-                    ),
+                    HirExpr::UnaryNeg(Box::new(hir_inner), inner_ty.clone(), *span),
                     inner_ty,
                 )
             }
@@ -809,6 +856,43 @@ impl AstLowering {
                         body_ty,
                     )
                 }
+            }
+
+            Expr::Loop(loop_name, bindings, body, span) => {
+                // Lower each binding's initial value
+                let mut hir_bindings = Vec::new();
+                let mut loop_env = env.clone();
+                // Build the type of the loop result from the first binding
+                // (for single-binding loops), or a tuple of all binding types.
+                let mut binding_tys = Vec::new();
+                for (bind_name, init_expr) in bindings {
+                    let (hir_init, init_ty) = self.lower_expr(init_expr, env);
+                    loop_env.insert(bind_name.clone(), Scheme::mono(init_ty.clone()));
+                    binding_tys.push(init_ty);
+                    hir_bindings.push((bind_name.clone(), hir_init));
+                }
+
+                // The result type of the loop is inferred from the body's
+                // non-recursive branches (not the tuple of bindings).
+                let result_ty = self.engine.fresh_var();
+                // The loop name is a function: binding_ty1 -> ... -> result_ty
+                let loop_fn_ty = binding_tys.iter().rev().fold(result_ty.clone(), |acc, ty| {
+                    Ty::Arrow(Box::new(ty.clone()), Box::new(acc))
+                });
+                loop_env.insert(loop_name.clone(), Scheme::mono(loop_fn_ty));
+
+                let (hir_body, body_ty) = self.lower_expr(body, &mut loop_env);
+                self.engine.unify(&result_ty, &body_ty, *span);
+                (
+                    HirExpr::Loop(
+                        loop_name.clone(),
+                        hir_bindings,
+                        Box::new(hir_body),
+                        result_ty.clone(),
+                        *span,
+                    ),
+                    result_ty,
+                )
             }
         }
     }
@@ -950,8 +1034,13 @@ impl AstLowering {
             }
             Pat::Paren(inner, _) => self.bind_pattern(inner, ty, env),
             Pat::Tuple(pats, _) => {
-                if let Some(first) = pats.first() {
-                    self.bind_pattern(first, ty, env);
+                let elem_tys: Vec<Ty> = pats.iter().map(|_| self.engine.fresh_var()).collect();
+                if !elem_tys.is_empty() {
+                    let tuple_ty = Ty::Tuple(elem_tys.clone());
+                    self.engine.unify(ty, &tuple_ty, Span::new(0, 0));
+                }
+                for (pat, elem_ty) in pats.iter().zip(elem_tys.iter()) {
+                    self.bind_pattern(pat, elem_ty, env);
                 }
             }
             Pat::Record(con_name, fields, span) => {
@@ -1023,7 +1112,12 @@ impl AstLowering {
                 if elems.is_empty() {
                     Ty::unit()
                 } else {
-                    self.convert_syntax_type_with_scope(&elems[0], scope)
+                    Ty::Tuple(
+                        elems
+                            .iter()
+                            .map(|e| self.convert_syntax_type_with_scope(e, scope))
+                            .collect(),
+                    )
                 }
             }
             Type::Unit(_) => Ty::unit(),
@@ -1064,7 +1158,7 @@ impl AstLowering {
                 if elems.is_empty() {
                     Ty::unit()
                 } else {
-                    self.convert_syntax_type_pure(&elems[0])
+                    Ty::Tuple(elems.iter().map(|e| self.convert_syntax_type_pure(e)).collect())
                 }
             }
             Type::Unit(_) => Ty::unit(),
@@ -1155,6 +1249,21 @@ impl AstLowering {
                 self.engine.finalize(&ty),
                 span,
             ),
+            HirExpr::UnaryNeg(inner, ty, span) => HirExpr::UnaryNeg(
+                Box::new(self.finalize_expr(*inner)),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::Loop(loop_name, bindings, body, ty, span) => HirExpr::Loop(
+                loop_name,
+                bindings
+                    .into_iter()
+                    .map(|(n, e)| (n, self.finalize_expr(e)))
+                    .collect(),
+                Box::new(self.finalize_expr(*body)),
+                self.engine.finalize(&ty),
+                span,
+            ),
         }
     }
 
@@ -1217,6 +1326,25 @@ fn pat_name(pat: &Pat) -> String {
         Pat::Paren(inner, _) => pat_name(inner),
         Pat::As(name, _, _) => name.clone(),
         _ => "_".to_string(),
+    }
+}
+
+/// Flatten tuple arrows: `(A, B) -> R` becomes `A -> B -> R`.
+fn flatten_tuple_arrows(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Arrow(from, to) => {
+            let to_flat = flatten_tuple_arrows(to);
+            if let Ty::Tuple(elems) = from.as_ref() {
+                let mut result = to_flat;
+                for elem in elems.iter().rev() {
+                    result = Ty::arrow(flatten_tuple_arrows(elem), result);
+                }
+                result
+            } else {
+                Ty::arrow(flatten_tuple_arrows(from), to_flat)
+            }
+        }
+        _ => ty.clone(),
     }
 }
 

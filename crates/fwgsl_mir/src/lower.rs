@@ -211,12 +211,27 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
         }
     }
 
+    // Lower constants
+    let mut constants = Vec::new();
+    for c in &hir.constants {
+        let mir_ty = ty_to_mir_type_with_ctx(&c.ty, Some(&ctx)).unwrap_or(MirType::I32);
+        match lower_hir_expr(&c.value, &ctx) {
+            Ok(mir_expr) => constants.push(MirConst {
+                name: c.name.clone(),
+                ty: mir_ty,
+                value: mir_expr,
+            }),
+            Err(e) => errors.push(e),
+        }
+    }
+
     if errors.is_empty() {
         Ok(MirProgram {
             structs,
             globals,
             functions,
             entry_points,
+            constants,
         })
     } else {
         Err(errors)
@@ -522,6 +537,47 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr, ctx: &LowerCtx) -> Result<(Vec<MirStm
             }
         }
 
+        HirExpr::Loop(loop_name, bindings, body, ty, _span) => {
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
+            let result_var = format!("{}_result", loop_name);
+
+            let mut pre_stmts = Vec::new();
+
+            // Emit `var` for each binding
+            let mut binding_names = Vec::new();
+            let mut binding_types = Vec::new();
+            for (bind_name, init_expr) in bindings {
+                let (mut init_stmts, init_mir) = lower_hir_expr_to_stmts(init_expr, ctx)?;
+                let bind_ty = init_mir.result_type().unwrap_or(MirType::I32);
+                pre_stmts.append(&mut init_stmts);
+                pre_stmts.push(MirStmt::Var(bind_name.clone(), bind_ty.clone(), init_mir));
+                binding_names.push(bind_name.clone());
+                binding_types.push(bind_ty);
+            }
+
+            // Emit result var
+            pre_stmts.push(MirStmt::Var(
+                result_var.clone(),
+                mir_ty.clone(),
+                MirExpr::default_value(&mir_ty),
+            ));
+
+            // Lower the body, converting calls to loop_name into assignments + continue
+            let loop_body = lower_loop_body(
+                body,
+                loop_name,
+                &binding_names,
+                &binding_types,
+                &result_var,
+                &mir_ty,
+                ctx,
+            )?;
+
+            pre_stmts.push(MirStmt::Loop(loop_body));
+
+            Ok((pre_stmts, MirExpr::Var(result_var, mir_ty)))
+        }
+
         // Simple expressions produce no statements
         _ => {
             let mir_expr = lower_hir_expr(expr, ctx)?;
@@ -644,6 +700,16 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
             ))
         }
 
+        HirExpr::UnaryNeg(inner, ty, _span) => {
+            let mir_inner = lower_hir_expr(inner, ctx)?;
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::F32);
+            Ok(MirExpr::UnaryOp(
+                MirUnaryOp::Neg,
+                Box::new(mir_inner),
+                mir_ty,
+            ))
+        }
+
         HirExpr::Let(binds, body, _ty, _span) => {
             let _ = binds;
             lower_hir_expr(body, ctx)
@@ -656,6 +722,108 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
 
         HirExpr::Case(_, _, _ty, _span) => {
             Err("Case-expression in pure expression context; use lower_hir_expr_to_stmts".into())
+        }
+
+        HirExpr::Loop(_, _, _, _, _) => {
+            Err("Loop-expression in pure expression context; use lower_hir_expr_to_stmts".into())
+        }
+    }
+}
+
+/// Collect arguments from a chain of curried applications.
+/// `App(App(App(f, a), b), c)` → `(f, [a, b, c])`
+fn collect_app_args(expr: &HirExpr) -> (&HirExpr, Vec<&HirExpr>) {
+    let mut args = Vec::new();
+    let mut current = expr;
+    while let HirExpr::App(func, arg, _, _) = current {
+        args.push(arg.as_ref());
+        current = func.as_ref();
+    }
+    args.reverse();
+    (current, args)
+}
+
+/// Lower the body of a named loop into MIR statements.
+///
+/// Calls to the loop name become assignments to the loop vars + `continue`.
+/// Non-recursive branches become `result_var = expr; break;`.
+fn lower_loop_body(
+    body: &HirExpr,
+    loop_name: &str,
+    binding_names: &[String],
+    binding_types: &[MirType],
+    result_var: &str,
+    result_ty: &MirType,
+    ctx: &LowerCtx,
+) -> Result<Vec<MirStmt>, String> {
+    match body {
+        // If-expression: recursively handle both branches
+        HirExpr::If(cond, then_branch, else_branch, _ty, _span) => {
+            let (cond_stmts, cond_expr) = lower_hir_expr_to_stmts(cond, ctx)?;
+            let then_stmts = lower_loop_body(
+                then_branch, loop_name, binding_names, binding_types,
+                result_var, result_ty, ctx,
+            )?;
+            let else_stmts = lower_loop_body(
+                else_branch, loop_name, binding_names, binding_types,
+                result_var, result_ty, ctx,
+            )?;
+            let mut stmts = cond_stmts;
+            stmts.push(MirStmt::If(cond_expr, then_stmts, else_stmts));
+            Ok(stmts)
+        }
+
+        // Let-expression: emit let bindings then recurse into body
+        HirExpr::Let(bindings, inner_body, _ty, _span) => {
+            let mut stmts = Vec::new();
+            for (name, init_expr) in bindings {
+                let (mut init_stmts, init_mir) = lower_hir_expr_to_stmts(init_expr, ctx)?;
+                let bind_ty = init_mir.result_type().unwrap_or(MirType::I32);
+                stmts.append(&mut init_stmts);
+                stmts.push(MirStmt::Let(name.clone(), bind_ty, init_mir));
+            }
+            let mut body_stmts = lower_loop_body(
+                inner_body, loop_name, binding_names, binding_types,
+                result_var, result_ty, ctx,
+            )?;
+            stmts.append(&mut body_stmts);
+            Ok(stmts)
+        }
+
+        // Check if this is a call to the loop name (tail recursion)
+        other => {
+            let (func, args) = collect_app_args(other);
+            if let HirExpr::Var(name, _, _) = func {
+                if name == loop_name && args.len() == binding_names.len() {
+                    // Tail call: assign new values to loop vars and continue
+                    let mut stmts = Vec::new();
+                    // Lower all args first (to temp lets) before assigning,
+                    // to avoid ordering issues when bindings reference each other
+                    let mut arg_temps = Vec::new();
+                    for (i, arg) in args.iter().enumerate() {
+                        let (mut arg_stmts, arg_mir) = lower_hir_expr_to_stmts(arg, ctx)?;
+                        stmts.append(&mut arg_stmts);
+                        let tmp = format!("_loop_tmp_{}", i);
+                        let tmp_ty = binding_types[i].clone();
+                        stmts.push(MirStmt::Let(tmp.clone(), tmp_ty.clone(), arg_mir));
+                        arg_temps.push((tmp, tmp_ty));
+                    }
+                    for (i, (tmp, tmp_ty)) in arg_temps.into_iter().enumerate() {
+                        stmts.push(MirStmt::Assign(
+                            binding_names[i].clone(),
+                            MirExpr::Var(tmp, tmp_ty),
+                        ));
+                    }
+                    stmts.push(MirStmt::Continue);
+                    return Ok(stmts);
+                }
+            }
+
+            // Non-recursive: this is a result expression
+            let (mut stmts, expr) = lower_hir_expr_to_stmts(other, ctx)?;
+            stmts.push(MirStmt::Assign(result_var.to_string(), expr));
+            stmts.push(MirStmt::Break);
+            Ok(stmts)
         }
     }
 }
@@ -1069,6 +1237,7 @@ mod tests {
             entry_points: vec![],
             resources: vec![],
             bitfields: vec![],
+            constants: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
@@ -1106,6 +1275,7 @@ mod tests {
             entry_points: vec![],
             resources: vec![],
             bitfields: vec![],
+            constants: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
@@ -1182,6 +1352,7 @@ mod tests {
             entry_points: vec![],
             resources: vec![],
             bitfields: vec![],
+            constants: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");

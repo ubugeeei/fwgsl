@@ -145,7 +145,6 @@ pub enum SyntaxKind {
     KwBitfield,
     KwConst,
     KwLoop,
-    KwWhile,
 
     // ── CST node kinds ─────────────────────────────────────────────
     SourceFile,
@@ -243,7 +242,7 @@ pub enum SyntaxKind {
 
 impl SyntaxKind {
     const FIRST_KEYWORD: Self = SyntaxKind::KwModule;
-    const LAST_KEYWORD: Self = SyntaxKind::KwWhile;
+    const LAST_KEYWORD: Self = SyntaxKind::KwLoop;
 
     const FIRST_OPERATOR: Self = SyntaxKind::Plus;
     const LAST_OPERATOR: Self = SyntaxKind::PipeForward;
@@ -324,7 +323,6 @@ pub fn keyword_from_str(s: &str) -> Option<SyntaxKind> {
         "bitfield" => Some(SyntaxKind::KwBitfield),
         "const" => Some(SyntaxKind::KwConst),
         "loop" => Some(SyntaxKind::KwLoop),
-        "while" => Some(SyntaxKind::KwWhile),
         _ => None,
     }
 }
@@ -458,7 +456,6 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::KwBitfield => "'bitfield'",
             SyntaxKind::KwConst => "'const'",
             SyntaxKind::KwLoop => "'loop'",
-            SyntaxKind::KwWhile => "'while'",
 
             // CST node kinds
             SyntaxKind::SourceFile => "source file",

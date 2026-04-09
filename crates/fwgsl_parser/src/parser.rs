@@ -130,9 +130,9 @@ pub enum Expr {
     Do(Vec<DoStmt>, Span),
     /// Vec literal: `[a, b, c]` — desugared to vecN constructor call.
     VecLit(Vec<Expr>, Span),
-    /// Loop: `loop var = init while (cond) in body`
-    /// Fields: (binding_name, initial_value, condition, body, span)
-    Loop(String, Box<Expr>, Box<Expr>, Box<Expr>, Span),
+    /// Named loop (tail-recursive): `loop go (i = 0) (acc = 0) in body`
+    /// Fields: (loop_name, bindings[(name, init)], body, span)
+    Loop(String, Vec<(String, Expr)>, Box<Expr>, Span),
 }
 
 #[derive(Debug, Clone)]
@@ -199,7 +199,7 @@ impl Expr {
             | Expr::Neg(_, s)
             | Expr::Do(_, s)
             | Expr::VecLit(_, s)
-            | Expr::Loop(_, _, _, _, s) => *s,
+            | Expr::Loop(_, _, _, s) => *s,
         }
     }
 }
@@ -1011,7 +1011,12 @@ impl Parser {
         let start = self.current_span().start;
         self.expect(SyntaxKind::KwConst);
         self.skip_trivia();
-        let name_tok = self.expect(SyntaxKind::Ident);
+        // Const name: could be Ident or UpperIdent (SCREAMING_SNAKE_CASE)
+        let name_tok = if self.at(SyntaxKind::UpperIdent) {
+            self.bump()
+        } else {
+            self.expect(SyntaxKind::Ident)
+        };
         let name = self.text_of(&name_tok).to_owned();
         self.skip_trivia();
         self.expect(SyntaxKind::Colon);
@@ -1635,6 +1640,47 @@ impl Parser {
         Expr::Do(stmts, span)
     }
 
+    /// Parse `loop go (i = 0) (acc = 0) in body`.
+    ///
+    /// Named tail-recursive loop. Each binding is parenthesised: `(name = init)`.
+    /// The body may call `go arg1 arg2` to recurse (continue the loop).
+    fn parse_loop(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwLoop);
+        self.skip_trivia();
+
+        // Parse loop name (e.g. `go`)
+        let name_tok = self.expect(SyntaxKind::Ident);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+
+        // Parse bindings: `(name = init)` repeated
+        let mut bindings = Vec::new();
+        while self.at(SyntaxKind::LParen) && self.consume_fuel() {
+            self.expect(SyntaxKind::LParen);
+            self.skip_trivia();
+            let bind_tok = self.expect(SyntaxKind::Ident);
+            let bind_name = self.text_of(&bind_tok).to_owned();
+            self.skip_trivia();
+            self.expect(SyntaxKind::Equals);
+            self.skip_trivia();
+            let init = self.parse_expr();
+            self.skip_trivia();
+            self.expect(SyntaxKind::RParen);
+            self.skip_trivia();
+            bindings.push((bind_name, init));
+        }
+
+        // `in` keyword
+        self.expect(SyntaxKind::KwIn);
+        self.skip_trivia();
+
+        // Body expression
+        let body = self.parse_expr();
+        let span = self.span_from(start);
+        Expr::Loop(name, bindings, Box::new(body), span)
+    }
+
     fn parse_lambda(&mut self) -> Expr {
         let start = self.current_span().start;
         self.expect(SyntaxKind::Backslash);
@@ -2036,7 +2082,8 @@ fn insert_pipeline_arg(rhs: Expr, lhs: Expr, span: Span) -> Expr {
                 | Expr::If(_, _, _, s)
                 | Expr::Tuple(_, s)
                 | Expr::Record(_, s)
-                | Expr::OpSection(_, s) => *s = span,
+                | Expr::OpSection(_, s)
+                | Expr::Loop(_, _, _, s) => *s = span,
             }
             applied
         }

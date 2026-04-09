@@ -355,6 +355,24 @@ impl<'a> IndexBuilder<'a> {
                     });
                     self.index.add_definition_span(symbol_id, name_span);
                 }
+                Decl::ConstDecl { name, span, .. } => {
+                    let name_span = self.first_name_span(name, *span).unwrap_or(*span);
+                    let symbol_id = self.top_level_values.get(name).copied().unwrap_or_else(|| {
+                        let id = self.index.push_symbol(NewSymbol {
+                            name: name.clone(),
+                            namespace: Namespace::Value,
+                            kind: SymbolKind::Function,
+                            span: name_span,
+                            scope_span: whole_file,
+                            scope_depth: 0,
+                            visible_from: 0,
+                            container: Some(name.clone()),
+                        });
+                        self.top_level_values.insert(name.clone(), id);
+                        id
+                    });
+                    self.index.add_definition_span(symbol_id, name_span);
+                }
             }
         }
     }
@@ -470,6 +488,10 @@ impl<'a> IndexBuilder<'a> {
             }
             Decl::BitfieldDecl { base_ty, .. } => {
                 self.walk_type(base_ty, frames);
+            }
+            Decl::ConstDecl { ty, value, .. } => {
+                self.walk_type(ty, frames);
+                self.walk_expr(value, frames);
             }
         }
     }
@@ -637,6 +659,43 @@ impl<'a> IndexBuilder<'a> {
                         DoStmt::Expr(value, _) => self.walk_expr(value, frames),
                     }
                 }
+                frames.pop();
+            }
+            Expr::Loop(loop_name, bindings, body, span) => {
+                let container = frames.last().and_then(|frame| frame.container.clone());
+                frames.push(ScopeFrame::new(*span, container));
+                let depth = frames.len() - 1;
+                // Register loop name as a local binding
+                let loop_name_span = *span; // approximate
+                let loop_sym = self.index.push_symbol(NewSymbol {
+                    name: loop_name.clone(),
+                    namespace: Namespace::Value,
+                    kind: SymbolKind::LocalBinding,
+                    span: loop_name_span,
+                    scope_span: *span,
+                    scope_depth: depth,
+                    visible_from: span.start,
+                    container: frames[depth].container.clone(),
+                });
+                frames[depth].value_defs.insert(loop_name.clone(), loop_sym);
+                for (bind_name, init_expr) in bindings {
+                    self.walk_expr(init_expr, frames);
+                    let binding_span = self
+                        .last_name_span_before(bind_name, *span, init_expr.span().start)
+                        .unwrap_or(*span);
+                    let symbol_id = self.index.push_symbol(NewSymbol {
+                        name: bind_name.clone(),
+                        namespace: Namespace::Value,
+                        kind: SymbolKind::LocalBinding,
+                        span: binding_span,
+                        scope_span: *span,
+                        scope_depth: depth,
+                        visible_from: span.start,
+                        container: frames[depth].container.clone(),
+                    });
+                    frames[depth].value_defs.insert(bind_name.clone(), symbol_id);
+                }
+                self.walk_expr(body, frames);
                 frames.pop();
             }
         }

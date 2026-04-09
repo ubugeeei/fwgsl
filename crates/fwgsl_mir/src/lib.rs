@@ -19,6 +19,15 @@ pub struct MirProgram {
     pub globals: Vec<MirGlobal>,
     pub functions: Vec<MirFunction>,
     pub entry_points: Vec<MirEntryPoint>,
+    pub constants: Vec<MirConst>,
+}
+
+/// A module-level constant declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MirConst {
+    pub name: String,
+    pub ty: MirType,
+    pub value: MirExpr,
 }
 
 /// A module-scope variable declaration (resource binding).
@@ -220,6 +229,12 @@ pub enum MirStmt {
     Block(Vec<MirStmt>),
     /// `switch (expr) { case Xu: { ... } ... default: { ... } }`
     Switch(MirExpr, Vec<MirSwitchCase>, Vec<MirStmt>),
+    /// `loop { body }`
+    Loop(Vec<MirStmt>),
+    /// `break;`
+    Break,
+    /// `continue;`
+    Continue,
 }
 
 /// A single `case` arm in a switch statement.
@@ -274,6 +289,17 @@ impl MirExpr {
             MirExpr::FieldAccess(_, _, ty) => Some(ty.clone()),
             MirExpr::Index(_, _, ty) => Some(ty.clone()),
             MirExpr::Cast(_, ty) => Some(ty.clone()),
+        }
+    }
+
+    /// Produce a zero/default value for the given MIR type.
+    pub fn default_value(ty: &MirType) -> MirExpr {
+        match ty {
+            MirType::I32 => MirExpr::Lit(MirLit::I32(0)),
+            MirType::U32 => MirExpr::Lit(MirLit::U32(0)),
+            MirType::F32 => MirExpr::Lit(MirLit::F32(0.0)),
+            MirType::Bool => MirExpr::Lit(MirLit::Bool(false)),
+            _ => MirExpr::Lit(MirLit::I32(0)),
         }
     }
 }

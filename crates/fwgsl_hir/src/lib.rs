@@ -108,10 +108,14 @@ pub enum HirExpr {
     Case(Box<HirExpr>, Vec<HirCaseArm>, Ty, Span),
     If(Box<HirExpr>, Box<HirExpr>, Box<HirExpr>, Ty, Span),
     BinOp(BinOp, Box<HirExpr>, Box<HirExpr>, Ty, Span),
+    /// Unary negation: `-expr`.
+    UnaryNeg(Box<HirExpr>, Ty, Span),
     /// Constructor call: name, tag, arguments, result type, span.
     ConstructorCall(String, u32, Vec<HirExpr>, Ty, Span),
     FieldAccess(Box<HirExpr>, String, Ty, Span),
     Index(Box<HirExpr>, Box<HirExpr>, Ty, Span),
+    /// Named tail-recursive loop: loop name, bindings [(name, init)], body, result type, span.
+    Loop(String, Vec<(String, HirExpr)>, Box<HirExpr>, Ty, Span),
 }
 
 impl HirExpr {
@@ -124,9 +128,11 @@ impl HirExpr {
             HirExpr::Case(_, _, ty, _) => ty,
             HirExpr::If(_, _, _, ty, _) => ty,
             HirExpr::BinOp(_, _, _, ty, _) => ty,
+            HirExpr::UnaryNeg(_, ty, _) => ty,
             HirExpr::ConstructorCall(_, _, _, ty, _) => ty,
             HirExpr::FieldAccess(_, _, ty, _) => ty,
             HirExpr::Index(_, _, ty, _) => ty,
+            HirExpr::Loop(_, _, _, ty, _span) => ty,
         }
     }
 }

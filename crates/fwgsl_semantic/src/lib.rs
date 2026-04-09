@@ -599,7 +599,12 @@ impl SemanticAnalyzer {
         for decl in &program.decls {
             if let Decl::TypeSig { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type(ty);
-                self.env.insert(name.clone(), inferred_ty);
+                // Flatten tuple args: (A, B) -> R becomes A -> B -> R
+                let flattened = Scheme {
+                    vars: inferred_ty.vars.clone(),
+                    ty: flatten_tuple_arrows(&inferred_ty.ty),
+                };
+                self.env.insert(name.clone(), flattened);
             }
             if let Decl::ConstDecl { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type(ty);
@@ -759,12 +764,15 @@ impl SemanticAnalyzer {
             }
             Type::Paren(inner, _) => self.convert_syntax_type_with_scope(inner, scope),
             Type::Tuple(elems, _) => {
-                // Tuples as type application of a tuple constructor
                 if elems.is_empty() {
                     Ty::unit()
                 } else {
-                    // Just use first element for now
-                    self.convert_syntax_type_with_scope(&elems[0], scope)
+                    Ty::Tuple(
+                        elems
+                            .iter()
+                            .map(|e| self.convert_syntax_type_with_scope(e, scope))
+                            .collect(),
+                    )
                 }
             }
             Type::Unit(_) => Ty::unit(),
@@ -789,17 +797,26 @@ impl SemanticAnalyzer {
     ) {
         let mut local_env = self.env.clone();
 
-        // Create types for parameters
+        // Create types for parameters, flattening tuple patterns
         let mut param_types = Vec::new();
         for pat in params {
-            let ty = self.engine.fresh_var();
-            self.bind_pattern(pat, &ty, &mut local_env);
-            param_types.push(ty);
+            if let Pat::Tuple(sub_pats, _) = pat {
+                for sub_pat in sub_pats {
+                    let ty = self.engine.fresh_var();
+                    self.bind_pattern(sub_pat, &ty, &mut local_env);
+                    param_types.push(ty);
+                }
+            } else {
+                let ty = self.engine.fresh_var();
+                self.bind_pattern(pat, &ty, &mut local_env);
+                param_types.push(ty);
+            }
         }
 
         // If there's a declared type, pre-unify parameter types so that
         // concrete type information (e.g. Vec dimensions) is available
         // during body inference for swizzle resolution and field access.
+        // The declared type has already been flattened (tuple arrows -> curried).
         if let Some(scheme) = self.env.lookup(name) {
             let declared_ty = self.engine.instantiate(scheme);
             let mut cursor = &declared_ty;
@@ -884,10 +901,16 @@ impl SemanticAnalyzer {
                 self.engine.unify(ty, &lit_ty, *span);
             }
             Pat::Paren(inner, _) => self.bind_pattern(inner, ty, env),
-            Pat::Tuple(pats, _span) => {
-                // For simplicity, treat as first element
-                if let Some(first) = pats.first() {
-                    self.bind_pattern(first, ty, env);
+            Pat::Tuple(pats, span) => {
+                let elem_tys: Vec<Ty> = pats.iter().map(|_| self.engine.fresh_var()).collect();
+                let tuple_ty = if elem_tys.is_empty() {
+                    Ty::unit()
+                } else {
+                    Ty::Tuple(elem_tys.clone())
+                };
+                self.engine.unify(ty, &tuple_ty, *span);
+                for (pat, elem_ty) in pats.iter().zip(elem_tys.iter()) {
+                    self.bind_pattern(pat, elem_ty, env);
                 }
             }
             Pat::Record(con_name, fields, span) => {
@@ -957,6 +980,20 @@ impl SemanticAnalyzer {
 
             Expr::App(func, arg, span) => {
                 let func_ty = self.infer_expr(func, env);
+                // Flatten tuple arguments: f (a, b, c) => f a b c
+                if let Expr::Tuple(elems, _) = arg.as_ref() {
+                    if !elems.is_empty() {
+                        let mut cur_ty = func_ty;
+                        for elem in elems {
+                            let arg_ty = self.infer_expr(elem, env);
+                            let ret_ty = self.engine.fresh_var();
+                            let expected = Ty::arrow(arg_ty, ret_ty.clone());
+                            self.engine.unify(&cur_ty, &expected, *span);
+                            cur_ty = ret_ty;
+                        }
+                        return cur_ty;
+                    }
+                }
                 let arg_ty = self.infer_expr(arg, env);
                 let ret_ty = self.engine.fresh_var();
                 let expected = Ty::arrow(arg_ty, ret_ty.clone());
@@ -1036,15 +1073,11 @@ impl SemanticAnalyzer {
             Expr::Paren(inner, _) => self.infer_expr(inner, env),
 
             Expr::Tuple(elems, _span) => {
-                // Simplified: just infer all elements
-                let mut tys = Vec::new();
-                for e in elems {
-                    tys.push(self.infer_expr(e, env));
-                }
+                let tys: Vec<Ty> = elems.iter().map(|e| self.infer_expr(e, env)).collect();
                 if tys.is_empty() {
                     Ty::unit()
                 } else {
-                    tys.remove(0)
+                    Ty::Tuple(tys)
                 }
             }
 
@@ -1176,6 +1209,24 @@ impl SemanticAnalyzer {
                     }
                 }
                 last_ty
+            }
+
+            Expr::Loop(loop_name, bindings, body, span) => {
+                let mut loop_env = env.clone();
+                let mut binding_tys = Vec::new();
+                for (bind_name, init_expr) in bindings {
+                    let init_ty = self.infer_expr(init_expr, env);
+                    loop_env.insert(bind_name.clone(), Scheme::mono(init_ty.clone()));
+                    binding_tys.push(init_ty);
+                }
+                let result_ty = self.engine.fresh_var();
+                let loop_fn_ty = binding_tys.iter().rev().fold(result_ty.clone(), |acc, ty| {
+                    Ty::Arrow(Box::new(ty.clone()), Box::new(acc))
+                });
+                loop_env.insert(loop_name.clone(), Scheme::mono(loop_fn_ty));
+                let body_ty = self.infer_expr(body, &mut loop_env);
+                self.engine.unify(&result_ty, &body_ty, *span);
+                result_ty
             }
         }
     }
@@ -1314,6 +1365,28 @@ fn unwrap_resource_type(ty: &Ty) -> Ty {
         }
     }
     ty.clone()
+}
+
+/// Flatten tuple arrows: `(A, B) -> R` becomes `A -> B -> R`.
+/// This allows tuple-parameter function signatures to be stored
+/// in curried form, matching the flattened function definitions.
+fn flatten_tuple_arrows(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Arrow(from, to) => {
+            let to_flat = flatten_tuple_arrows(to);
+            if let Ty::Tuple(elems) = from.as_ref() {
+                // (A, B, C) -> R => A -> B -> C -> R
+                let mut result = to_flat;
+                for elem in elems.iter().rev() {
+                    result = Ty::arrow(flatten_tuple_arrows(elem), result);
+                }
+                result
+            } else {
+                Ty::arrow(flatten_tuple_arrows(from), to_flat)
+            }
+        }
+        _ => ty.clone(),
+    }
 }
 
 #[cfg(test)]

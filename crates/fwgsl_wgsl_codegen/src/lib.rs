@@ -109,6 +109,12 @@ impl WgslEmitter {
 
     /// Consume the emitter and produce the WGSL text for the given program.
     pub fn emit_program(mut self, program: &MirProgram) -> String {
+        // Emit constants
+        for c in &program.constants {
+            self.emit_const(c);
+            self.newline();
+        }
+
         // Emit structs
         for s in &program.structs {
             self.emit_struct(s);
@@ -134,6 +140,23 @@ impl WgslEmitter {
         }
 
         self.output.trim_end().to_string() + "\n"
+    }
+
+    // -----------------------------------------------------------------------
+    // Struct emission
+    // -----------------------------------------------------------------------
+    // Constant emission
+    // -----------------------------------------------------------------------
+
+    fn emit_const(&mut self, c: &MirConst) {
+        self.write(&format!(
+            "const {}: {} = ",
+            sanitize_identifier(&c.name),
+            self.format_type(&c.ty)
+        ));
+        self.emit_expr(&c.value);
+        self.write(";");
+        self.newline();
     }
 
     // -----------------------------------------------------------------------
@@ -443,6 +466,29 @@ impl WgslEmitter {
                 self.write("}");
                 self.newline();
             }
+            MirStmt::Loop(body) => {
+                self.write_indent();
+                self.write("loop {");
+                self.newline();
+                self.indent += 1;
+                for s in body {
+                    self.emit_stmt(s);
+                }
+                self.indent -= 1;
+                self.write_indent();
+                self.write("}");
+                self.newline();
+            }
+            MirStmt::Break => {
+                self.write_indent();
+                self.write("break;");
+                self.newline();
+            }
+            MirStmt::Continue => {
+                self.write_indent();
+                self.write("continue;");
+                self.newline();
+            }
         }
     }
 
@@ -616,6 +662,7 @@ mod tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -636,6 +683,7 @@ mod tests {
                 return_expr: None,
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -669,6 +717,7 @@ mod tests {
             globals: vec![],
             functions: vec![],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -709,6 +758,7 @@ mod tests {
                 )],
                 return_expr: None,
             }],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -742,6 +792,7 @@ mod tests {
                     MirType::Vec(4, Box::new(MirType::F32)),
                 )),
             }],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -777,6 +828,7 @@ mod tests {
                     MirType::Vec(4, Box::new(MirType::F32)),
                 )),
             }],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -814,6 +866,7 @@ mod tests {
                 return_expr: None,
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -863,6 +916,7 @@ mod tests {
                 return_expr: None,
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -891,6 +945,7 @@ mod tests {
                 return_expr: None,
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -924,6 +979,7 @@ mod tests {
                 return_expr: None,
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -953,6 +1009,7 @@ mod tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -992,6 +1049,7 @@ mod tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1021,6 +1079,7 @@ mod tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1050,6 +1109,7 @@ mod tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1075,6 +1135,7 @@ mod tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1098,6 +1159,7 @@ mod tests {
                 return_expr: None,
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1121,6 +1183,7 @@ mod tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1141,6 +1204,7 @@ mod tests {
             globals: vec![],
             functions: vec![],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1163,6 +1227,7 @@ mod tests {
                 body: vec![],
                 return_expr: None,
             }],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1274,6 +1339,7 @@ mod tests {
                 )],
                 return_expr: None,
             }],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1334,6 +1400,7 @@ mod tests {
             globals: vec![],
             functions: vec![],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1408,6 +1475,7 @@ mod tests {
                 return_expr: Some(MirExpr::Var("result".to_string(), MirType::I32)),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);

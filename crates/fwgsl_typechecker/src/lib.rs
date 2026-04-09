@@ -22,6 +22,8 @@ pub enum Ty {
     App(Box<Ty>, Box<Ty>),
     /// Function arrow: a -> b
     Arrow(Box<Ty>, Box<Ty>),
+    /// Tuple type: (A, B, C, ...)
+    Tuple(Vec<Ty>),
     /// Universal quantification: forall a. ty
     Forall(Vec<String>, Box<Ty>),
     /// Nat literal for dependent dimensions (2, 3, 4).
@@ -62,6 +64,7 @@ impl Ty {
             Ty::Con(_) | Ty::Nat(_) | Ty::Error => false,
             Ty::App(f, a) => f.contains_var(var) || a.contains_var(var),
             Ty::Arrow(a, b) => a.contains_var(var) || b.contains_var(var),
+            Ty::Tuple(elems) => elems.iter().any(|e| e.contains_var(var)),
             Ty::Forall(_, body) => body.contains_var(var),
         }
     }
@@ -88,6 +91,7 @@ impl Ty {
                 Box::new(a.apply_subst(subst)),
                 Box::new(b.apply_subst(subst)),
             ),
+            Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|e| e.apply_subst(subst)).collect()),
             Ty::Forall(vars, body) => Ty::Forall(vars.clone(), Box::new(body.apply_subst(subst))),
         }
     }
@@ -107,6 +111,15 @@ impl Ty {
             Ty::Arrow(a, b) => {
                 let mut vs = a.free_vars();
                 vs.extend(b.free_vars());
+                vs.sort();
+                vs.dedup();
+                vs
+            }
+            Ty::Tuple(elems) => {
+                let mut vs = Vec::new();
+                for e in elems {
+                    vs.extend(e.free_vars());
+                }
                 vs.sort();
                 vs.dedup();
                 vs
@@ -147,6 +160,7 @@ pub fn normalize_type_aliases(ty: &Ty) -> Ty {
             Box::new(normalize_type_aliases(a)),
             Box::new(normalize_type_aliases(b)),
         ),
+        Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(normalize_type_aliases).collect()),
         Ty::Forall(vars, body) => Ty::Forall(vars.clone(), Box::new(normalize_type_aliases(body))),
         Ty::Var(_) | Ty::Nat(_) | Ty::Error => ty.clone(),
     }
@@ -192,6 +206,16 @@ impl fmt::Display for Ty {
                     write!(f, " {}", v)?;
                 }
                 write!(f, ". {}", body)
+            }
+            Ty::Tuple(elems) => {
+                write!(f, "(")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", e)?;
+                }
+                write!(f, ")")
             }
             Ty::Nat(n) => write!(f, "{}", n),
             Ty::Error => write!(f, "<error>"),
@@ -360,6 +384,11 @@ impl InferEngine {
             (Ty::App(f1, a1), Ty::App(f2, a2)) => {
                 self.unify(f1, f2, span);
                 self.unify(a1, a2, span);
+            }
+            (Ty::Tuple(a_elems), Ty::Tuple(b_elems)) if a_elems.len() == b_elems.len() => {
+                for (a_e, b_e) in a_elems.iter().zip(b_elems.iter()) {
+                    self.unify(a_e, b_e, span);
+                }
             }
             _ => {
                 self.diagnostics.push(
@@ -535,6 +564,7 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
                 _ => Err(format!("Cannot convert to WGSL: {}", ty)),
             }
         }
+        Ty::Tuple(_) => Err("Tuple types cannot be directly represented in WGSL".into()),
         Ty::Arrow(_, _) => Err("Function types cannot be represented in WGSL".into()),
         Ty::Var(v) => Err(format!("Unresolved type variable t{}", v)),
         _ => Err(format!("Cannot convert to WGSL: {}", ty)),

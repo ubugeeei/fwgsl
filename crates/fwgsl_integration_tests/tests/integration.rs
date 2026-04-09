@@ -1125,6 +1125,7 @@ mod codegen_tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1167,6 +1168,7 @@ mod codegen_tests {
                 )],
                 return_expr: None,
             }],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1220,6 +1222,7 @@ mod codegen_tests {
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1266,6 +1269,7 @@ mod codegen_tests {
                 return_expr: None,
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1300,6 +1304,7 @@ mod codegen_tests {
                     MirType::Vec(4, Box::new(MirType::F32)),
                 )),
             }],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1337,6 +1342,7 @@ mod codegen_tests {
                     MirType::Vec(4, Box::new(MirType::F32)),
                 )),
             }],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1593,6 +1599,7 @@ show c = match c
                 return_expr: Some(MirExpr::Var("x".to_string(), MirType::I32)),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1626,6 +1633,7 @@ show c = match c
                 )),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1652,6 +1660,7 @@ show c = match c
                 return_expr: Some(MirExpr::Var("x".to_string(), MirType::I32)),
             }],
             entry_points: vec![],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1736,6 +1745,7 @@ show c = match c
                     return_expr: None,
                 },
             ],
+            constants: vec![],
         };
 
         let wgsl = emit_wgsl(&program);
@@ -1924,6 +1934,38 @@ mod full_pipeline_tests {
         assert!(
             wgsl.contains(".x"),
             "WGSL should contain swizzle field access, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_full_pipeline_loop_expression() {
+        // Named tail-recursive loop: counts i up to x, returns final i
+        let source = "f : I32 -> I32\nf x = loop go (i = 0) in if i < x then go (i + 1) else i";
+        let wgsl = compile_to_wgsl(source).expect("loop compilation should succeed");
+        assert!(
+            wgsl.contains("fn f("),
+            "WGSL should contain fn f, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("loop {"),
+            "WGSL should contain loop statement, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("break;"),
+            "WGSL should contain break statement, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("continue;"),
+            "WGSL should contain continue statement, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("var i"),
+            "WGSL should contain var i, got: {}",
             wgsl
         );
     }
