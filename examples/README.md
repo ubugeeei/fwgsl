@@ -40,6 +40,7 @@ cargo run -p fwgsl_cli -- check examples/prelude-utils.fwgsl
 | `tensor-aliases.fwgsl` | `Tensor` / `Vector` / `Matrix` / `Scalar` plus short aliases | `check` |
 | `option-result.fwgsl` | Builtin `Option` / `Result` constructors and matching | `check` |
 | `prelude-utils.fwgsl` | `$map`, `$fold`, `$zip`, `$flatMap`, `$all`, `$any` | `check` |
+| `enlightenment-stars.fwgsl` | Creative line/star/enlightenment animated compute sketch using new surface syntax | `check` |
 
 ## Notes
 

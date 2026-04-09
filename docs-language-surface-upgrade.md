@@ -38,3 +38,13 @@
 - Writable swizzle assignment.
 - Advanced resource semantic validation/reflection emission beyond AST-level declaration support.
 - Expanded effect/type-class machinery beyond current compiler model.
+
+## Showcase
+
+- See `examples/enlightenment-stars.fwgsl` for a creative end-to-end sketch combining:
+  - `alias`, `newtype`, record `type`, and `data` ADTs
+  - `extern resource` declarations
+  - pipeline `|>`
+  - record field access + vector swizzles
+  - matrix indexing (`m[0][1]`)
+
