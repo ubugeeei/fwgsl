@@ -11,13 +11,13 @@ easeInOutCubic : F32 -> F32
 easeInOutCubic t =
   if t < 0.5
     then 4.0 * t * t * t
-    else 1.0 - pow ((-2.0) * t + 2.0) 3.0 / 2.0
+    else 1.0 - pow (-2.0 * t + 2.0) 3.0 / 2.0
 
 easeOutElastic : F32 -> F32
 easeOutElastic t =
   if t == 0.0 then 0.0
   else if t == 1.0 then 1.0
-  else pow 2.0 ((-10.0) * t) * sin ((t * 10.0 - 0.75) * (2.0 * 3.14159 / 3.0)) + 1.0
+  else pow 2.0 (-10.0 * t) * sin ((t * 10.0 - 0.75) * (2.0 * 3.14159 / 3.0)) + 1.0
 
 easeOutBounce : F32 -> F32
 easeOutBounce t =
@@ -44,7 +44,7 @@ shade fragCoord time resolution = vec4 final''.x final''.y final''.z 1.0
     period = 3.0
     t      = mod time period / period
     r      = 0.03
-    startX = (-0.4)
+    startX = -0.4
     endX   = 0.4
     px     = 1.5 / resolution.y
     x1     = mix startX endX t
@@ -56,9 +56,9 @@ shade fragCoord time resolution = vec4 final''.x final''.y final''.z 1.0
     c1     = circle uv (vec2 x1 0.30) r px
     c2     = circle uv (vec2 x2 0.18) r px
     c3     = circle uv (vec2 x3 0.06) r px
-    c4     = circle uv (vec2 x4 (-0.06)) r px
-    c5     = circle uv (vec2 x5 (-0.18)) r px
-    c6     = circle uv (vec2 x6 (-0.30)) r px
+    c4     = circle uv (vec2 x4 -0.06) r px
+    c5     = circle uv (vec2 x5 -0.18) r px
+    c6     = circle uv (vec2 x6 -0.30) r px
     bgColor = vec3 0.05 0.05 0.08
     color   = mix bgColor (vec3 0.9 0.3 0.3) c1
     color'  = mix color (vec3 0.9 0.6 0.2) c2

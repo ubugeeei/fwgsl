@@ -553,6 +553,49 @@ impl Parser {
         i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::Equals
     }
 
+    /// Check whether the current token is `Minus` immediately (no whitespace)
+    /// followed by a numeric literal, forming a negative literal like `-0.35`.
+    /// Used in the application loop to treat `-0.35` as an atom argument.
+    ///
+    /// The heuristic: `-` must be glued to the digit (`-0.35`, not `- 0.35`)
+    /// AND there must be whitespace before the `-` (so `x-0.5` stays as subtraction).
+    fn is_negative_literal_ahead(&self) -> bool {
+        if self.peek() != SyntaxKind::Minus {
+            return false;
+        }
+        let minus_tok = self.current_token();
+        let minus_end = minus_tok.span.end;
+        let next = self.pos + 1;
+        if next >= self.tokens.len() {
+            return false;
+        }
+        let next_tok = &self.tokens[next];
+        // The `-` must be immediately adjacent to the digit (no whitespace)
+        if next_tok.span.start != minus_end {
+            return false;
+        }
+        if !matches!(next_tok.kind, SyntaxKind::IntLiteral | SyntaxKind::FloatLiteral) {
+            return false;
+        }
+        // There must be whitespace before the `-` so it's not glued to the
+        // preceding expression like `x-0.5`. Check the previous non-trivia
+        // token's span end vs the minus span start.
+        if self.pos == 0 {
+            return true;
+        }
+        // Walk backwards to find the previous non-trivia token
+        let mut i = self.pos;
+        while i > 0 {
+            i -= 1;
+            if !self.tokens[i].kind.is_trivia() {
+                // Found previous non-trivia token: must NOT be adjacent to minus
+                return self.tokens[i].span.end != minus_tok.span.start;
+            }
+        }
+        // No non-trivia token before: start of file
+        true
+    }
+
     /// Compute the 0-based column for a byte offset in the source.
     fn column_of(&self, offset: u32) -> u32 {
         let off = offset as usize;
@@ -1895,7 +1938,9 @@ impl Parser {
 
             // Function application (juxtaposition): if the next token could
             // start an atom and we have enough binding power.
-            if is_atom_start(op_kind) && min_bp <= 11 {
+            // Also treat `-<digit>` (whitespace before, no space after) as a
+            // negative literal atom so `vec2 -0.35 0.5` works without parens.
+            if (is_atom_start(op_kind) || self.is_negative_literal_ahead()) && min_bp <= 11 {
                 self.skip_trivia();
                 let arg = self.parse_atom();
                 let span = lhs.span().merge(arg.span());
@@ -2059,6 +2104,30 @@ impl Parser {
                     return self.parse_named_record(name, tok.span.start);
                 }
                 Expr::Con(name, tok.span)
+            }
+            // Negative literal atom: `-0.35`, `-42` (no space between `-` and digit)
+            SyntaxKind::Minus if self.is_negative_literal_ahead() => {
+                let start = self.current_span().start;
+                self.bump(); // consume `-`
+                let tok = self.bump(); // consume adjacent numeric literal
+                let text = self.text_of(&tok);
+                let span = self.span_from(start);
+                match tok.kind {
+                    SyntaxKind::FloatLiteral => {
+                        let val: f64 = text.parse().unwrap_or(0.0);
+                        Expr::Lit(Lit::Float(-val), span)
+                    }
+                    SyntaxKind::IntLiteral => {
+                        match parse_int_literal_typed(text) {
+                            ParsedInt::Unsigned(v) => {
+                                // -42u → treat as Neg(UInt(42)) since unsigned can't be negative
+                                Expr::Neg(Box::new(Expr::Lit(Lit::UInt(v), tok.span)), span)
+                            }
+                            ParsedInt::Signed(v) => Expr::Lit(Lit::Int(-v), span),
+                        }
+                    }
+                    _ => unreachable!(),
+                }
             }
             SyntaxKind::LParen => self.parse_paren_expr(),
             SyntaxKind::LBracket => self.parse_vec_lit(),
