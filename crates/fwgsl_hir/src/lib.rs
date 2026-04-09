@@ -65,6 +65,7 @@ pub enum HirExpr {
     /// Constructor call: name, tag, arguments, result type, span.
     ConstructorCall(String, u32, Vec<HirExpr>, Ty, Span),
     FieldAccess(Box<HirExpr>, String, Ty, Span),
+    Index(Box<HirExpr>, Box<HirExpr>, Ty, Span),
 }
 
 impl HirExpr {
@@ -79,6 +80,7 @@ impl HirExpr {
             HirExpr::BinOp(_, _, _, ty, _) => ty,
             HirExpr::ConstructorCall(_, _, _, ty, _) => ty,
             HirExpr::FieldAccess(_, _, ty, _) => ty,
+            HirExpr::Index(_, _, ty, _) => ty,
         }
     }
 }

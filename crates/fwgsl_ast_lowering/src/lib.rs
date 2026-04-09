@@ -146,7 +146,7 @@ impl AstLowering {
                 } => {
                     data_types.push(self.lower_data_decl(name, constructors));
                 }
-                Decl::TypeSig { .. } | Decl::TypeAlias { .. } => {}
+                Decl::TypeSig { .. } | Decl::TypeAlias { .. } | Decl::ResourceDecl { .. } => {}
             }
         }
 
@@ -533,6 +533,21 @@ impl AstLowering {
                     HirExpr::FieldAccess(
                         Box::new(hir_expr),
                         field.clone(),
+                        result_ty.clone(),
+                        *span,
+                    ),
+                    result_ty,
+                )
+            }
+
+            Expr::Index(base, index, span) => {
+                let (hir_base, _base_ty) = self.lower_expr(base, env);
+                let (hir_index, _idx_ty) = self.lower_expr(index, env);
+                let result_ty = self.engine.fresh_var();
+                (
+                    HirExpr::Index(
+                        Box::new(hir_base),
+                        Box::new(hir_index),
                         result_ty.clone(),
                         *span,
                     ),
@@ -957,6 +972,12 @@ impl AstLowering {
             HirExpr::FieldAccess(expr, field, ty, span) => HirExpr::FieldAccess(
                 Box::new(self.finalize_expr(*expr)),
                 field,
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::Index(base, index, ty, span) => HirExpr::Index(
+                Box::new(self.finalize_expr(*base)),
+                Box::new(self.finalize_expr(*index)),
                 self.engine.finalize(&ty),
                 span,
             ),

@@ -448,6 +448,16 @@ fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
                 mir_ty,
             ))
         }
+        HirExpr::Index(base, index, ty, _span) => {
+            let mir_base = lower_hir_expr(base)?;
+            let mir_index = lower_hir_expr(index)?;
+            let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+            Ok(MirExpr::Index(
+                Box::new(mir_base),
+                Box::new(mir_index),
+                mir_ty,
+            ))
+        }
 
         HirExpr::Let(binds, body, _ty, _span) => {
             // For Let in expression position, we need to lower it.

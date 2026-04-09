@@ -1,0 +1,22 @@
+alias Float2 = Vec<2, F32>
+newtype Velocity = Vec<3, F32>
+
+type ShapeParams = {
+  scale : F32,
+  offset : Vec<2, F32>,
+  color : Vec<4, F32>,
+}
+
+data Shape
+  = Circle F32
+  | Rect (Vec<2, F32>)
+
+extern resource output : Storage<ReadWrite, Array<F32, 1024>> @group 0 @binding 0
+extern resource params : Uniform<ShapeParams> @group 0 @binding 1
+
+main idx p m =
+  let uv = p.offset.xy
+      c = p.color.rgb
+      v = idx |> toF32 |> scaleBy p.scale
+      x = m[0][1]
+  in writeAt output idx v

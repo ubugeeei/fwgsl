@@ -319,6 +319,24 @@ impl<'a> IndexBuilder<'a> {
                     self.index.symbols[symbol_id].kind = SymbolKind::TypeAlias;
                     self.index.add_definition_span(symbol_id, name_span);
                 }
+                Decl::ResourceDecl { name, span, .. } => {
+                    let name_span = self.first_name_span(name, *span).unwrap_or(*span);
+                    let symbol_id = self.top_level_values.get(name).copied().unwrap_or_else(|| {
+                        let id = self.index.push_symbol(NewSymbol {
+                            name: name.clone(),
+                            namespace: Namespace::Value,
+                            kind: SymbolKind::Function,
+                            span: name_span,
+                            scope_span: whole_file,
+                            scope_depth: 0,
+                            visible_from: 0,
+                            container: Some(name.clone()),
+                        });
+                        self.top_level_values.insert(name.clone(), id);
+                        id
+                    });
+                    self.index.add_definition_span(symbol_id, name_span);
+                }
             }
         }
     }
@@ -428,6 +446,9 @@ impl<'a> IndexBuilder<'a> {
                 }
                 self.walk_type(ty, frames);
                 frames.pop();
+            }
+            Decl::ResourceDecl { ty, .. } => {
+                self.walk_type(ty, frames);
             }
         }
     }
@@ -563,6 +584,10 @@ impl<'a> IndexBuilder<'a> {
             }
             Expr::FieldAccess(base, _, _) => {
                 self.walk_expr(base, frames);
+            }
+            Expr::Index(base, index, _) => {
+                self.walk_expr(base, frames);
+                self.walk_expr(index, frames);
             }
             Expr::Do(statements, span) => {
                 let container = frames.last().and_then(|frame| frame.container.clone());

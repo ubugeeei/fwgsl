@@ -523,6 +523,10 @@ impl SemanticAnalyzer {
                 let inferred_ty = self.convert_syntax_type(ty);
                 self.env.insert(name.clone(), inferred_ty);
             }
+            if let Decl::ResourceDecl { name, ty, .. } = decl {
+                let inferred_ty = self.convert_syntax_type(ty);
+                self.env.insert(name.clone(), inferred_ty);
+            }
         }
 
         // Pass 3: type check function bodies
@@ -962,6 +966,12 @@ impl SemanticAnalyzer {
                 }
 
                 // Fallback: fresh var (record field access)
+                self.engine.fresh_var()
+            }
+
+            Expr::Index(base, index, _span) => {
+                let _ = self.infer_expr(base, env);
+                let _ = self.infer_expr(index, env);
                 self.engine.fresh_var()
             }
 

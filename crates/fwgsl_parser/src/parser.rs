@@ -52,6 +52,13 @@ pub enum Decl {
         ty: Type,
         span: Span,
     },
+    ResourceDecl {
+        name: String,
+        ty: Type,
+        group: u32,
+        binding: u32,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +97,7 @@ pub enum Expr {
     Tuple(Vec<Expr>, Span),
     Record(Vec<(String, Expr)>, Span),
     FieldAccess(Box<Expr>, String, Span),
+    Index(Box<Expr>, Box<Expr>, Span),
     OpSection(String, Span),
     Neg(Box<Expr>, Span),
     Do(Vec<DoStmt>, Span),
@@ -156,6 +164,7 @@ impl Expr {
             | Expr::Tuple(_, s)
             | Expr::Record(_, s)
             | Expr::FieldAccess(_, _, s)
+            | Expr::Index(_, _, s)
             | Expr::OpSection(_, s)
             | Expr::Neg(_, s)
             | Expr::Do(_, s)
@@ -444,7 +453,11 @@ impl Parser {
                 })
             }
             SyntaxKind::KwData => Some(self.parse_data_decl()),
-            SyntaxKind::KwType => Some(self.parse_type_alias()),
+            SyntaxKind::KwType => Some(self.parse_type_alias_or_record()),
+            SyntaxKind::KwAlias => Some(self.parse_alias_decl()),
+            SyntaxKind::KwNewtype => Some(self.parse_newtype_decl()),
+            SyntaxKind::KwExtern => Some(self.parse_extern_resource_decl()),
+            SyntaxKind::KwResource => Some(self.parse_resource_decl(false)),
             SyntaxKind::Ident => {
                 // Could be a type signature or function declaration.
                 // Look ahead: name then `:` means type sig; otherwise fun decl.
@@ -734,7 +747,7 @@ impl Parser {
         ConDecl { name, fields, span }
     }
 
-    fn parse_type_alias(&mut self) -> Decl {
+    fn parse_type_alias_or_record(&mut self) -> Decl {
         let start = self.current_span().start;
         self.expect(SyntaxKind::KwType);
         self.skip_trivia();
@@ -753,6 +766,43 @@ impl Parser {
 
         self.expect(SyntaxKind::Equals);
         self.skip_trivia();
+        if self.at(SyntaxKind::LBrace) {
+            // `type Name = { a : A, b : B }` desugars to one-constructor record ADT.
+            self.bump();
+            let mut fields = Vec::new();
+            loop {
+                self.skip_trivia();
+                if self.at(SyntaxKind::RBrace) || self.at_end() {
+                    break;
+                }
+                let field_name_tok = self.expect(SyntaxKind::Ident);
+                let field_name = self.text_of(&field_name_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::Colon);
+                self.skip_trivia();
+                let field_ty = self.parse_type();
+                fields.push((field_name, field_ty));
+                self.skip_trivia();
+                if !self.eat(SyntaxKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(SyntaxKind::RBrace);
+
+            let con = ConDecl {
+                name: name.clone(),
+                fields: ConFields::Record(fields),
+                span: self.span_from(start),
+            };
+            let span = self.span_from(start);
+            return Decl::DataDecl {
+                name,
+                type_params: params,
+                constructors: vec![con],
+                span,
+            };
+        }
+
         let ty = self.parse_type();
 
         let span = self.span_from(start);
@@ -760,6 +810,98 @@ impl Parser {
             name,
             params,
             ty,
+            span,
+        }
+    }
+
+    fn parse_alias_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwAlias);
+        self.skip_trivia();
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+        let ty = self.parse_type();
+        let span = self.span_from(start);
+        Decl::TypeAlias {
+            name,
+            params: vec![],
+            ty,
+            span,
+        }
+    }
+
+    fn parse_newtype_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwNewtype);
+        self.skip_trivia();
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+        let wrapped = self.parse_type();
+        let span = self.span_from(start);
+        Decl::DataDecl {
+            name: name.clone(),
+            type_params: vec![],
+            constructors: vec![ConDecl {
+                name,
+                fields: ConFields::Positional(vec![wrapped]),
+                span,
+            }],
+            span,
+        }
+    }
+
+    fn parse_extern_resource_decl(&mut self) -> Decl {
+        self.expect(SyntaxKind::KwExtern);
+        self.skip_trivia();
+        self.parse_resource_decl(true)
+    }
+
+    fn parse_resource_decl(&mut self, extern_consumed: bool) -> Decl {
+        let start = if extern_consumed {
+            self.tokens[self.pos.saturating_sub(1)].span.start
+        } else {
+            self.current_span().start
+        };
+        self.expect(SyntaxKind::KwResource);
+        self.skip_trivia();
+        let name_tok = self.expect(SyntaxKind::Ident);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Colon);
+        self.skip_trivia();
+        let ty = self.parse_type();
+        self.skip_trivia();
+
+        let mut group = None;
+        let mut binding = None;
+        while self.at(SyntaxKind::At) {
+            self.bump();
+            self.skip_trivia();
+            let attr_tok = self.expect(SyntaxKind::Ident);
+            let attr = self.text_of(&attr_tok).to_owned();
+            self.skip_trivia();
+            let value_tok = self.expect(SyntaxKind::IntLiteral);
+            let value = parse_int_literal(self.text_of(&value_tok)).max(0) as u32;
+            match attr.as_str() {
+                "group" => group = Some(value),
+                "binding" => binding = Some(value),
+                _ => {}
+            }
+            self.skip_trivia();
+        }
+
+        let span = self.span_from(start);
+        Decl::ResourceDecl {
+            name,
+            ty,
+            group: group.unwrap_or(0),
+            binding: binding.unwrap_or(0),
             span,
         }
     }
@@ -851,16 +993,6 @@ impl Parser {
             self.skip_trivia();
             let op_kind = self.peek_non_trivia();
 
-            // Function application (juxtaposition): if the next token could
-            // start an atom and we have enough binding power.
-            if is_atom_start(op_kind) && min_bp <= 11 {
-                self.skip_trivia();
-                let arg = self.parse_atom();
-                let span = lhs.span().merge(arg.span());
-                lhs = Expr::App(Box::new(lhs), Box::new(arg), span);
-                continue;
-            }
-
             // Dot for field access
             if op_kind == SyntaxKind::Dot && min_bp <= 13 {
                 self.skip_trivia();
@@ -882,6 +1014,29 @@ impl Parser {
                     );
                     break;
                 }
+            }
+
+            // Index access: expr[expr]
+            if op_kind == SyntaxKind::LBracket && min_bp <= 13 {
+                self.skip_trivia();
+                self.bump();
+                self.skip_trivia();
+                let index_expr = self.parse_expr();
+                self.skip_trivia();
+                self.expect(SyntaxKind::RBracket);
+                let span = lhs.span().merge(index_expr.span());
+                lhs = Expr::Index(Box::new(lhs), Box::new(index_expr), span);
+                continue;
+            }
+
+            // Function application (juxtaposition): if the next token could
+            // start an atom and we have enough binding power.
+            if is_atom_start(op_kind) && min_bp <= 11 {
+                self.skip_trivia();
+                let arg = self.parse_atom();
+                let span = lhs.span().merge(arg.span());
+                lhs = Expr::App(Box::new(lhs), Box::new(arg), span);
+                continue;
             }
 
             // Binary operators
@@ -922,7 +1077,7 @@ impl Parser {
                 self.skip_trivia();
                 let func = self.parse_expr_bp(2);
                 let span = lhs.span().merge(func.span());
-                lhs = Expr::App(Box::new(func), Box::new(lhs), span);
+                lhs = insert_pipeline_arg(func, lhs, span);
                 continue;
             }
 
@@ -1546,7 +1701,7 @@ impl Parser {
             SyntaxKind::UpperIdent => {
                 let tok = self.bump();
                 let name = self.text_of(&tok).to_owned();
-                Type::Con(name, tok.span)
+                self.parse_angle_type_args(Type::Con(name, tok.span))
             }
             SyntaxKind::Ident => {
                 let tok = self.bump();
@@ -1602,6 +1757,30 @@ impl Parser {
             }
         }
     }
+
+    fn parse_angle_type_args(&mut self, mut base: Type) -> Type {
+        self.skip_trivia();
+        if !self.at(SyntaxKind::Less) {
+            return base;
+        }
+        self.bump(); // <
+        self.skip_trivia();
+
+        loop {
+            let arg = self.parse_type();
+            let span = base.span().merge(arg.span());
+            base = Type::App(Box::new(base), Box::new(arg), span);
+            self.skip_trivia();
+            if self.eat(SyntaxKind::Comma) {
+                self.skip_trivia();
+                continue;
+            }
+            break;
+        }
+
+        self.expect(SyntaxKind::Greater);
+        base
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1643,6 +1822,60 @@ fn is_atom_start(kind: SyntaxKind) -> bool {
             | SyntaxKind::LBracket
             | SyntaxKind::Backslash
     )
+}
+
+fn flatten_app(expr: Expr) -> (Expr, Vec<Expr>) {
+    let mut args = Vec::new();
+    let mut head = expr;
+    while let Expr::App(f, a, _) = head {
+        args.push(*a);
+        head = *f;
+    }
+    args.reverse();
+    (head, args)
+}
+
+fn fold_app(mut head: Expr, args: Vec<Expr>) -> Expr {
+    for arg in args {
+        let span = head.span().merge(arg.span());
+        head = Expr::App(Box::new(head), Box::new(arg), span);
+    }
+    head
+}
+
+fn insert_pipeline_arg(rhs: Expr, lhs: Expr, span: Span) -> Expr {
+    match rhs {
+        Expr::App(_, _, _) => {
+            let (head, mut args) = flatten_app(rhs);
+            let mut with_lhs = Vec::with_capacity(args.len() + 1);
+            with_lhs.push(lhs);
+            with_lhs.append(&mut args);
+            let mut applied = fold_app(head, with_lhs);
+            // Ensure outer span preserves full pipe expression.
+            match &mut applied {
+                Expr::App(_, _, s)
+                | Expr::Infix(_, _, _, s)
+                | Expr::Paren(_, s)
+                | Expr::FieldAccess(_, _, s)
+                | Expr::Index(_, _, s)
+                | Expr::Neg(_, s)
+                | Expr::Do(_, s)
+                | Expr::VecLit(_, s)
+                | Expr::Lit(_, s)
+                | Expr::Var(_, s)
+                | Expr::Con(_, s)
+                | Expr::Lambda(_, _, s)
+                | Expr::Let(_, _, s)
+                | Expr::Case(_, _, s)
+                | Expr::If(_, _, _, s)
+                | Expr::Tuple(_, s)
+                | Expr::Record(_, s)
+                | Expr::OpSection(_, s) => *s = span,
+            }
+            applied
+        }
+        other => Expr::App(Box::new(other), Box::new(lhs), span),
+    }
 }
 
 /// Whether a token kind can begin a pattern atom.

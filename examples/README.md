@@ -46,3 +46,5 @@ cargo run -p fwgsl_cli -- check examples/prelude-utils.fwgsl
 - The current parser still has edge cases around standalone type signatures followed by definitions on the next line. The root examples avoid that shape unless the file is intended for `check`.
 - `Option`, `Result`, and the higher-order prelude utilities are currently best explored with `check`; they are registered in the type environment before the WGSL backend grows dedicated lowering support for them.
 - `shadorial/` is useful for playground exploration and visual experimentation, but some samples are ahead of the currently implemented backend and are not guaranteed to lower fully through every compiler stage yet.
+
+- New surface-syntax example: `examples/language-surface-upgrade.fwgsl`
