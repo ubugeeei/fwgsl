@@ -107,7 +107,10 @@ pub fn compile(source: &str) -> String {
             "// HIR lowering failed.".to_string()
         } else {
             match fwgsl_mir::lower::lower_hir_to_mir(&hir) {
-                Ok(mir) => fwgsl_wgsl_codegen::emit_wgsl(&mir),
+                Ok(mir) => {
+                    let mir = fwgsl_mir::reachability::eliminate_dead_code(&mir);
+                    fwgsl_wgsl_codegen::emit_wgsl(&mir)
+                }
                 Err(errors) => {
                     format!("// MIR lowering failed: {}", errors.join(", "))
                 }

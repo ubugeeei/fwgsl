@@ -114,12 +114,93 @@ pub fn filter_reachable(program: &MirProgram, reachable: &ReachableSet) -> MirPr
     }
 }
 
+/// Compute reachable declarations in library mode (no entry points).
+///
+/// Seeds reachability from ALL functions, keeping all functions but only
+/// structs/globals/constants that those functions actually reference.
+pub fn compute_reachable_library(program: &MirProgram) -> ReachableSet {
+    let mut reachable = ReachableSet::default();
+
+    // Seed: walk all functions
+    for func in &program.functions {
+        reachable.functions.insert(func.name.clone());
+        walk_params(&func.params, &mut reachable);
+        walk_type(&func.return_ty, &mut reachable);
+        walk_stmts(&func.body, &mut reachable);
+        if let Some(expr) = &func.return_expr {
+            walk_expr(expr, &mut reachable);
+        }
+    }
+
+    // Constants can reference other things too
+    let reachable_consts: Vec<String> = reachable.constants.iter().cloned().collect();
+    for name in reachable_consts {
+        if let Some(c) = program.constants.iter().find(|c| c.name == name) {
+            walk_type(&c.ty, &mut reachable);
+            walk_expr(&c.value, &mut reachable);
+        }
+    }
+
+    // Transitively resolve struct dependencies
+    let struct_names: Vec<String> = reachable.structs.iter().cloned().collect();
+    for name in struct_names {
+        mark_struct_deps(&name, &program.structs, &mut reachable);
+    }
+
+    // Also mark structs from globals
+    let global_names: Vec<String> = reachable.globals.iter().cloned().collect();
+    for name in global_names {
+        if let Some(g) = program.globals.iter().find(|g| g.name == name) {
+            walk_type(&g.ty, &mut reachable);
+        }
+    }
+
+    // One more pass on struct deps after globals may have added new structs
+    let struct_names: Vec<String> = reachable.structs.iter().cloned().collect();
+    for name in struct_names {
+        mark_struct_deps(&name, &program.structs, &mut reachable);
+    }
+
+    reachable
+}
+
+/// Filter a MIR program in library mode: keep all functions, but only
+/// reachable structs/globals/constants.
+pub fn filter_reachable_library(program: &MirProgram, reachable: &ReachableSet) -> MirProgram {
+    MirProgram {
+        structs: program
+            .structs
+            .iter()
+            .filter(|s| reachable.structs.contains(&s.name))
+            .cloned()
+            .collect(),
+        globals: program
+            .globals
+            .iter()
+            .filter(|g| reachable.globals.contains(&g.name))
+            .cloned()
+            .collect(),
+        functions: program.functions.clone(), // keep all functions in library mode
+        entry_points: program.entry_points.clone(),
+        constants: program
+            .constants
+            .iter()
+            .filter(|c| reachable.constants.contains(&c.name))
+            .cloned()
+            .collect(),
+    }
+}
+
 /// Eliminate unreachable declarations from a MIR program.
 ///
-/// If there are no entry points, all declarations are kept (library mode).
+/// If there are no entry points (library mode), all top-level functions are
+/// kept but only structs/globals/constants reachable from those functions
+/// survive.  This prevents unused prelude ADTs with unresolved type variables
+/// from leaking into the output.
 pub fn eliminate_dead_code(program: &MirProgram) -> MirProgram {
     if program.entry_points.is_empty() {
-        return program.clone();
+        let reachable = compute_reachable_library(program);
+        return filter_reachable_library(program, &reachable);
     }
     let reachable = compute_reachable(program);
     filter_reachable(program, &reachable)
@@ -480,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    fn no_entry_points_keeps_everything() {
+    fn no_entry_points_keeps_functions_eliminates_unused_structs() {
         let program = MirProgram {
             structs: vec![MirStruct {
                 name: "Foo".to_string(),
@@ -494,7 +575,47 @@ mod tests {
 
         let result = eliminate_dead_code(&program);
         assert_eq!(result.functions.len(), 1);
+        // Foo is not referenced by any function, so it gets eliminated
+        assert_eq!(result.structs.len(), 0);
+    }
+
+    #[test]
+    fn no_entry_points_keeps_used_structs() {
+        let program = MirProgram {
+            structs: vec![
+                MirStruct {
+                    name: "Used".to_string(),
+                    fields: vec![MirField {
+                        name: "x".to_string(),
+                        ty: MirType::F32,
+                        attributes: vec![],
+                    }],
+                },
+                MirStruct {
+                    name: "Unused".to_string(),
+                    fields: vec![],
+                },
+            ],
+            globals: vec![],
+            functions: vec![MirFunction {
+                name: "helper".to_string(),
+                params: vec![MirParam {
+                    name: "s".to_string(),
+                    ty: MirType::Struct("Used".to_string()),
+                }],
+                return_ty: MirType::Struct("Used".to_string()),
+                body: vec![],
+                return_expr: Some(MirExpr::Var("s".to_string(), MirType::Struct("Used".to_string()))),
+                comments: vec![],
+            }],
+            entry_points: vec![],
+            constants: vec![],
+        };
+
+        let result = eliminate_dead_code(&program);
+        assert_eq!(result.functions.len(), 1);
         assert_eq!(result.structs.len(), 1);
+        assert_eq!(result.structs[0].name, "Used");
     }
 
     #[test]

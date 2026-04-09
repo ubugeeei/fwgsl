@@ -191,6 +191,9 @@ fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool, feature_flag
         }
     };
 
+    // Dead code elimination
+    let mir = fwgsl_mir::reachability::eliminate_dead_code(&mir);
+
     // MIR -> WGSL codegen
     let wgsl = if preserve_comments {
         fwgsl_wgsl_codegen::emit_wgsl_with_comments(&mir)
