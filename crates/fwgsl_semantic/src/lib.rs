@@ -819,6 +819,14 @@ impl SemanticAnalyzer {
                 self.infer_expr(inner, env)
             }
 
+            Expr::Not(inner, span) => {
+                // Boolean not: operand and result are Bool
+                let inner_ty = self.infer_expr(inner, env);
+                let bool_ty = Ty::Con("Bool".into());
+                self.engine.unify(&inner_ty, &bool_ty, *span);
+                bool_ty
+            }
+
             Expr::Do(stmts, _span) => {
                 let mut local_env = env.clone();
                 let mut last_ty = Ty::unit();

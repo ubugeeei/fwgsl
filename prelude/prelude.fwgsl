@@ -93,6 +93,11 @@ extern cross     : Vec<3, a> -> Vec<3, a> -> Vec<3, a>
 
 extern select : a -> a -> Bool -> a
 
+-- WGSL packing/unpacking
+
+extern unpack4x8unorm : U32 -> Vec<4, F32>
+extern pack4x8unorm : Vec<4, F32> -> U32
+
 -- Vector constructors
 
 extern vec2 : a -> a -> Vec<2, a>

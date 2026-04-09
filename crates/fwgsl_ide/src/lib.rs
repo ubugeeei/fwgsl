@@ -667,7 +667,7 @@ impl<'a> IndexBuilder<'a> {
                 self.walk_expr(then_branch, frames);
                 self.walk_expr(else_branch, frames);
             }
-            Expr::Paren(inner, _) | Expr::Neg(inner, _) => {
+            Expr::Paren(inner, _) | Expr::Neg(inner, _) | Expr::Not(inner, _) => {
                 self.walk_expr(inner, frames);
             }
             Expr::Tuple(items, _) | Expr::VecLit(items, _) => {

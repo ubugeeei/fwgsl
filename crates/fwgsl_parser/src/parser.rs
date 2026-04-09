@@ -283,6 +283,7 @@ pub enum Expr {
     Index(Box<Expr>, Box<Expr>, Span),
     OpSection(String, Span),
     Neg(Box<Expr>, Span),
+    Not(Box<Expr>, Span),
     Do(Vec<DoStmt>, Span),
     /// Vec literal: `[a, b, c]` — desugared to vecN constructor call.
     VecLit(Vec<Expr>, Span),
@@ -358,6 +359,7 @@ impl Expr {
             | Expr::Index(_, _, s)
             | Expr::OpSection(_, s)
             | Expr::Neg(_, s)
+            | Expr::Not(_, s)
             | Expr::Do(_, s)
             | Expr::VecLit(_, s)
             | Expr::Loop(_, _, _, s)
@@ -1621,6 +1623,16 @@ impl Parser {
                 let span = self.span_from(start);
                 Expr::Neg(Box::new(rhs), span)
             }
+            SyntaxKind::Bang => {
+                // Boolean not prefix
+                self.skip_trivia();
+                let start = self.current_span().start;
+                self.bump();
+                self.skip_trivia();
+                let rhs = self.parse_expr_bp(13); // high precedence for not
+                let span = self.span_from(start);
+                Expr::Not(Box::new(rhs), span)
+            }
             SyntaxKind::Backslash => self.parse_lambda(),
             SyntaxKind::KwIf => self.parse_if(),
             SyntaxKind::KwMatch => self.parse_match(),
@@ -1905,7 +1917,7 @@ impl Parser {
         // Operator section `(+)`, `(-)`, etc.
         // Special case: `(-expr)` is negation in parens, not an operator section.
         if is_operator_token(self.peek()) {
-            let is_minus = self.peek() == SyntaxKind::Minus;
+            let is_prefix_unary = self.peek() == SyntaxKind::Minus || self.peek() == SyntaxKind::Bang;
             // Peek ahead past operator + trivia to see if it's `(op)`
             let next_non_trivia = {
                 let mut i = self.pos + 1;
@@ -1914,9 +1926,9 @@ impl Parser {
                 }
                 if i < self.tokens.len() { self.tokens[i].kind } else { SyntaxKind::Eof }
             };
-            if is_minus && next_non_trivia != SyntaxKind::RParen {
-                // `(-expr)` — fall through to parse as normal expression
-                // (the negation prefix will be handled by parse_expr)
+            if is_prefix_unary && next_non_trivia != SyntaxKind::RParen {
+                // `(-expr)` or `(!expr)` — fall through to parse as normal expression
+                // (the prefix operator will be handled by parse_expr)
             } else if next_non_trivia == SyntaxKind::RParen {
                 // `(op)` — operator section
                 let op_tok = self.bump();
@@ -2678,6 +2690,7 @@ fn insert_pipeline_arg(rhs: Expr, lhs: Expr, span: Span) -> Expr {
                 | Expr::FieldAccess(_, _, s)
                 | Expr::Index(_, _, s)
                 | Expr::Neg(_, s)
+                | Expr::Not(_, s)
                 | Expr::Do(_, s)
                 | Expr::VecLit(_, s)
                 | Expr::Lit(_, s)

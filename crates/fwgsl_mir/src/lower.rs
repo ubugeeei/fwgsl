@@ -264,6 +264,11 @@ fn ty_to_mir_type_with_ctx(ty: &Ty, ctx: Option<&LowerCtx>) -> Result<MirType, S
             }
         },
         Ty::App(f, arg) => match f.as_ref() {
+            // Unsized array: Tensor<T> (single application, no Nat dimension)
+            Ty::Con(name) if name == "Tensor" => {
+                let elem = ty_to_mir_type_with_ctx(arg, ctx)?;
+                Ok(MirType::RuntimeArray(Box::new(elem)))
+            }
             Ty::App(ff, n) => match (ff.as_ref(), n.as_ref()) {
                 (Ty::App(fff, nn), Ty::Nat(m)) => {
                     if let (Ty::Con(name), Ty::Nat(n)) = (fff.as_ref(), nn.as_ref()) {
@@ -681,6 +686,15 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
                 MirUnaryOp::Neg,
                 Box::new(mir_inner),
                 mir_ty,
+            ))
+        }
+
+        HirExpr::UnaryNot(inner, _ty, _span) => {
+            let mir_inner = lower_hir_expr(inner, ctx)?;
+            Ok(MirExpr::UnaryOp(
+                MirUnaryOp::Not,
+                Box::new(mir_inner),
+                MirType::Bool,
             ))
         }
 

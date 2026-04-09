@@ -1102,6 +1102,15 @@ impl AstLowering {
                 )
             }
 
+            Expr::Not(inner, span) => {
+                let (hir_inner, _inner_ty) = self.lower_expr(inner, env);
+                let bool_ty = Ty::Con("Bool".into());
+                (
+                    HirExpr::UnaryNot(Box::new(hir_inner), bool_ty.clone(), *span),
+                    bool_ty,
+                )
+            }
+
             Expr::Do(stmts, span) => {
                 // Lower do-notation as sequential let bindings
                 let mut local_env = env.clone();
@@ -1762,6 +1771,11 @@ impl AstLowering {
                 span,
             ),
             HirExpr::UnaryNeg(inner, ty, span) => HirExpr::UnaryNeg(
+                Box::new(self.finalize_expr(*inner)),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::UnaryNot(inner, ty, span) => HirExpr::UnaryNot(
                 Box::new(self.finalize_expr(*inner)),
                 self.engine.finalize(&ty),
                 span,

@@ -94,6 +94,8 @@ pub enum MirType {
     Struct(String),
     /// `array<T, N>`
     Array(Box<MirType>, u32),
+    /// `array<T>` (unsized / runtime-sized storage array)
+    RuntimeArray(Box<MirType>),
     /// The unit type — no WGSL representation (used for void returns).
     Unit,
 }
@@ -109,6 +111,7 @@ impl fmt::Display for MirType {
             MirType::Mat(cols, rows, inner) => write!(f, "mat{}x{}<{}>", cols, rows, inner),
             MirType::Struct(name) => write!(f, "{}", name),
             MirType::Array(inner, len) => write!(f, "array<{}, {}>", inner, len),
+            MirType::RuntimeArray(inner) => write!(f, "array<{}>", inner),
             MirType::Unit => write!(f, "void"),
         }
     }

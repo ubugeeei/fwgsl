@@ -138,7 +138,7 @@ fn walk_type(ty: &MirType, reachable: &mut ReachableSet) {
         MirType::Struct(name) => {
             reachable.structs.insert(name.clone());
         }
-        MirType::Vec(_, inner) | MirType::Array(inner, _) => walk_type(inner, reachable),
+        MirType::Vec(_, inner) | MirType::Array(inner, _) | MirType::RuntimeArray(inner) => walk_type(inner, reachable),
         MirType::Mat(_, _, inner) => walk_type(inner, reachable),
         _ => {}
     }
@@ -245,7 +245,7 @@ fn walk_type_for_struct_deps(ty: &MirType, structs: &[MirStruct], reachable: &mu
                 mark_struct_deps(dep, structs, reachable);
             }
         }
-        MirType::Vec(_, inner) | MirType::Array(inner, _) => {
+        MirType::Vec(_, inner) | MirType::Array(inner, _) | MirType::RuntimeArray(inner) => {
             walk_type_for_struct_deps(inner, structs, reachable);
         }
         MirType::Mat(_, _, inner) => {
