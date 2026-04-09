@@ -75,15 +75,20 @@ fn with_prelude(program: &mut fwgsl_parser::parser::Program) {
     program.decls = combined;
 }
 
+/// Check if the program has import declarations (needs multi-file resolution).
+fn has_imports(program: &fwgsl_parser::parser::Program) -> bool {
+    program.decls.iter().any(|d| matches!(d, fwgsl_parser::parser::Decl::ImportDecl { .. }))
+}
+
 fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool) {
     let source = read_file(file);
 
-    // Parse
+    // Parse the root file
     let mut parser = fwgsl_parser::parser::Parser::new(&source);
-    let mut program = parser.parse_program();
+    let root_program = parser.parse_program();
 
     if emit_ast {
-        println!("{:#?}", program);
+        println!("{:#?}", root_program);
         return;
     }
 
@@ -96,6 +101,27 @@ fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool) {
         );
         process::exit(1);
     }
+
+    // If the program has imports, use the module resolver
+    let mut program = if has_imports(&root_program) {
+        let root_path = std::path::Path::new(file);
+        let source_root = root_path.parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+
+        let reader = fwgsl_parser::FsReader;
+        match fwgsl_parser::resolve_modules(root_path, root_program, &[source_root], &reader) {
+            Ok(graph) => fwgsl_parser::merge_modules(&graph),
+            Err(errors) => {
+                for e in &errors {
+                    eprintln!("error: {}", e);
+                }
+                process::exit(1);
+            }
+        }
+    } else {
+        root_program
+    };
 
     // Prepend prelude declarations
     with_prelude(&mut program);
@@ -151,7 +177,7 @@ fn cmd_check(file: &str) {
     let source = read_file(file);
 
     let mut parser = fwgsl_parser::parser::Parser::new(&source);
-    let mut program = parser.parse_program();
+    let root_program = parser.parse_program();
 
     let mut has_errors = false;
 
@@ -163,6 +189,27 @@ fn cmd_check(file: &str) {
         );
         has_errors = true;
     }
+
+    // If the program has imports, use the module resolver
+    let mut program = if has_imports(&root_program) {
+        let root_path = std::path::Path::new(file);
+        let source_root = root_path.parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+
+        let reader = fwgsl_parser::FsReader;
+        match fwgsl_parser::resolve_modules(root_path, root_program, &[source_root], &reader) {
+            Ok(graph) => fwgsl_parser::merge_modules(&graph),
+            Err(errors) => {
+                for e in &errors {
+                    eprintln!("error: {}", e);
+                }
+                process::exit(1);
+            }
+        }
+    } else {
+        root_program
+    };
 
     with_prelude(&mut program);
 

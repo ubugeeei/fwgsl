@@ -1,0 +1,7 @@
+module Utils exposing (double, triple)
+
+double : F32 -> F32
+double x = x * 2.0
+
+triple : F32 -> F32
+triple x = x * 3.0

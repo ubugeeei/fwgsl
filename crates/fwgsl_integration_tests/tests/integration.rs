@@ -1123,10 +1123,12 @@ mod codegen_tests {
                     MirParam {
                         name: "x".to_string(),
                         ty: MirType::I32,
+                        location: None,
                     },
                     MirParam {
                         name: "y".to_string(),
                         ty: MirType::I32,
+                        location: None,
                     },
                 ],
                 return_ty: MirType::I32,
@@ -1225,6 +1227,7 @@ mod codegen_tests {
                 params: vec![MirParam {
                     name: "p".to_string(),
                     ty: MirType::Struct("Particle".to_string()),
+                    location: None,
                 }],
                 return_ty: MirType::F32,
                 body: vec![],
@@ -1266,10 +1269,12 @@ mod codegen_tests {
                     MirParam {
                         name: "a".to_string(),
                         ty: MirType::I32,
+                        location: None,
                     },
                     MirParam {
                         name: "b".to_string(),
                         ty: MirType::I32,
+                        location: None,
                     },
                 ],
                 return_ty: MirType::I32,
@@ -1613,6 +1618,7 @@ show c = match c
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
+                    location: None,
                 }],
                 return_ty: MirType::I32,
                 body: vec![],
@@ -1676,6 +1682,7 @@ show c = match c
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
+                    location: None,
                 }],
                 return_ty: MirType::I32,
                 body: vec![],

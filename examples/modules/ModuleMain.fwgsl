@@ -1,0 +1,12 @@
+module ModuleMain
+
+import Utils
+import Math.Vec2
+
+extern resource input : Storage<ReadWrite, Array<F32, 64>> @group 0 @binding 0
+extern resource output : Storage<ReadWrite, Array<F32, 64>> @group 0 @binding 1
+
+@compute @workgroup_size(64, 1, 1)
+main idx =
+  let val = load (input[idx])
+  in writeAt output idx (double val)

@@ -318,11 +318,20 @@ impl WgslEmitter {
                 self.write(", ");
             }
             first = false;
-            self.write(&format!(
-                "{}: {}",
-                sanitize_identifier(&param.name),
-                self.format_type(&param.ty)
-            ));
+            if let Some(loc) = param.location {
+                self.write(&format!(
+                    "@location({}) {}: {}",
+                    loc,
+                    sanitize_identifier(&param.name),
+                    self.format_type(&param.ty)
+                ));
+            } else {
+                self.write(&format!(
+                    "{}: {}",
+                    sanitize_identifier(&param.name),
+                    self.format_type(&param.ty)
+                ));
+            }
         }
 
         self.write(")");
@@ -673,10 +682,12 @@ mod tests {
                     MirParam {
                         name: "x".to_string(),
                         ty: MirType::I32,
+                        location: None,
                     },
                     MirParam {
                         name: "y".to_string(),
                         ty: MirType::I32,
+                        location: None,
                     },
                 ],
                 return_ty: MirType::I32,
@@ -879,6 +890,7 @@ mod tests {
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
+                    location: None,
                 }],
                 return_ty: MirType::I32,
                 body: vec![MirStmt::If(
@@ -919,6 +931,7 @@ mod tests {
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
+                    location: None,
                 }],
                 return_ty: MirType::Unit,
                 body: vec![
@@ -1104,6 +1117,7 @@ mod tests {
                 params: vec![MirParam {
                     name: "v".to_string(),
                     ty: MirType::Vec(3, Box::new(MirType::F32)),
+                    location: None,
                 }],
                 return_ty: MirType::F32,
                 body: vec![],
@@ -1135,6 +1149,7 @@ mod tests {
                 params: vec![MirParam {
                     name: "arr".to_string(),
                     ty: MirType::Array(Box::new(MirType::F32), 4),
+                    location: None,
                 }],
                 return_ty: MirType::F32,
                 body: vec![],
@@ -1166,6 +1181,7 @@ mod tests {
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
+                    location: None,
                 }],
                 return_ty: MirType::F32,
                 body: vec![],
@@ -1304,10 +1320,12 @@ mod tests {
                     MirParam {
                         name: "p".to_string(),
                         ty: MirType::Struct("Particle".to_string()),
+                        location: None,
                     },
                     MirParam {
                         name: "dt".to_string(),
                         ty: MirType::F32,
+                        location: None,
                     },
                 ],
                 return_ty: MirType::Struct("Particle".to_string()),
@@ -1478,6 +1496,7 @@ mod tests {
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::U32,
+                    location: None,
                 }],
                 return_ty: MirType::I32,
                 body: vec![

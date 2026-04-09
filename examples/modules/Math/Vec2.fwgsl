@@ -1,0 +1,15 @@
+module Math.Vec2
+
+data Vec2D = Vec2D F32 F32
+
+addVec2 : Vec2D -> Vec2D -> Vec2D
+addVec2 a b =
+  match a
+    | Vec2D ax ay ->
+      match b
+        | Vec2D bx by -> Vec2D (ax + bx) (ay + by)
+
+scaleVec2 : F32 -> Vec2D -> Vec2D
+scaleVec2 s v =
+  match v
+    | Vec2D x y -> Vec2D (x * s) (y * s)

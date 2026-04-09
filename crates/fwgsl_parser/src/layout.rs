@@ -117,17 +117,16 @@ impl LayoutResolver {
     }
 
     fn resolve(&mut self) {
-        // Insert a top-level layout context if the file does not start with
-        // `module` (which would trigger its own `where` layout). This mimics
-        // Haskell 2010's implicit `module Main where {…}` wrapping.
+        // Insert a top-level layout context. This applies whether the file
+        // starts with `module` or not — `module`/`import` declarations are
+        // part of the top-level declaration stream, and the layout column
+        // is set to the first non-trivia token's column.
         if let Some(first_idx) = self.next_non_trivia_index(0) {
             let first_kind = self.tokens[first_idx].kind;
-            if first_kind != SyntaxKind::KwModule && first_kind != SyntaxKind::Eof {
+            if first_kind != SyntaxKind::Eof {
                 let col = self.line_map.column(self.tokens[first_idx].span.start);
                 let offset = self.tokens[first_idx].span.start;
                 self.indent_stack.push(col);
-                // Do NOT suppress the first semicolon for the top-level context,
-                // since there is no keyword before it (unlike `where`/`let`/`do`).
                 self.suppress_next_semi = false;
                 self.output.push(Self::make_virtual_token(
                     SyntaxKind::LayoutBraceOpen,
@@ -323,6 +322,28 @@ mod tests {
         assert!(
             semi_count <= 2,
             "comment-only line should not produce extra LayoutSemicolons, got {} in {:?}",
+            semi_count,
+            kinds
+        );
+    }
+
+    #[test]
+    fn layout_module_headed_file() {
+        // Files starting with `module` should get correct layout tokens,
+        // including LayoutSemicolon between declarations at the same column.
+        let source = "module Utils\n\ndouble : F32 -> F32\ndouble x = x * 2.0\n";
+        let kinds = layout_kinds(source);
+        // Top-level LayoutBraceOpen
+        assert!(kinds.contains(&SyntaxKind::LayoutBraceOpen));
+        // LayoutSemicolon between `module Utils` and `double : ...` and between
+        // `double : ...` and `double x = ...`
+        let semi_count = kinds
+            .iter()
+            .filter(|k| **k == SyntaxKind::LayoutSemicolon)
+            .count();
+        assert!(
+            semi_count >= 2,
+            "module-headed file should have semicolons between decls, got {} in {:?}",
             semi_count,
             kinds
         );

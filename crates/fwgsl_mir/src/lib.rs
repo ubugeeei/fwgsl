@@ -5,6 +5,7 @@
 //! into a form that maps closely to WGSL constructs.
 
 pub mod lower;
+pub mod reachability;
 
 use std::fmt;
 
@@ -133,6 +134,8 @@ pub struct MirFunction {
 pub struct MirParam {
     pub name: String,
     pub ty: MirType,
+    /// Optional `@location(N)` binding for entry-point I/O.
+    pub location: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

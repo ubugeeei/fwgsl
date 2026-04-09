@@ -33,7 +33,9 @@ impl Decl {
             | Decl::ConstDecl { comments, .. }
             | Decl::TraitDecl { comments, .. }
             | Decl::ImplDecl { comments, .. }
-            | Decl::ExternDecl { comments, .. } => comments,
+            | Decl::ExternDecl { comments, .. }
+            | Decl::ModuleDecl { comments, .. }
+            | Decl::ImportDecl { comments, .. } => comments,
         }
     }
 
@@ -50,7 +52,9 @@ impl Decl {
             | Decl::ConstDecl { comments, .. }
             | Decl::TraitDecl { comments, .. }
             | Decl::ImplDecl { comments, .. }
-            | Decl::ExternDecl { comments, .. } => comments,
+            | Decl::ExternDecl { comments, .. }
+            | Decl::ModuleDecl { comments, .. }
+            | Decl::ImportDecl { comments, .. } => comments,
         }
     }
 
@@ -67,7 +71,9 @@ impl Decl {
             | Decl::ConstDecl { span, .. }
             | Decl::TraitDecl { span, .. }
             | Decl::ImplDecl { span, .. }
-            | Decl::ExternDecl { span, .. } => *span,
+            | Decl::ExternDecl { span, .. }
+            | Decl::ModuleDecl { span, .. }
+            | Decl::ImportDecl { span, .. } => *span,
         }
     }
 }
@@ -161,6 +167,33 @@ pub enum Decl {
         span: Span,
         comments: Vec<String>,
     },
+    /// Module header: `module Math.Fp64 exposing (Fp64, sumFp64)`
+    ModuleDecl {
+        name: String,
+        exports: Option<Vec<String>>,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Import declaration: `import Math.Fp64 (Fp64, sumFp64)`
+    ImportDecl {
+        module_path: String,
+        kind: ImportKind,
+        span: Span,
+        comments: Vec<String>,
+    },
+}
+
+/// How names are imported from a module.
+#[derive(Debug, Clone)]
+pub enum ImportKind {
+    /// `import Foo` — import all exported names unqualified.
+    All,
+    /// `import Foo (bar, baz)` — import only listed names.
+    Selective(Vec<String>),
+    /// `import Foo qualified` or `import Foo qualified as F` — qualified access only.
+    Qualified(Option<String>),
+    /// `import Foo hiding (bar)` — import all except listed names.
+    Hiding(Vec<String>),
 }
 
 /// A method signature inside a `trait` declaration.
@@ -675,6 +708,8 @@ impl Parser {
                     comments: vec![],
                 })
             }
+            SyntaxKind::KwModule => Some(self.parse_module_decl()),
+            SyntaxKind::KwImport => Some(self.parse_import_decl()),
             SyntaxKind::KwData => Some(self.parse_data_decl()),
             SyntaxKind::KwAlias => Some(self.parse_alias_decl()),
             SyntaxKind::KwExtern => Some(self.parse_extern_decl()),
@@ -862,6 +897,123 @@ impl Parser {
 
         self.eat_layout_close();
         binds
+    }
+
+    /// Parse `module Foo.Bar exposing (x, y, z)` or `module Foo.Bar`.
+    fn parse_module_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwModule);
+        self.skip_trivia();
+
+        let name = self.parse_dotted_upper_name();
+
+        // Optional `exposing (name, name, ...)`
+        self.skip_trivia();
+        let exports = if self.at(SyntaxKind::KwExposing) {
+            self.bump(); // consume `exposing`
+            self.skip_trivia();
+            Some(self.parse_name_list())
+        } else {
+            None
+        };
+
+        let span = self.span_from(start);
+        Decl::ModuleDecl {
+            name,
+            exports,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse `import Foo.Bar (x, y)` / `import Foo.Bar` / `import Foo.Bar qualified [as X]` / `import Foo.Bar hiding (x)`.
+    fn parse_import_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwImport);
+        self.skip_trivia();
+
+        let module_path = self.parse_dotted_upper_name();
+        self.skip_trivia();
+
+        let kind = if self.at(SyntaxKind::KwQualified) {
+            self.bump(); // consume `qualified`
+            self.skip_trivia();
+            let alias = if self.at(SyntaxKind::KwAs) {
+                self.bump(); // consume `as`
+                self.skip_trivia();
+                let tok = self.expect(SyntaxKind::UpperIdent);
+                Some(self.text_of(&tok).to_owned())
+            } else {
+                None
+            };
+            ImportKind::Qualified(alias)
+        } else if self.at(SyntaxKind::KwHiding) {
+            self.bump(); // consume `hiding`
+            self.skip_trivia();
+            ImportKind::Hiding(self.parse_name_list())
+        } else if self.at(SyntaxKind::LParen) {
+            ImportKind::Selective(self.parse_name_list())
+        } else {
+            ImportKind::All
+        };
+
+        let span = self.span_from(start);
+        Decl::ImportDecl {
+            module_path,
+            kind,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse a dotted uppercase name like `Foo.Bar.Baz`.
+    fn parse_dotted_upper_name(&mut self) -> String {
+        let first = self.expect(SyntaxKind::UpperIdent);
+        let mut name = self.text_of(&first).to_owned();
+        while self.at(SyntaxKind::Dot) {
+            self.bump(); // consume `.`
+            let part = self.expect(SyntaxKind::UpperIdent);
+            name.push('.');
+            name.push_str(&self.text_of(&part));
+        }
+        name
+    }
+
+    /// Parse a parenthesized list of names: `(foo, Bar, (+), ...)`.
+    fn parse_name_list(&mut self) -> Vec<String> {
+        self.expect(SyntaxKind::LParen);
+        self.skip_trivia();
+        let mut names = Vec::new();
+        while !self.at(SyntaxKind::RParen) && !self.at_end() && self.consume_fuel() {
+            let name = if self.at(SyntaxKind::Ident) {
+                let tok = self.bump();
+                self.text_of(&tok).to_owned()
+            } else if self.at(SyntaxKind::UpperIdent) {
+                let tok = self.bump();
+                self.text_of(&tok).to_owned()
+            } else if self.at(SyntaxKind::LParen) {
+                // Operator in parens: (+), (==), etc.
+                self.bump(); // (
+                self.skip_trivia();
+                let mut op = String::new();
+                while !self.at(SyntaxKind::RParen) && !self.at_end() {
+                    let tok = self.bump();
+                    op.push_str(&self.text_of(&tok));
+                }
+                self.expect(SyntaxKind::RParen);
+                format!("({})", op)
+            } else {
+                break;
+            };
+            names.push(name);
+            self.skip_trivia();
+            if self.at(SyntaxKind::Comma) {
+                self.bump();
+                self.skip_trivia();
+            }
+        }
+        self.expect(SyntaxKind::RParen);
+        names
     }
 
     fn parse_data_decl(&mut self) -> Decl {
