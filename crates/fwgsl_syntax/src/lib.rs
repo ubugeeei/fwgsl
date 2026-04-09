@@ -121,9 +121,7 @@ pub enum SyntaxKind {
     KwWhere,
     KwImport,
     KwData,
-    KwType,
     KwAlias,
-    KwNewtype,
     KwExtern,
     KwResource,
     KwTrait,
@@ -299,9 +297,7 @@ pub fn keyword_from_str(s: &str) -> Option<SyntaxKind> {
         "where" => Some(SyntaxKind::KwWhere),
         "import" => Some(SyntaxKind::KwImport),
         "data" => Some(SyntaxKind::KwData),
-        "type" => Some(SyntaxKind::KwType),
         "alias" => Some(SyntaxKind::KwAlias),
-        "newtype" => Some(SyntaxKind::KwNewtype),
         "extern" => Some(SyntaxKind::KwExtern),
         "resource" => Some(SyntaxKind::KwResource),
         "trait" => Some(SyntaxKind::KwTrait),
@@ -432,9 +428,7 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::KwWhere => "'where'",
             SyntaxKind::KwImport => "'import'",
             SyntaxKind::KwData => "'data'",
-            SyntaxKind::KwType => "'type'",
             SyntaxKind::KwAlias => "'alias'",
-            SyntaxKind::KwNewtype => "'newtype'",
             SyntaxKind::KwExtern => "'extern'",
             SyntaxKind::KwResource => "'resource'",
             SyntaxKind::KwTrait => "'trait'",
@@ -592,7 +586,6 @@ mod tests {
         assert_eq!(keyword_from_str("let"), Some(SyntaxKind::KwLet));
         assert_eq!(keyword_from_str("forall"), Some(SyntaxKind::KwForall));
         assert_eq!(keyword_from_str("alias"), Some(SyntaxKind::KwAlias));
-        assert_eq!(keyword_from_str("newtype"), Some(SyntaxKind::KwNewtype));
         assert_eq!(keyword_from_str("extern"), Some(SyntaxKind::KwExtern));
         assert_eq!(keyword_from_str("resource"), Some(SyntaxKind::KwResource));
         assert_eq!(keyword_from_str("deriving"), Some(SyntaxKind::KwDeriving));

@@ -419,11 +419,6 @@ fn completion_context(source: &str, pos: Position, prefix: &str) -> CompletionCo
         return CompletionContext::Type;
     }
 
-    let trimmed = line.trim_start();
-    if trimmed.starts_with("type ") {
-        return CompletionContext::Type;
-    }
-
     CompletionContext::Value
 }
 
@@ -699,7 +694,7 @@ pub fn classify_tokens(tokens: &[Token], _source: &str) -> Vec<ClassifiedToken> 
             | SyntaxKind::KwModule
             | SyntaxKind::KwImport
             | SyntaxKind::KwData
-            | SyntaxKind::KwType
+            | SyntaxKind::KwAlias
             | SyntaxKind::KwTrait
             | SyntaxKind::KwImpl
             | SyntaxKind::KwForall
@@ -968,7 +963,7 @@ mod tests {
 
         // All keywords should be present
         for kw in [
-            "match", "let", "in", "if", "then", "else", "where", "data", "type", "class",
+            "match", "let", "in", "if", "then", "else", "where", "data", "alias", "class",
             "instance", "module", "import", "do", "forall", "case", "of", "infixl", "infixr",
             "infix", "deriving",
         ] {
@@ -1144,7 +1139,7 @@ mod tests {
 
     #[test]
     fn test_classify_all_keywords() {
-        let source = "module where import data type trait impl let in case of match if then else do forall infixl infixr infix deriving";
+        let source = "module where import data alias trait impl let in case of match if then else do forall infixl infixr infix deriving";
         let tokens = lex(source);
         let classified = classify_tokens(&tokens, source);
 

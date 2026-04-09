@@ -32,7 +32,7 @@ blendFactor mode = match mode
   -- | Multiply   -> 0.0
 
 -- Record type holding packed bitfield words alongside a tint color
-type DrawParams = {
+data DrawParams = DrawParams {
   tint : Vec<4, F32>,
 }
 

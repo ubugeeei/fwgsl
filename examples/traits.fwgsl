@@ -15,7 +15,7 @@ impl Scalable F32 where
 applyScale : F32 -> F32 -> F32
 applyScale value factor = scale value factor
 
-type Params = {
+data Params = Params {
   intensity : F32,
   factor    : F32,
 }

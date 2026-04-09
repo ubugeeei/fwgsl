@@ -1,7 +1,7 @@
 alias Float2 = Vec<2, F32>
-newtype Velocity = Vec<3, F32>
+data Velocity = Velocity Vec<3, F32>
 
-type ShapeParams = {
+data ShapeParams = ShapeParams {
   scale : F32,
   offset : Vec<2, F32>,
   color : Vec<4, F32>,

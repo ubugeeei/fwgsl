@@ -27,7 +27,7 @@ capFactor style = match style
   | Round -> 1.0
   | Butt  -> 0.75
 
-type DrawParams = {
+data DrawParams = DrawParams {
   tint : Vec<4, F32>,
 }
 

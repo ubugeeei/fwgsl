@@ -4,9 +4,9 @@
 alias Float2 = Vec<2, F32>
 alias Color4 = Vec<4, F32>
 
-newtype Phase = F32
+data Phase = Phase F32
 
-type FrameParams = {
+data FrameParams = FrameParams {
   time : F32,
   resolution : Vec<2, F32>,
   tint : Vec<4, F32>,

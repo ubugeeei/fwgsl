@@ -18,7 +18,7 @@ half x = x * 0.5
 double : F32 -> F32
 double x = x * 2.0
 
-type Params = {
+data Params = Params {
   value : F32,
   lo    : F32,
   hi    : F32,

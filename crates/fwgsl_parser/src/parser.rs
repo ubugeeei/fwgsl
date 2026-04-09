@@ -642,9 +642,7 @@ impl Parser {
                 })
             }
             SyntaxKind::KwData => Some(self.parse_data_decl()),
-            SyntaxKind::KwType => Some(self.parse_type_alias_or_record()),
             SyntaxKind::KwAlias => Some(self.parse_alias_decl()),
-            SyntaxKind::KwNewtype => Some(self.parse_newtype_decl()),
             SyntaxKind::KwExtern => Some(self.parse_extern_resource_decl()),
             SyntaxKind::KwResource => Some(self.parse_resource_decl(false)),
             SyntaxKind::KwBitfield => Some(self.parse_bitfield_decl()),
@@ -913,13 +911,19 @@ impl Parser {
                 if self.at(SyntaxKind::RBrace) || self.at_end() {
                     break;
                 }
+                // Parse optional field attributes
+                let mut field_attrs = Vec::new();
+                while self.at(SyntaxKind::At) {
+                    field_attrs.push(self.parse_attribute());
+                    self.skip_trivia();
+                }
                 let field_name_tok = self.expect(SyntaxKind::Ident);
                 let field_name = self.text_of(&field_name_tok).to_owned();
                 self.skip_trivia();
                 self.expect(SyntaxKind::Colon);
                 self.skip_trivia();
-                let ty = self.parse_type_atom();
-                flds.push(RecordField { name: field_name, ty, attributes: vec![] });
+                let ty = self.parse_type();
+                flds.push(RecordField { name: field_name, ty, attributes: field_attrs });
                 self.skip_trivia();
                 if !self.eat(SyntaxKind::Comma) {
                     break;
@@ -966,87 +970,6 @@ impl Parser {
         ConDecl { name, fields, discriminant, span }
     }
 
-    fn parse_type_alias_or_record(&mut self) -> Decl {
-        let start = self.current_span().start;
-        self.expect(SyntaxKind::KwType);
-        self.skip_trivia();
-
-        let name_tok = self.expect(SyntaxKind::UpperIdent);
-        let name = self.text_of(&name_tok).to_owned();
-
-        // Type parameters
-        let mut params = Vec::new();
-        self.skip_trivia();
-        while self.at(SyntaxKind::Ident) {
-            let p = self.bump();
-            params.push(self.text_of(&p).to_owned());
-            self.skip_trivia();
-        }
-
-        self.expect(SyntaxKind::Equals);
-        self.skip_trivia();
-        if self.at(SyntaxKind::LBrace) {
-            // `type Name = { a : A, b : B }` desugars to one-constructor record ADT.
-            // Fields may have attributes: `@builtin(position) clip_pos : Vec<4, F32>`
-            self.bump();
-            let mut fields = Vec::new();
-            loop {
-                self.skip_trivia();
-                if self.at(SyntaxKind::RBrace) || self.at_end() {
-                    break;
-                }
-                // Parse optional field attributes
-                let mut field_attrs = Vec::new();
-                while self.at(SyntaxKind::At) {
-                    field_attrs.push(self.parse_attribute());
-                    self.skip_trivia();
-                }
-                let field_name_tok = self.expect(SyntaxKind::Ident);
-                let field_name = self.text_of(&field_name_tok).to_owned();
-                self.skip_trivia();
-                self.expect(SyntaxKind::Colon);
-                self.skip_trivia();
-                let field_ty = self.parse_type();
-                fields.push(RecordField {
-                    name: field_name,
-                    ty: field_ty,
-                    attributes: field_attrs,
-                });
-                self.skip_trivia();
-                if !self.eat(SyntaxKind::Comma) {
-                    break;
-                }
-            }
-            self.expect(SyntaxKind::RBrace);
-
-            let con = ConDecl {
-                name: name.clone(),
-                fields: ConFields::Record(fields),
-                discriminant: None,
-                span: self.span_from(start),
-            };
-            let span = self.span_from(start);
-            return Decl::DataDecl {
-                name,
-                type_params: params,
-                constructors: vec![con],
-                span,
-                comments: vec![],
-            };
-        }
-
-        let ty = self.parse_type();
-
-        let span = self.span_from(start);
-        Decl::TypeAlias {
-            name,
-            params,
-            ty,
-            span,
-            comments: vec![],
-        }
-    }
-
     fn parse_alias_decl(&mut self) -> Decl {
         let start = self.current_span().start;
         self.expect(SyntaxKind::KwAlias);
@@ -1067,30 +990,6 @@ impl Parser {
         }
     }
 
-    fn parse_newtype_decl(&mut self) -> Decl {
-        let start = self.current_span().start;
-        self.expect(SyntaxKind::KwNewtype);
-        self.skip_trivia();
-        let name_tok = self.expect(SyntaxKind::UpperIdent);
-        let name = self.text_of(&name_tok).to_owned();
-        self.skip_trivia();
-        self.expect(SyntaxKind::Equals);
-        self.skip_trivia();
-        let wrapped = self.parse_type();
-        let span = self.span_from(start);
-        Decl::DataDecl {
-            name: name.clone(),
-            type_params: vec![],
-            constructors: vec![ConDecl {
-                name,
-                fields: ConFields::Positional(vec![wrapped]),
-                discriminant: None,
-                span,
-            }],
-            span,
-            comments: vec![],
-        }
-    }
 
     fn parse_extern_resource_decl(&mut self) -> Decl {
         self.expect(SyntaxKind::KwExtern);

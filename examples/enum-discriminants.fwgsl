@@ -36,7 +36,7 @@ blendWeight mode = match mode
   | Additive -> 1.0
   | Multiply -> 0.0
 
-type DrawParams = {
+data DrawParams = DrawParams {
   tint : Vec<4, F32>,
 }
 

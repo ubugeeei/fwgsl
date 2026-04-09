@@ -1163,10 +1163,6 @@ fn completion_context(source: &str, pos: Position, prefix: &str) -> CompletionCo
         return CompletionContext::Type;
     }
 
-    if line.trim_start().starts_with("type ") {
-        return CompletionContext::Type;
-    }
-
     CompletionContext::Value
 }
 
