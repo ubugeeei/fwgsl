@@ -1150,8 +1150,12 @@ impl Parser {
     ///   decl4
     /// ```
     fn parse_when_decl(&mut self) -> Decl {
+        self.parse_when_decl_with_col(None)
+    }
+
+    fn parse_when_decl_with_col(&mut self, override_col: Option<u32>) -> Decl {
         let start = self.current_span().start;
-        let when_col = self.column_of(start);
+        let when_col = override_col.unwrap_or_else(|| self.column_of(start));
         self.expect(SyntaxKind::KwWhen);
         self.skip_trivia();
 
@@ -1167,8 +1171,9 @@ impl Parser {
             self.bump(); // consume `else`
             self.skip_trivia();
             if self.at(SyntaxKind::KwWhen) {
-                // `else when` — parse recursively as a nested CfgDecl
-                vec![self.parse_when_decl()]
+                // `else when` — parse recursively, inheriting the outer when_col
+                // so that body indentation is measured against the original `when`
+                vec![self.parse_when_decl_with_col(Some(when_col))]
             } else {
                 // `else` block
                 self.parse_when_body(when_col)
@@ -2777,11 +2782,27 @@ impl Parser {
 
     fn parse_type_app(&mut self) -> Type {
         self.skip_trivia();
+        let start_col = self.column_of(self.current_span().start);
         let mut ty = self.parse_type_atom();
 
         loop {
             self.skip_trivia();
+            // Stop at layout boundaries — a LayoutSemicolon means we're on a
+            // new declaration line and should not consume further type args.
+            if matches!(
+                self.peek(),
+                SyntaxKind::LayoutSemicolon | SyntaxKind::LayoutBraceClose
+            ) {
+                break;
+            }
             let next = self.peek_non_trivia();
+            // Also stop if the next token is on a new line at the same or
+            // lesser column — this handles `when` blocks where the layout
+            // resolver doesn't insert LayoutSemicolon tokens.
+            let next_col = self.column_of(self.current_span().start);
+            if next_col <= start_col && self.current_span().start > ty.span().end {
+                break;
+            }
             if matches!(
                 next,
                 SyntaxKind::UpperIdent

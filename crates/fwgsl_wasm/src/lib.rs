@@ -124,6 +124,13 @@ pub fn compile(source: &str) -> String {
 }
 
 #[wasm_bindgen]
+pub fn parse_ast(source: &str) -> String {
+    let mut parser = fwgsl_parser::parser::Parser::new(source);
+    let program = parser.parse_program();
+    format!("{:#?}", program)
+}
+
+#[wasm_bindgen]
 pub fn format(source: &str) -> String {
     fwgsl_formatter::format_default(source)
 }

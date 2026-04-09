@@ -35,10 +35,16 @@ isRed c = match c
   | _    -> 0`,
 
     compute: `-- Compute Shader: double each element
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> I32
 @compute @workgroup_size(64, 1, 1)
-main idx =
-  let x = idx * 2
-  in  x`,
+main input =
+  let idx    = toI32 input.gid.x
+      result = idx * 2
+  in result`,
 
     ifexpr: `-- If expressions and comparison
 clamp : I32 -> I32 -> I32 -> I32
@@ -61,9 +67,9 @@ sign x =
     graph: `-- Graph Preview: animated scalar function
 graph : F32 -> F32 -> F32
 graph x time =
-  let wave1 = $sin (x * 2.4 + time) * 0.55
-      wave2 = $sin (x * 0.9 - time * 0.7) * 0.25
-      wave3 = $cos (x * 4.2 + time * 0.3) * 0.12
+  let wave1 = sin (x * 2.4 + time) * 0.55
+      wave2 = sin (x * 0.9 - time * 0.7) * 0.25
+      wave3 = cos (x * 4.2 + time * 0.3) * 0.12
   in wave1 + wave2 + wave3`,
 };
 
@@ -80,9 +86,10 @@ const FEATURED_PRESETS = [
 ];
 const FEATURED_PRESET_KEY_SET = new Set(FEATURED_PRESETS.map((preset) => preset.key));
 const FWGSL_KEYWORD_SET = new Set([
-    'module', 'where', 'import', 'data', 'type', 'class', 'instance',
-    'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else', 'do',
-    'forall', 'infixl', 'infixr', 'infix', 'deriving',
+    'module', 'where', 'import', 'data', 'alias', 'trait', 'impl',
+    'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else',
+    'loop', 'const', 'extern', 'exposing', 'bitfield',
+    'infixl', 'infixr', 'infix',
 ]);
 
 const STATIC_EDITOR_ITEMS = [
@@ -132,28 +139,28 @@ const STATIC_EDITOR_ITEMS = [
         contexts: ['value', 'type'],
     },
     {
-        label: 'type',
+        label: 'alias',
         detail: 'Type alias declaration',
-        documentation: 'Define a named alias for a type expression.\n\n```fwgsl\ntype Vec4f = Vec 4 F32\n```',
-        insertText: 'type ${1:Alias} = ${2:Type}',
+        documentation: 'Define a named alias for a type expression.\n\n```fwgsl\nalias Vec4f = Vec<4, F32>\n```',
+        insertText: 'alias ${1:Alias} = ${2:Type}',
         snippet: true,
         kind: 'Keyword',
         contexts: ['value', 'type'],
     },
     {
-        label: 'class',
-        detail: 'Type class declaration',
-        documentation: 'Declare a type class interface.',
-        insertText: 'class ${1:Class} ${2:f} where\n  ${3:member} : ${4:Type}',
+        label: 'trait',
+        detail: 'Trait declaration',
+        documentation: 'Declare a trait interface.\n\n```fwgsl\ntrait Add a where\n  (+) : a -> a -> a\n```',
+        insertText: 'trait ${1:Trait} ${2:a} where\n  ${3:method} : ${4:Type}',
         snippet: true,
         kind: 'Keyword',
         contexts: ['value', 'type'],
     },
     {
-        label: 'instance',
-        detail: 'Type class instance',
-        documentation: 'Implement a type class for a concrete type.',
-        insertText: 'instance ${1:Class} ${2:Type} where\n  ${3:member} = ${4:impl}',
+        label: 'impl',
+        detail: 'Trait implementation',
+        documentation: 'Implement a trait for a concrete type.\n\n```fwgsl\nimpl Add MyType where\n  (+) a b = ...\n```',
+        insertText: 'impl ${1:Trait} ${2:Type} where\n  ${3:method} ${4:args} = ${5:body}',
         snippet: true,
         kind: 'Keyword',
         contexts: ['value', 'type'],
@@ -177,22 +184,31 @@ const STATIC_EDITOR_ITEMS = [
         contexts: ['value', 'type'],
     },
     {
-        label: 'do',
-        detail: 'Do notation block',
-        documentation: 'Sequence monadic statements in a block.',
-        insertText: 'do\n  ${1:statement}',
+        label: 'loop',
+        detail: 'Named tail-recursive loop',
+        documentation: 'Scheme-style named let for tail-recursive loops.\n\n```fwgsl\nloop go (i = 0) (acc = 0) in\n  if i >= n then acc\n  else go (i + 1) (acc + i)\n```',
+        insertText: 'loop ${1:go} (${2:i} = ${3:0}) in\n  ${4:body}',
         snippet: true,
         kind: 'Keyword',
         contexts: ['value'],
     },
     {
-        label: 'forall',
-        detail: 'Universal quantification',
-        documentation: 'Bind type variables explicitly in a type expression.\n\n```fwgsl\nforall a. a -> a\n```',
-        insertText: 'forall ${1:a}. ${2:type}',
+        label: 'const',
+        detail: 'Constant declaration',
+        documentation: 'Declare a compile-time constant.\n\n```fwgsl\nconst PI : F32 = 3.14159\n```',
+        insertText: 'const ${1:NAME} : ${2:Type} = ${3:value}',
         snippet: true,
         kind: 'Keyword',
-        contexts: ['value', 'type'],
+        contexts: ['value'],
+    },
+    {
+        label: 'extern',
+        detail: 'External declaration',
+        documentation: 'Declare an external builtin function.\n\n```fwgsl\nextern myBuiltin : F32 -> F32\n```',
+        insertText: 'extern ${1:name} : ${2:Type}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value'],
     },
     {
         label: 'I32',
@@ -258,10 +274,10 @@ const STATIC_EDITOR_ITEMS = [
         contexts: ['value', 'type'],
     },
     {
-        label: '$splat3',
+        label: 'splat3',
         detail: 'Lift a scalar into Vec 3',
-        documentation: 'Construct a 3D vector by repeating one scalar.\n\n```fwgsl\n$splat3 0.5\n```',
-        insertText: '$splat3',
+        documentation: 'Construct a 3D vector by repeating one scalar.\n\n```fwgsl\nsplat3 0.5\n```',
+        insertText: 'splat3',
         snippet: false,
         kind: 'Function',
         contexts: ['value'],
@@ -419,9 +435,10 @@ const FWGSL_LANGUAGE = {
     defaultToken: '',
     tokenPostfix: '.fwgsl',
     keywords: [
-        'module', 'where', 'import', 'data', 'type', 'class', 'instance',
-        'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else', 'do',
-        'forall', 'infixl', 'infixr', 'infix', 'deriving',
+        'module', 'where', 'import', 'data', 'alias', 'trait', 'impl',
+        'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else',
+        'loop', 'const', 'extern', 'exposing', 'bitfield',
+        'infixl', 'infixr', 'infix',
     ],
     typeKeywords: [
         'I32', 'U32', 'F32', 'Bool', 'Scalar', 'Sca', 'Tensor', 'Ten', 'Vector', 'Vec', 'Matrix', 'Mat',
@@ -431,7 +448,7 @@ const FWGSL_LANGUAGE = {
         '->', '=>', '::', '..', '<-', '=',
         '+', '-', '*', '/', '%',
         '==', '/=', '<', '>', '<=', '>=',
-        '&&', '||', '!', '$', '.', '|>',
+        '&&', '||', '!', '.', '|>',
         '|',
     ],
     symbols: /[=><!~?:&|+\-*\/\^%\.]+/,
@@ -449,9 +466,6 @@ const FWGSL_LANGUAGE = {
                     '@default': 'constructor'
                 }
             }],
-
-            // Builtin identifiers ($sin, $vec4, etc.)
-            [/\$[a-zA-Z_][\w']*/, 'builtin'],
 
             // Keywords and identifiers
             [/[a-z_][\w']*/, {
@@ -1333,6 +1347,7 @@ async function initWasm() {
                 wgsl: generateMockWgsl(source),
                 diagnostics: [],
             }),
+            parse_ast: (source) => '// AST not available in mock mode',
             format: (source) => source,
             get_diagnostics: (source) => '[]',
         };
@@ -2171,6 +2186,14 @@ function compile(options = {}) {
 
         // Update WGSL output
         wgslEditor.setValue(result.wgsl || '// No output');
+
+        // Update AST output
+        try {
+            const ast = wasmModule.parse_ast(source);
+            document.getElementById('ast-output').textContent = ast;
+        } catch (e) {
+            document.getElementById('ast-output').textContent = `// AST error: ${e.message}`;
+        }
 
         // Update diagnostics
         updateDiagnostics(result.diagnostics || []);
