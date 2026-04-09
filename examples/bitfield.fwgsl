@@ -68,9 +68,15 @@ setMetallic : MaterialFlags -> I32 -> MaterialFlags
 setMetallic flags m = flags { metallic = m }
 
 -- Compute entry point
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> ()
 @compute @workgroup_size(64, 1, 1)
-main idx =
-  let mat    = load matFlags
+main input =
+  let idx    = toI32 input.gid.x
+      mat    = load matFlags
       obj    = load objFlags
       p      = load params
       rough  = decodeRoughness mat.roughness

@@ -43,9 +43,15 @@ extern resource flags  : Uniform<LineFlags>                          @group 0 @b
 extern resource params : Uniform<DrawParams>                         @group 0 @binding 1
 extern resource output : Storage<ReadWrite, Array<Vec<4, F32>, 64>>  @group 0 @binding 2
 
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> ()
 @compute @workgroup_size(64, 1, 1)
-main idx =
-  let f      = load flags
+main input =
+  let idx    = toI32 input.gid.x
+      f      = load flags
       p      = load params
       capS   = f.capStart
       capE   = f.capEnd

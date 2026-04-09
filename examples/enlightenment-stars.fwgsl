@@ -58,9 +58,15 @@ palette x tint =
 -- - matrix indexing
 -- - pipeline operator
 -- - writeAt to storage resource
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> ()
 @compute @workgroup_size(64, 1, 1)
-main idx =
-  let p = load frame
+main input =
+  let idx = toI32 input.gid.x
+      p = load frame
       t = p.time |> normalizeTime
       scale = p.basis[0][0]
       uv = (vec2 (toF32 idx * 0.002) 0.0).xy

@@ -134,8 +134,6 @@ pub struct MirFunction {
 pub struct MirParam {
     pub name: String,
     pub ty: MirType,
-    /// Optional `@location(N)` binding for entry-point I/O.
-    pub location: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +148,6 @@ pub struct MirEntryPoint {
     /// Workgroup size for compute shaders — `[x, y, z]`.
     pub workgroup_size: Option<[u32; 3]>,
     pub params: Vec<MirParam>,
-    /// Built-in bindings such as `@builtin(global_invocation_id)`.
-    pub builtins: Vec<(String, BuiltinBinding, MirType)>,
     pub return_ty: MirType,
     pub body: Vec<MirStmt>,
     pub return_expr: Option<MirExpr>,
@@ -176,40 +172,6 @@ impl fmt::Display for ShaderStage {
     }
 }
 
-/// Built-in variable bindings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BuiltinBinding {
-    GlobalInvocationId,
-    LocalInvocationId,
-    WorkgroupId,
-    NumWorkgroups,
-    VertexIndex,
-    InstanceIndex,
-    Position,
-    FrontFacing,
-    FragDepth,
-    SampleIndex,
-    SampleMask,
-}
-
-impl fmt::Display for BuiltinBinding {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            BuiltinBinding::GlobalInvocationId => "global_invocation_id",
-            BuiltinBinding::LocalInvocationId => "local_invocation_id",
-            BuiltinBinding::WorkgroupId => "workgroup_id",
-            BuiltinBinding::NumWorkgroups => "num_workgroups",
-            BuiltinBinding::VertexIndex => "vertex_index",
-            BuiltinBinding::InstanceIndex => "instance_index",
-            BuiltinBinding::Position => "position",
-            BuiltinBinding::FrontFacing => "front_facing",
-            BuiltinBinding::FragDepth => "frag_depth",
-            BuiltinBinding::SampleIndex => "sample_index",
-            BuiltinBinding::SampleMask => "sample_mask",
-        };
-        write!(f, "{}", s)
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Statements

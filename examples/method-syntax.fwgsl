@@ -27,9 +27,15 @@ data Params = Params {
 extern resource params : Uniform<Params> @group 0 @binding 0
 extern resource output : Storage<ReadWrite, Array<Vec<4, F32>, 64>> @group 0 @binding 1
 
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> ()
 @compute @workgroup_size(64, 1, 1)
-main idx =
-  let p  = load params
+main input =
+  let idx = toI32 input.gid.x
+      p  = load params
       -- Method-call sugar: p.value.half is half(p.value)
       h  = p.value.half
       -- Method-call sugar with args: p.value.clampVal p.lo p.hi

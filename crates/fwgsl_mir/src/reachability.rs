@@ -24,7 +24,6 @@ pub fn compute_reachable(program: &MirProgram) -> ReachableSet {
     // Seed: walk all entry points
     for ep in &program.entry_points {
         walk_params(&ep.params, &mut reachable);
-        walk_builtins(&ep.builtins, &mut reachable);
         walk_type(&ep.return_ty, &mut reachable);
         walk_stmts(&ep.body, &mut reachable);
         if let Some(expr) = &ep.return_expr {
@@ -131,15 +130,6 @@ pub fn eliminate_dead_code(program: &MirProgram) -> MirProgram {
 fn walk_params(params: &[MirParam], reachable: &mut ReachableSet) {
     for p in params {
         walk_type(&p.ty, reachable);
-    }
-}
-
-fn walk_builtins(
-    builtins: &[(String, BuiltinBinding, MirType)],
-    reachable: &mut ReachableSet,
-) {
-    for (_, _, ty) in builtins {
-        walk_type(ty, reachable);
     }
 }
 
@@ -306,7 +296,6 @@ mod tests {
             stage: ShaderStage::Compute,
             workgroup_size: Some([64, 1, 1]),
             params: vec![],
-            builtins: vec![],
             return_ty: MirType::Unit,
             body,
             return_expr: None,
@@ -381,7 +370,6 @@ mod tests {
                 stage: ShaderStage::Compute,
                 workgroup_size: Some([1, 1, 1]),
                 params: vec![],
-                builtins: vec![],
                 return_ty: MirType::Unit,
                 body: vec![MirStmt::Let(
                     "s".to_string(),
@@ -425,7 +413,6 @@ mod tests {
                 stage: ShaderStage::Compute,
                 workgroup_size: Some([64, 1, 1]),
                 params: vec![],
-                builtins: vec![],
                 return_ty: MirType::Unit,
                 body: vec![MirStmt::IndexAssign(
                     MirExpr::Var("used_buf".to_string(), MirType::Array(Box::new(MirType::F32), 64)),
@@ -467,7 +454,6 @@ mod tests {
                 stage: ShaderStage::Compute,
                 workgroup_size: Some([64, 1, 1]),
                 params: vec![],
-                builtins: vec![],
                 return_ty: MirType::Unit,
                 body: vec![MirStmt::Let(
                     "p".to_string(),
@@ -545,9 +531,7 @@ mod tests {
                 params: vec![MirParam {
                     name: "o".to_string(),
                     ty: MirType::Struct("Outer".to_string()),
-                    location: None,
                 }],
-                builtins: vec![],
                 return_ty: MirType::Unit,
                 body: vec![],
                 return_expr: None,

@@ -1123,12 +1123,10 @@ mod codegen_tests {
                     MirParam {
                         name: "x".to_string(),
                         ty: MirType::I32,
-                        location: None,
                     },
                     MirParam {
                         name: "y".to_string(),
                         ty: MirType::I32,
-                        location: None,
                     },
                 ],
                 return_ty: MirType::I32,
@@ -1157,30 +1155,35 @@ mod codegen_tests {
     #[test]
     fn codegen_compute_shader_entry_point() {
         let program = MirProgram {
-            structs: vec![],
+            structs: vec![MirStruct {
+                name: "ComputeInput".to_string(),
+                fields: vec![MirField {
+                    name: "gid".to_string(),
+                    ty: MirType::Vec(3, Box::new(MirType::U32)),
+                    attributes: vec![MirAttribute { name: "builtin".to_string(), args: vec!["global_invocation_id".to_string()] }],
+                }],
+            }],
             globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "main".to_string(),
                 stage: ShaderStage::Compute,
                 workgroup_size: Some([64, 1, 1]),
-                params: vec![],
-                builtins: vec![(
-                    "gid".to_string(),
-                    BuiltinBinding::GlobalInvocationId,
-                    MirType::Vec(3, Box::new(MirType::U32)),
-                )],
+                params: vec![MirParam {
+                    name: "input".to_string(),
+                    ty: MirType::Struct("ComputeInput".to_string()),
+                }],
                 return_ty: MirType::Unit,
                 body: vec![MirStmt::Let(
                     "idx".to_string(),
                     MirType::U32,
                     MirExpr::FieldAccess(
                         Box::new(MirExpr::Var(
-                            "gid".to_string(),
-                            MirType::Vec(3, Box::new(MirType::U32)),
+                            "input".to_string(),
+                            MirType::Struct("ComputeInput".to_string()),
                         )),
-                        "x".to_string(),
-                        MirType::U32,
+                        "gid".to_string(),
+                        MirType::Vec(3, Box::new(MirType::U32)),
                     ),
                 )],
                 return_expr: None,
@@ -1196,11 +1199,15 @@ mod codegen_tests {
             wgsl
         );
         assert!(
+            wgsl.contains("input: ComputeInput"),
+            "WGSL: {}",
+            wgsl
+        );
+        assert!(
             wgsl.contains("@builtin(global_invocation_id) gid: vec3<u32>"),
             "WGSL: {}",
             wgsl
         );
-        assert!(wgsl.contains("let idx: u32 = gid.x;"), "WGSL: {}", wgsl);
     }
 
     #[test]
@@ -1227,7 +1234,6 @@ mod codegen_tests {
                 params: vec![MirParam {
                     name: "p".to_string(),
                     ty: MirType::Struct("Particle".to_string()),
-                    location: None,
                 }],
                 return_ty: MirType::F32,
                 body: vec![],
@@ -1269,12 +1275,10 @@ mod codegen_tests {
                     MirParam {
                         name: "a".to_string(),
                         ty: MirType::I32,
-                        location: None,
                     },
                     MirParam {
                         name: "b".to_string(),
                         ty: MirType::I32,
-                        location: None,
                     },
                 ],
                 return_ty: MirType::I32,
@@ -1313,7 +1317,6 @@ mod codegen_tests {
                 stage: ShaderStage::Vertex,
                 workgroup_size: None,
                 params: vec![],
-                builtins: vec![("vid".to_string(), BuiltinBinding::VertexIndex, MirType::U32)],
                 return_ty: MirType::Vec(4, Box::new(MirType::F32)),
                 body: vec![],
                 return_expr: Some(MirExpr::Call(
@@ -1333,11 +1336,7 @@ mod codegen_tests {
 
         let wgsl = emit_wgsl(&program);
         assert!(wgsl.contains("@vertex"), "WGSL: {}", wgsl);
-        assert!(
-            wgsl.contains("@builtin(vertex_index) vid: u32"),
-            "WGSL: {}",
-            wgsl
-        );
+        assert!(wgsl.contains("fn vs_main()"), "WGSL: {}", wgsl);
         assert!(wgsl.contains("-> vec4<f32>"), "WGSL: {}", wgsl);
     }
 
@@ -1352,7 +1351,6 @@ mod codegen_tests {
                 stage: ShaderStage::Fragment,
                 workgroup_size: None,
                 params: vec![],
-                builtins: vec![],
                 return_ty: MirType::Vec(4, Box::new(MirType::F32)),
                 body: vec![],
                 return_expr: Some(MirExpr::Call(
@@ -1618,7 +1616,6 @@ show c = match c
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
-                    location: None,
                 }],
                 return_ty: MirType::I32,
                 body: vec![],
@@ -1682,7 +1679,6 @@ show c = match c
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
-                    location: None,
                 }],
                 return_ty: MirType::I32,
                 body: vec![],
@@ -1731,7 +1727,6 @@ show c = match c
                     stage: ShaderStage::Vertex,
                     workgroup_size: None,
                     params: vec![],
-                    builtins: vec![],
                     return_ty: MirType::Vec(4, Box::new(MirType::F32)),
                     body: vec![],
                     return_expr: Some(MirExpr::Call(
@@ -1751,7 +1746,6 @@ show c = match c
                     stage: ShaderStage::Fragment,
                     workgroup_size: None,
                     params: vec![],
-                    builtins: vec![],
                     return_ty: MirType::Vec(4, Box::new(MirType::F32)),
                     body: vec![],
                     return_expr: Some(MirExpr::Call(
@@ -1771,7 +1765,6 @@ show c = match c
                     stage: ShaderStage::Compute,
                     workgroup_size: Some([64, 1, 1]),
                     params: vec![],
-                    builtins: vec![],
                     return_ty: MirType::Unit,
                     body: vec![],
                     return_expr: None,

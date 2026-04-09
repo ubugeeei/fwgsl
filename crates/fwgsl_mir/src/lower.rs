@@ -323,7 +323,6 @@ fn lower_hir_function(f: &HirFunction, ctx: &LowerCtx) -> Result<MirFunction, St
             MirParam {
                 name: name.clone(),
                 ty: resolve(ty),
-                location: None,
             }
         })
         .collect();
@@ -363,83 +362,22 @@ fn lower_hir_entry_point(ep: &HirEntryPoint, ctx: &LowerCtx) -> Result<MirEntryP
         }
     }
 
-    let (mut stmts, return_expr) = lower_hir_expr_to_body(&ep.body, ctx)?;
+    let (stmts, return_expr) = lower_hir_expr_to_body(&ep.body, ctx)?;
 
-    // For compute shaders, remap user parameters to builtin bindings.
-    // The first parameter becomes `i32(_gid.x)` via global_invocation_id.
-    let mut builtins = Vec::new();
-    let mut params = Vec::new();
-
-    if stage == ShaderStage::Compute {
-        // Add @builtin(global_invocation_id) _gid: vec3<u32>
-        let gid_ty = MirType::Vec(3, Box::new(MirType::U32));
-        builtins.push((
-            "_gid".to_string(),
-            BuiltinBinding::GlobalInvocationId,
-            gid_ty,
-        ));
-
-        // If the user declared a parameter (e.g. `main idx = ...`),
-        // insert `let idx: i32 = i32(_gid.x);` at the start of the body.
-        if let Some((name, _ty)) = ep.params.first() {
-            let gid_x = MirExpr::FieldAccess(
-                Box::new(MirExpr::Var(
-                    "_gid".to_string(),
-                    MirType::Vec(3, Box::new(MirType::U32)),
-                )),
-                "x".to_string(),
-                MirType::U32,
-            );
-            let cast_to_i32 = MirExpr::Cast(Box::new(gid_x), MirType::I32);
-            stmts.insert(0, MirStmt::Let(name.clone(), MirType::I32, cast_to_i32));
-        }
-    } else if stage == ShaderStage::Vertex {
-        // For vertex shaders, auto-map the first parameter to @builtin(vertex_index).
-        if let Some((name, _ty)) = ep.params.first() {
-            builtins.push((
-                name.clone(),
-                BuiltinBinding::VertexIndex,
-                MirType::U32,
-            ));
-        }
-        // Additional params beyond the first become regular params.
-        for (name, ty) in ep.params.iter().skip(1) {
+    // Entry point params pass through directly. Bindings like @builtin and
+    // @location are carried by the struct-typed parameter's field attributes
+    // (declared via `data` with attributed fields), not injected here.
+    let params: Vec<MirParam> = ep
+        .params
+        .iter()
+        .map(|(name, ty)| {
             let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
-            params.push(MirParam {
+            MirParam {
                 name: name.clone(),
                 ty: mir_ty,
-                location: None,
-            });
-        }
-    } else if stage == ShaderStage::Fragment {
-        // Fragment shader params get auto-assigned @location(N) attributes.
-        params = ep
-            .params
-            .iter()
-            .enumerate()
-            .map(|(i, (name, ty))| {
-                let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
-                MirParam {
-                    name: name.clone(),
-                    ty: mir_ty,
-                    location: Some(i as u32),
-                }
-            })
-            .collect();
-    } else {
-        params = ep
-            .params
-            .iter()
-            .map(|(name, ty)| {
-                let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
-                MirParam {
-                    name: name.clone(),
-                    ty: mir_ty,
-                    location: None,
-                }
-            })
-            .collect();
-    }
+            }
+        })
+        .collect();
 
     // Compute shaders always have void return type in WGSL
     let return_ty = if stage == ShaderStage::Compute {
@@ -459,7 +397,6 @@ fn lower_hir_entry_point(ep: &HirEntryPoint, ctx: &LowerCtx) -> Result<MirEntryP
         stage,
         workgroup_size,
         params,
-        builtins,
         return_ty,
         body: stmts,
         return_expr,

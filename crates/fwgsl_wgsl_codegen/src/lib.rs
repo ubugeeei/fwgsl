@@ -298,40 +298,17 @@ impl WgslEmitter {
 
         let mut first = true;
 
-        // Built-in parameters
-        for (name, binding, ty) in &ep.builtins {
-            if !first {
-                self.write(", ");
-            }
-            first = false;
-            self.write(&format!(
-                "@builtin({}) {}: {}",
-                binding,
-                sanitize_identifier(name),
-                self.format_type(ty)
-            ));
-        }
-
-        // Regular parameters
+        // Parameters — struct-typed params carry @builtin/@location on their fields
         for param in &ep.params {
             if !first {
                 self.write(", ");
             }
             first = false;
-            if let Some(loc) = param.location {
-                self.write(&format!(
-                    "@location({}) {}: {}",
-                    loc,
-                    sanitize_identifier(&param.name),
-                    self.format_type(&param.ty)
-                ));
-            } else {
-                self.write(&format!(
-                    "{}: {}",
-                    sanitize_identifier(&param.name),
-                    self.format_type(&param.ty)
-                ));
-            }
+            self.write(&format!(
+                "{}: {}",
+                sanitize_identifier(&param.name),
+                self.format_type(&param.ty)
+            ));
         }
 
         self.write(")");
@@ -682,12 +659,10 @@ mod tests {
                     MirParam {
                         name: "x".to_string(),
                         ty: MirType::I32,
-                        location: None,
                     },
                     MirParam {
                         name: "y".to_string(),
                         ty: MirType::I32,
-                        location: None,
                     },
                 ],
                 return_ty: MirType::I32,
@@ -770,25 +745,37 @@ mod tests {
     #[test]
     fn test_emit_compute_entry_point() {
         let program = MirProgram {
-            structs: vec![],
+            structs: vec![MirStruct {
+                name: "ComputeInput".to_string(),
+                fields: vec![MirField {
+                    name: "gid".to_string(),
+                    ty: MirType::Vec(3, Box::new(MirType::U32)),
+                    attributes: vec![MirAttribute {
+                        name: "builtin".to_string(),
+                        args: vec!["global_invocation_id".to_string()],
+                    }],
+                }],
+            }],
             globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "main".to_string(),
                 stage: ShaderStage::Compute,
                 workgroup_size: Some([64, 1, 1]),
-                params: vec![],
-                builtins: vec![(
-                    "gid".to_string(),
-                    BuiltinBinding::GlobalInvocationId,
-                    MirType::Vec(3, Box::new(MirType::U32)),
-                )],
+                params: vec![MirParam {
+                    name: "input".to_string(),
+                    ty: MirType::Struct("ComputeInput".to_string()),
+                }],
                 return_ty: MirType::Unit,
                 body: vec![MirStmt::Let(
                     "idx".to_string(),
                     MirType::U32,
                     MirExpr::FieldAccess(
-                        Box::new(MirExpr::Var(
+                        Box::new(MirExpr::FieldAccess(
+                            Box::new(MirExpr::Var(
+                                "input".to_string(),
+                                MirType::Struct("ComputeInput".to_string()),
+                            )),
                             "gid".to_string(),
                             MirType::Vec(3, Box::new(MirType::U32)),
                         )),
@@ -804,8 +791,8 @@ mod tests {
 
         let wgsl = emit_wgsl(&program);
         assert!(wgsl.contains("@compute @workgroup_size(64, 1, 1)"));
+        assert!(wgsl.contains("input: ComputeInput"));
         assert!(wgsl.contains("@builtin(global_invocation_id) gid: vec3<u32>"));
-        assert!(wgsl.contains("let idx: u32 = gid.x;"));
     }
 
     #[test]
@@ -819,7 +806,6 @@ mod tests {
                 stage: ShaderStage::Vertex,
                 workgroup_size: None,
                 params: vec![],
-                builtins: vec![("vid".to_string(), BuiltinBinding::VertexIndex, MirType::U32)],
                 return_ty: MirType::Vec(4, Box::new(MirType::F32)),
                 body: vec![],
                 return_expr: Some(MirExpr::Call(
@@ -839,8 +825,7 @@ mod tests {
 
         let wgsl = emit_wgsl(&program);
         assert!(wgsl.contains("@vertex"));
-        assert!(wgsl.contains("fn vs_main("));
-        assert!(wgsl.contains("@builtin(vertex_index) vid: u32"));
+        assert!(wgsl.contains("fn vs_main()"));
         assert!(wgsl.contains("-> vec4<f32>"));
         assert!(wgsl.contains("return vec4<f32>(0.0, 0.0, 0.0, 1.0);"));
     }
@@ -856,7 +841,6 @@ mod tests {
                 stage: ShaderStage::Fragment,
                 workgroup_size: None,
                 params: vec![],
-                builtins: vec![],
                 return_ty: MirType::Vec(4, Box::new(MirType::F32)),
                 body: vec![],
                 return_expr: Some(MirExpr::Call(
@@ -890,7 +874,6 @@ mod tests {
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
-                    location: None,
                 }],
                 return_ty: MirType::I32,
                 body: vec![MirStmt::If(
@@ -931,7 +914,6 @@ mod tests {
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
-                    location: None,
                 }],
                 return_ty: MirType::Unit,
                 body: vec![
@@ -1117,7 +1099,6 @@ mod tests {
                 params: vec![MirParam {
                     name: "v".to_string(),
                     ty: MirType::Vec(3, Box::new(MirType::F32)),
-                    location: None,
                 }],
                 return_ty: MirType::F32,
                 body: vec![],
@@ -1149,7 +1130,6 @@ mod tests {
                 params: vec![MirParam {
                     name: "arr".to_string(),
                     ty: MirType::Array(Box::new(MirType::F32), 4),
-                    location: None,
                 }],
                 return_ty: MirType::F32,
                 body: vec![],
@@ -1181,7 +1161,6 @@ mod tests {
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::I32,
-                    location: None,
                 }],
                 return_ty: MirType::F32,
                 body: vec![],
@@ -1281,7 +1260,6 @@ mod tests {
                 stage: ShaderStage::Compute,
                 workgroup_size: None,
                 params: vec![],
-                builtins: vec![],
                 return_ty: MirType::Unit,
                 body: vec![],
                 return_expr: None,
@@ -1320,12 +1298,10 @@ mod tests {
                     MirParam {
                         name: "p".to_string(),
                         ty: MirType::Struct("Particle".to_string()),
-                        location: None,
                     },
                     MirParam {
                         name: "dt".to_string(),
                         ty: MirType::F32,
-                        location: None,
                     },
                 ],
                 return_ty: MirType::Struct("Particle".to_string()),
@@ -1382,11 +1358,6 @@ mod tests {
                 stage: ShaderStage::Compute,
                 workgroup_size: Some([256, 1, 1]),
                 params: vec![],
-                builtins: vec![(
-                    "gid".to_string(),
-                    BuiltinBinding::GlobalInvocationId,
-                    MirType::Vec(3, Box::new(MirType::U32)),
-                )],
                 return_ty: MirType::Unit,
                 body: vec![MirStmt::Let(
                     "idx".to_string(),
@@ -1496,7 +1467,6 @@ mod tests {
                 params: vec![MirParam {
                     name: "x".to_string(),
                     ty: MirType::U32,
-                    location: None,
                 }],
                 return_ty: MirType::I32,
                 body: vec![

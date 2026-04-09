@@ -1,4 +1,11 @@
 -- Minimal compute entry point.
 
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> I32
 @compute @workgroup_size(64, 1, 1)
-main idx = idx * 2
+main input =
+  let idx = toI32 input.gid.x
+  in idx * 2

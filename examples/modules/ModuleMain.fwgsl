@@ -6,7 +6,13 @@ import Math.Vec2
 extern resource input : Storage<ReadWrite, Array<F32, 64>> @group 0 @binding 0
 extern resource output : Storage<ReadWrite, Array<F32, 64>> @group 0 @binding 1
 
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> ()
 @compute @workgroup_size(64, 1, 1)
-main idx =
-  let val = load (input[idx])
+main cinput =
+  let idx = toI32 cinput.gid.x
+      val = load (input[idx])
   in writeAt output idx (double val)
