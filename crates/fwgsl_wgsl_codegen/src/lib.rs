@@ -436,7 +436,12 @@ impl WgslEmitter {
                 for case in cases {
                     self.write_indent();
                     self.write("case ");
-                    self.emit_lit(&case.value);
+                    for (i, val) in case.values.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.emit_lit(val);
+                    }
                     self.write(": {");
                     self.newline();
                     self.indent += 1;
@@ -1444,21 +1449,21 @@ mod tests {
                         MirExpr::Var("x".to_string(), MirType::U32),
                         vec![
                             MirSwitchCase {
-                                value: MirLit::U32(0),
+                                values: vec![MirLit::U32(0)],
                                 body: vec![MirStmt::Assign(
                                     "result".to_string(),
                                     MirExpr::Lit(MirLit::I32(10)),
                                 )],
                             },
                             MirSwitchCase {
-                                value: MirLit::U32(1),
+                                values: vec![MirLit::U32(1)],
                                 body: vec![MirStmt::Assign(
                                     "result".to_string(),
                                     MirExpr::Lit(MirLit::I32(20)),
                                 )],
                             },
                             MirSwitchCase {
-                                value: MirLit::U32(2),
+                                values: vec![MirLit::U32(2)],
                                 body: vec![MirStmt::Assign(
                                     "result".to_string(),
                                     MirExpr::Lit(MirLit::I32(30)),

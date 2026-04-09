@@ -787,6 +787,11 @@ impl<'a> IndexBuilder<'a> {
                 frames[depth].value_defs.insert(name.clone(), symbol_id);
                 self.define_pattern(inner, visible_from, frames, kind);
             }
+            Pat::Or(alternatives, _) => {
+                for alt in alternatives {
+                    self.define_pattern(alt, visible_from, frames, kind);
+                }
+            }
         }
     }
 

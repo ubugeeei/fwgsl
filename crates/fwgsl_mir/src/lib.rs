@@ -237,10 +237,10 @@ pub enum MirStmt {
     Continue,
 }
 
-/// A single `case` arm in a switch statement.
+/// A single `case` arm in a switch statement (supports multi-value: `case 0u, 1u:`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MirSwitchCase {
-    pub value: MirLit,
+    pub values: Vec<MirLit>,
     pub body: Vec<MirStmt>,
 }
 

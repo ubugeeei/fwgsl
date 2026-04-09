@@ -948,6 +948,16 @@ fn flatten_app(expr: &HirExpr) -> (String, Vec<&HirExpr>) {
     }
 }
 
+/// Check if a pattern is compatible with WGSL switch emission (int lits, wilds, or-patterns of int lits).
+fn is_switch_compatible_pattern(pat: &HirPattern) -> bool {
+    match pat {
+        HirPattern::Lit(HirLit::Int(_)) => true,
+        HirPattern::Wild | HirPattern::Var(_, _) => true,
+        HirPattern::Or(alts) => alts.iter().all(|p| is_switch_compatible_pattern(p)),
+        _ => false,
+    }
+}
+
 /// Lower case arms into a chain of if-else statements (or a switch statement
 /// when all arms are integer literal patterns on an I32/U32 scrutinee).
 fn lower_case_arms(
@@ -963,12 +973,7 @@ fn lower_case_arms(
 
     // --- Try to emit a native WGSL switch for integer literal patterns ---
     if matches!(scrut_ty, MirType::I32 | MirType::U32) {
-        let all_int_or_wild = arms.iter().all(|arm| {
-            matches!(
-                arm.pattern,
-                HirPattern::Lit(HirLit::Int(_)) | HirPattern::Wild | HirPattern::Var(_, _)
-            )
-        });
+        let all_int_or_wild = arms.iter().all(|arm| is_switch_compatible_pattern(&arm.pattern));
 
         if all_int_or_wild {
             let mut cases: Vec<MirSwitchCase> = Vec::new();
@@ -985,9 +990,29 @@ fn lower_case_arms(
                             _ => MirLit::I32(*v as i32),
                         };
                         cases.push(MirSwitchCase {
-                            value: mir_lit,
+                            values: vec![mir_lit],
                             body: body_stmts,
                         });
+                    }
+                    HirPattern::Or(alts) => {
+                        let values: Vec<MirLit> = alts
+                            .iter()
+                            .filter_map(|p| match p {
+                                HirPattern::Lit(HirLit::Int(v)) => Some(match scrut_ty {
+                                    MirType::U32 => MirLit::U32(*v as u32),
+                                    _ => MirLit::I32(*v as i32),
+                                }),
+                                _ => None,
+                            })
+                            .collect();
+                        if values.is_empty() {
+                            default_body = body_stmts;
+                        } else {
+                            cases.push(MirSwitchCase {
+                                values,
+                                body: body_stmts,
+                            });
+                        }
                     }
                     HirPattern::Wild | HirPattern::Var(_, _) => {
                         default_body = body_stmts;
@@ -1097,6 +1122,51 @@ fn lower_case_arms(
                 };
 
                 result = Some(MirStmt::If(cond, body_stmts, else_stmts));
+            }
+
+            HirPattern::Or(alts) => {
+                // Build OR chain: scrut == alt1 || scrut == alt2 || ...
+                let mut cond: Option<MirExpr> = None;
+                for alt in alts {
+                    if let HirPattern::Lit(hir_lit) = alt {
+                        let mir_lit = match hir_lit {
+                            HirLit::Int(v) => match scrut_ty {
+                                MirType::U32 => MirLit::U32(*v as u32),
+                                MirType::F32 => MirLit::F32(*v as f64),
+                                _ => MirLit::I32(*v as i32),
+                            },
+                            HirLit::Float(v) => MirLit::F32(*v),
+                            HirLit::Bool(v) => MirLit::Bool(*v),
+                        };
+                        let eq = MirExpr::BinOp(
+                            MirBinOp::Eq,
+                            Box::new(MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())),
+                            Box::new(MirExpr::Lit(mir_lit)),
+                            MirType::Bool,
+                        );
+                        cond = Some(match cond {
+                            Some(prev) => MirExpr::BinOp(
+                                MirBinOp::Or,
+                                Box::new(prev),
+                                Box::new(eq),
+                                MirType::Bool,
+                            ),
+                            None => eq,
+                        });
+                    }
+                }
+                if let Some(cond) = cond {
+                    let else_stmts = match result {
+                        Some(MirStmt::If(c, t, e)) => vec![MirStmt::If(c, t, e)],
+                        Some(MirStmt::Block(stmts)) => stmts,
+                        Some(other) => vec![other],
+                        None => vec![],
+                    };
+                    result = Some(MirStmt::If(cond, body_stmts, else_stmts));
+                } else {
+                    // Or-pattern with only wilds
+                    result = Some(MirStmt::Block(body_stmts));
+                }
             }
         }
     }

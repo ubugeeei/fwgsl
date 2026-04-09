@@ -977,6 +977,13 @@ impl AstLowering {
                 let _ = name;
                 self.lower_pattern(inner, _scrutinee_ty)
             }
+            Pat::Or(alternatives, _) => {
+                let hir_alts: Vec<HirPattern> = alternatives
+                    .iter()
+                    .map(|p| self.lower_pattern(p, _scrutinee_ty))
+                    .collect();
+                HirPattern::Or(hir_alts)
+            }
         }
     }
 
@@ -1069,6 +1076,11 @@ impl AstLowering {
             Pat::As(name, inner, _) => {
                 env.insert(name.clone(), Scheme::mono(ty.clone()));
                 self.bind_pattern(inner, ty, env);
+            }
+            Pat::Or(alternatives, _) => {
+                for alt in alternatives {
+                    self.bind_pattern(alt, ty, env);
+                }
             }
         }
     }
@@ -1280,6 +1292,11 @@ impl AstLowering {
                     .collect(),
             ),
             HirPattern::Lit(lit) => HirPattern::Lit(lit),
+            HirPattern::Or(alts) => HirPattern::Or(
+                alts.into_iter()
+                    .map(|p| self.finalize_pattern(p))
+                    .collect(),
+            ),
         }
     }
 }

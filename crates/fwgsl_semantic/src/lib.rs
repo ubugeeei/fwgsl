@@ -335,6 +335,8 @@ impl SemanticAnalyzer {
             &[
                 "$sin", "$cos", "$abs", "$fract", "$floor", "$sign", "$sqrt", "negate",
                 "$log", "$log2", "$exp", "$ceil", "$round", "$trunc",
+                "$dpdx", "$dpdy", "$dpdxCoarse", "$dpdxFine", "$dpdyCoarse", "$dpdyFine",
+                "$fwidth", "$fwidthCoarse", "$fwidthFine",
             ],
             unary_numeric,
         );
@@ -940,6 +942,11 @@ impl SemanticAnalyzer {
             Pat::As(name, inner, _) => {
                 env.insert(name.clone(), Scheme::mono(ty.clone()));
                 self.bind_pattern(inner, ty, env);
+            }
+            Pat::Or(alternatives, _span) => {
+                for alt in alternatives {
+                    self.bind_pattern(alt, ty, env);
+                }
             }
         }
     }

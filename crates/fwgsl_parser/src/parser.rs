@@ -160,6 +160,8 @@ pub enum Pat {
     Tuple(Vec<Pat>, Span),
     Record(String, Vec<(String, Option<Pat>)>, Span),
     As(String, Box<Pat>, Span),
+    /// Or-pattern: `p1 | p2 | p3` — used for multi-value switch cases.
+    Or(Vec<Pat>, Span),
 }
 
 #[derive(Debug, Clone)]
@@ -229,7 +231,8 @@ impl Pat {
             | Pat::Paren(_, s)
             | Pat::Tuple(_, s)
             | Pat::Record(_, _, s)
-            | Pat::As(_, _, s) => *s,
+            | Pat::As(_, _, s)
+            | Pat::Or(_, s) => *s,
         }
     }
 }
@@ -1452,8 +1455,27 @@ impl Parser {
             self.bump(); // consume |
             self.skip_trivia();
 
-            let pat = self.parse_pat();
+            let pat_start = self.current_span().start;
+            let first_pat = self.parse_pat();
             self.skip_trivia();
+
+            // Check for or-pattern: | pat1 | pat2 | pat3 -> body
+            // After parsing first pattern, if we see `|` instead of `->`,
+            // the `|` is an or-separator within the same arm.
+            let pat = if self.at(SyntaxKind::Pipe) {
+                let mut alternatives = vec![first_pat];
+                while self.at(SyntaxKind::Pipe) {
+                    self.bump(); // consume |
+                    self.skip_trivia();
+                    alternatives.push(self.parse_pat());
+                    self.skip_trivia();
+                }
+                let span = self.span_from(pat_start);
+                Pat::Or(alternatives, span)
+            } else {
+                first_pat
+            };
+
             self.expect(SyntaxKind::Arrow);
             self.skip_trivia();
             let body = self.parse_expr();

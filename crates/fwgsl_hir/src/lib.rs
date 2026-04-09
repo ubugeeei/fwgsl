@@ -149,6 +149,8 @@ pub enum HirPattern {
     Var(String, Ty),
     Constructor(String, u32, Vec<HirPattern>),
     Lit(HirLit),
+    /// Or-pattern: matches if any alternative matches.
+    Or(Vec<HirPattern>),
 }
 
 #[derive(Debug, Clone)]
