@@ -406,8 +406,8 @@ impl<'a> IndexBuilder<'a> {
                     // Extern declarations are type-level only.
                     // No separate top-level symbols needed.
                 }
-                Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {
-                    // Module/import declarations don't define symbols.
+                Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } | Decl::CfgDecl { .. } => {
+                    // Module/import/cfg declarations don't define symbols.
                 }
             }
         }
@@ -547,7 +547,7 @@ impl<'a> IndexBuilder<'a> {
             Decl::ExternDecl { ty, .. } => {
                 self.walk_type(ty, frames);
             }
-            Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {}
+            Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } | Decl::CfgDecl { .. } => {}
         }
     }
 

@@ -36,6 +36,7 @@ impl Decl {
             | Decl::ExternDecl { comments, .. }
             | Decl::ModuleDecl { comments, .. }
             | Decl::ImportDecl { comments, .. } => comments,
+            Decl::CfgDecl { .. } => &[],
         }
     }
 
@@ -55,6 +56,12 @@ impl Decl {
             | Decl::ExternDecl { comments, .. }
             | Decl::ModuleDecl { comments, .. }
             | Decl::ImportDecl { comments, .. } => comments,
+            Decl::CfgDecl { .. } => {
+                // CfgDecl has no comments field; this should not be called on it.
+                // Return a static empty vec to satisfy the borrow checker.
+                // CfgDecl is expanded before downstream processing.
+                panic!("CfgDecl has no comments — it should be expanded before use")
+            }
         }
     }
 
@@ -73,7 +80,8 @@ impl Decl {
             | Decl::ImplDecl { span, .. }
             | Decl::ExternDecl { span, .. }
             | Decl::ModuleDecl { span, .. }
-            | Decl::ImportDecl { span, .. } => *span,
+            | Decl::ImportDecl { span, .. }
+            | Decl::CfgDecl { span, .. } => *span,
         }
     }
 }
@@ -179,12 +187,39 @@ pub enum Decl {
     ///   `import Math.Fp64 (Fp64, f)`  — import specific names
     ///   `import Math.Fp64 as Fp`      — qualified access: Fp.f
     ///   `import Math.*`               — import all sub-modules
+    ///   `import Debug when cfg.debug` — conditional import
     ImportDecl {
         module_path: String,
         kind: ImportKind,
+        condition: Option<CfgPredicate>,
         span: Span,
         comments: Vec<String>,
     },
+    /// Conditional compilation block:
+    ///   `when cfg.debug`           — block form
+    ///     decl1
+    ///     decl2
+    ///   `else`
+    ///     decl3
+    CfgDecl {
+        condition: CfgPredicate,
+        then_decls: Vec<Decl>,
+        else_decls: Vec<Decl>,
+        span: Span,
+    },
+}
+
+/// A compile-time feature predicate for conditional compilation.
+#[derive(Debug, Clone)]
+pub enum CfgPredicate {
+    /// `cfg.name` — true if `--feature name` is set.
+    Feature(String),
+    /// `not pred` — negation.
+    Not(Box<CfgPredicate>),
+    /// `pred && pred` — conjunction.
+    And(Box<CfgPredicate>, Box<CfgPredicate>),
+    /// `pred || pred` — disjunction.
+    Or(Box<CfgPredicate>, Box<CfgPredicate>),
 }
 
 /// How names are imported from a module.
@@ -518,6 +553,14 @@ impl Parser {
         i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::Equals
     }
 
+    /// Compute the 0-based column for a byte offset in the source.
+    fn column_of(&self, offset: u32) -> u32 {
+        let off = offset as usize;
+        // Find the start of the line containing this offset
+        let line_start = self.source[..off].rfind('\n').map_or(0, |i| i + 1);
+        (off - line_start) as u32
+    }
+
     fn span_from(&self, start: u32) -> Span {
         let end = if self.pos > 0 {
             self.tokens[self.pos - 1].span.end
@@ -601,6 +644,10 @@ impl Parser {
     /// start to collect immediately preceding comment tokens.
     fn attach_leading_comments(&self, decls: &mut [Decl]) {
         for decl in decls.iter_mut() {
+            // CfgDecl has no comments field — skip it
+            if matches!(decl, Decl::CfgDecl { .. }) {
+                continue;
+            }
             let decl_start = decl.span().start;
             // Find the first token at or after the decl start
             let tok_idx = match self.tokens.iter().position(|t| t.span.start >= decl_start) {
@@ -724,6 +771,7 @@ impl Parser {
             SyntaxKind::KwConst => Some(self.parse_const_decl()),
             SyntaxKind::KwTrait => Some(self.parse_trait_decl()),
             SyntaxKind::KwImpl => Some(self.parse_impl_decl()),
+            SyntaxKind::KwWhen => Some(self.parse_when_decl()),
             SyntaxKind::Ident => {
                 // Could be a type signature or function declaration.
                 // Look ahead: name then `:` means type sig; otherwise fun decl.
@@ -963,10 +1011,21 @@ impl Parser {
             (module_path, kind)
         };
 
+        // Check for optional postfix `when cfg.x`
+        self.skip_trivia();
+        let condition = if self.at(SyntaxKind::KwWhen) {
+            self.bump(); // consume `when`
+            self.skip_trivia();
+            Some(self.parse_cfg_predicate())
+        } else {
+            None
+        };
+
         let span = self.span_from(start);
         Decl::ImportDecl {
             module_path,
             kind,
+            condition,
             span,
             comments: vec![],
         }
@@ -1035,6 +1094,154 @@ impl Parser {
         }
         self.expect(SyntaxKind::RParen);
         names
+    }
+
+    /// Parse a `when` block for conditional compilation:
+    /// ```text
+    /// when cfg.debug
+    ///   decl1
+    ///   decl2
+    /// else when cfg.mobile
+    ///   decl3
+    /// else
+    ///   decl4
+    /// ```
+    fn parse_when_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        let when_col = self.column_of(start);
+        self.expect(SyntaxKind::KwWhen);
+        self.skip_trivia();
+
+        let condition = self.parse_cfg_predicate();
+        self.skip_trivia();
+
+        // Parse the then-branch: declarations indented further than `when`
+        let then_decls = self.parse_when_body(when_col);
+
+        // Check for `else` / `else when`
+        self.skip_trivia();
+        let else_decls = if self.at(SyntaxKind::KwElse) && self.column_of(self.current_span().start) == when_col {
+            self.bump(); // consume `else`
+            self.skip_trivia();
+            if self.at(SyntaxKind::KwWhen) {
+                // `else when` — parse recursively as a nested CfgDecl
+                vec![self.parse_when_decl()]
+            } else {
+                // `else` block
+                self.parse_when_body(when_col)
+            }
+        } else {
+            vec![]
+        };
+
+        let span = self.span_from(start);
+        Decl::CfgDecl {
+            condition,
+            then_decls,
+            else_decls,
+            span,
+        }
+    }
+
+    /// Parse the body of a `when` or `else` block.
+    /// Collects declarations that are indented further than `parent_col`.
+    fn parse_when_body(&mut self, parent_col: u32) -> Vec<Decl> {
+        let mut decls = Vec::new();
+        loop {
+            self.skip_trivia();
+            self.eat_layout_semi();
+            self.skip_trivia();
+
+            if self.at_end() || self.at(SyntaxKind::LayoutBraceClose) {
+                break;
+            }
+
+            // Check if next non-trivia token is indented further than the parent
+            let next_col = self.column_of(self.current_span().start);
+            if next_col <= parent_col {
+                break;
+            }
+
+            if let Some(decl) = self.parse_decl() {
+                decls.push(decl);
+            } else {
+                if !self.at_end() {
+                    self.bump();
+                }
+            }
+        }
+        decls
+    }
+
+    /// Parse a cfg predicate: `cfg.name`, `not cfg.name`, `pred && pred`, `pred || pred`.
+    ///
+    /// Precedence: `not` binds tightest, then `&&`, then `||`.
+    fn parse_cfg_predicate(&mut self) -> CfgPredicate {
+        self.parse_cfg_or()
+    }
+
+    /// Parse `||` (lowest precedence in cfg predicates).
+    fn parse_cfg_or(&mut self) -> CfgPredicate {
+        let mut left = self.parse_cfg_and();
+        while self.at(SyntaxKind::OrOr) {
+            self.bump(); // consume `||`
+            self.skip_trivia();
+            let right = self.parse_cfg_and();
+            left = CfgPredicate::Or(Box::new(left), Box::new(right));
+        }
+        left
+    }
+
+    /// Parse `&&` (middle precedence in cfg predicates).
+    fn parse_cfg_and(&mut self) -> CfgPredicate {
+        let mut left = self.parse_cfg_atom();
+        while self.at(SyntaxKind::AndAnd) {
+            self.bump(); // consume `&&`
+            self.skip_trivia();
+            let right = self.parse_cfg_atom();
+            left = CfgPredicate::And(Box::new(left), Box::new(right));
+        }
+        left
+    }
+
+    /// Parse a cfg atom: `not pred`, `cfg.name`, or `(pred)`.
+    fn parse_cfg_atom(&mut self) -> CfgPredicate {
+        // `not` prefix
+        if self.at(SyntaxKind::Ident) && self.current_token().span.source_text(&self.source) == "not" {
+            self.bump(); // consume `not`
+            self.skip_trivia();
+            let inner = self.parse_cfg_atom();
+            return CfgPredicate::Not(Box::new(inner));
+        }
+
+        // `cfg.name`
+        if self.at(SyntaxKind::KwCfg) {
+            self.bump(); // consume `cfg`
+            self.expect(SyntaxKind::Dot);
+            let name_tok = self.expect(SyntaxKind::Ident);
+            let name = self.text_of(&name_tok).to_owned();
+            self.skip_trivia();
+            return CfgPredicate::Feature(name);
+        }
+
+        // Parenthesized predicate
+        if self.at(SyntaxKind::LParen) {
+            self.bump(); // consume `(`
+            self.skip_trivia();
+            let inner = self.parse_cfg_predicate();
+            self.skip_trivia();
+            self.expect(SyntaxKind::RParen);
+            self.skip_trivia();
+            return inner;
+        }
+
+        // Error recovery: emit diagnostic and return a dummy predicate
+        let span = self.current_span();
+        self.diagnostics.push(
+            Diagnostic::error("expected cfg predicate (e.g. `cfg.name`)")
+                .with_label(Label::primary(span, "expected cfg predicate")),
+        );
+        CfgPredicate::Feature("__error__".to_string())
     }
 
     fn parse_data_decl(&mut self) -> Decl {

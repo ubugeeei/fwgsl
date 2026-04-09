@@ -5,6 +5,9 @@ use std::process;
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    // Collect --feature flags from anywhere in the args
+    let features = collect_features(&args);
+
     match args.get(1).map(|s| s.as_str()) {
         Some("compile") | Some("c") => {
             let file = args.get(2).unwrap_or_else(|| {
@@ -15,6 +18,7 @@ fn main() {
                 file,
                 args.contains(&"--emit-ast".to_string()),
                 args.contains(&"--preserve-comments".to_string()),
+                &features,
             );
         }
         Some("check") => {
@@ -22,7 +26,7 @@ fn main() {
                 eprintln!("Usage: fwgsl check <file.fwgsl>");
                 process::exit(1);
             });
-            cmd_check(file);
+            cmd_check(file, &features);
         }
         Some("fmt") => {
             let file = args.get(2).unwrap_or_else(|| {
@@ -64,8 +68,23 @@ OPTIONS:
     --emit-ast            Print AST debug output
     --preserve-comments   Preserve source comments in WGSL output
     --output, -o <file>   Output file (default: stdout)
+    --feature <name>      Enable a compile-time feature flag (can be repeated)
 "#
     );
+}
+
+/// Collect `--feature <name>` flags from the argument list.
+fn collect_features(args: &[String]) -> Vec<String> {
+    let mut features = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--feature" {
+            if let Some(name) = iter.next() {
+                features.push(name.clone());
+            }
+        }
+    }
+    features
 }
 
 fn with_prelude(program: &mut fwgsl_parser::parser::Program) {
@@ -77,15 +96,26 @@ fn with_prelude(program: &mut fwgsl_parser::parser::Program) {
 
 /// Check if the program has import declarations (needs multi-file resolution).
 fn has_imports(program: &fwgsl_parser::parser::Program) -> bool {
-    program.decls.iter().any(|d| matches!(d, fwgsl_parser::parser::Decl::ImportDecl { .. }))
+    has_imports_in(&program.decls)
 }
 
-fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool) {
+fn has_imports_in(decls: &[fwgsl_parser::parser::Decl]) -> bool {
+    use fwgsl_parser::parser::Decl;
+    decls.iter().any(|d| match d {
+        Decl::ImportDecl { .. } => true,
+        Decl::CfgDecl { then_decls, else_decls, .. } => {
+            has_imports_in(then_decls) || has_imports_in(else_decls)
+        }
+        _ => false,
+    })
+}
+
+fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool, feature_flags: &[String]) {
     let source = read_file(file);
 
     // Parse the root file
     let mut parser = fwgsl_parser::parser::Parser::new(&source);
-    let root_program = parser.parse_program();
+    let mut root_program = parser.parse_program();
 
     if emit_ast {
         println!("{:#?}", root_program);
@@ -101,6 +131,10 @@ fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool) {
         );
         process::exit(1);
     }
+
+    // Evaluate feature flags (prune conditional declarations/imports)
+    let features = fwgsl_parser::FeatureSet::from_flags(feature_flags);
+    fwgsl_parser::evaluate_features(&mut root_program, &features);
 
     // If the program has imports, use the module resolver
     let mut program = if has_imports(&root_program) {
@@ -173,11 +207,11 @@ fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool) {
     print!("{}", wgsl);
 }
 
-fn cmd_check(file: &str) {
+fn cmd_check(file: &str, feature_flags: &[String]) {
     let source = read_file(file);
 
     let mut parser = fwgsl_parser::parser::Parser::new(&source);
-    let root_program = parser.parse_program();
+    let mut root_program = parser.parse_program();
 
     let mut has_errors = false;
 
@@ -189,6 +223,10 @@ fn cmd_check(file: &str) {
         );
         has_errors = true;
     }
+
+    // Evaluate feature flags (prune conditional declarations/imports)
+    let features = fwgsl_parser::FeatureSet::from_flags(feature_flags);
+    fwgsl_parser::evaluate_features(&mut root_program, &features);
 
     // If the program has imports, use the module resolver
     let mut program = if has_imports(&root_program) {

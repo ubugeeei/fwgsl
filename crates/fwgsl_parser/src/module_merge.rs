@@ -60,7 +60,8 @@ fn decl_name(decl: &Decl) -> Option<&str> {
         | Decl::ExternDecl { name, .. } => Some(name.as_str()),
         Decl::ImplDecl { .. }
         | Decl::ModuleDecl { .. }
-        | Decl::ImportDecl { .. } => None,
+        | Decl::ImportDecl { .. }
+        | Decl::CfgDecl { .. } => None,
     }
 }
 

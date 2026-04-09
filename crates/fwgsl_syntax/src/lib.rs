@@ -145,6 +145,8 @@ pub enum SyntaxKind {
     KwLoop,
     KwAs,
     KwPrivate,
+    KwWhen,
+    KwCfg,
 
     // ── CST node kinds ─────────────────────────────────────────────
     SourceFile,
@@ -242,7 +244,7 @@ pub enum SyntaxKind {
 
 impl SyntaxKind {
     const FIRST_KEYWORD: Self = SyntaxKind::KwModule;
-    const LAST_KEYWORD: Self = SyntaxKind::KwPrivate;
+    const LAST_KEYWORD: Self = SyntaxKind::KwCfg;
 
     const FIRST_OPERATOR: Self = SyntaxKind::Plus;
     const LAST_OPERATOR: Self = SyntaxKind::PipeForward;
@@ -323,6 +325,8 @@ pub fn keyword_from_str(s: &str) -> Option<SyntaxKind> {
         "loop" => Some(SyntaxKind::KwLoop),
         "as" => Some(SyntaxKind::KwAs),
         "private" => Some(SyntaxKind::KwPrivate),
+        "when" => Some(SyntaxKind::KwWhen),
+        "cfg" => Some(SyntaxKind::KwCfg),
         _ => None,
     }
 }
@@ -456,6 +460,8 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::KwLoop => "'loop'",
             SyntaxKind::KwAs => "'as'",
             SyntaxKind::KwPrivate => "'private'",
+            SyntaxKind::KwWhen => "'when'",
+            SyntaxKind::KwCfg => "'cfg'",
 
             // CST node kinds
             SyntaxKind::SourceFile => "source file",

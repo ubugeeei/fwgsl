@@ -42,6 +42,7 @@ cargo run -p fwgsl_cli -- check examples/prelude-utils.fwgsl
 | `prelude-utils.fwgsl` | `$map`, `$fold`, `$zip`, `$flatMap`, `$all`, `$any` | `check` |
 | `record-update.fwgsl` | Record update syntax: `p { x = p.x + dx }` | `compile` |
 | `modules/Main.fwgsl` | Multi-file module system (imports `Particle`, `Math.Vec`) | `compile` |
+| `conditional-compilation.fwgsl` | Conditional compilation with `when cfg.x`, `else when`, `not`, `&&`, `\|\|` | `check --feature debug` |
 | `enlightenment-stars.fwgsl` | Creative line/star/enlightenment animated compute sketch using new surface syntax | `check` |
 
 ## Notes

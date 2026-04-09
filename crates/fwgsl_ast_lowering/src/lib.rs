@@ -273,8 +273,8 @@ impl AstLowering {
                     });
                 }
                 Decl::TypeSig { .. } | Decl::TypeAlias { .. } | Decl::ExternDecl { .. } => {}
-                Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {
-                    // Module/import declarations are handled at the module resolution level.
+                Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } | Decl::CfgDecl { .. } => {
+                    // Module/import/cfg declarations are handled at the module resolution level.
                 }
                 Decl::TraitDecl { .. } => {
                     // Trait declarations are type-level only — no HIR output.

@@ -1,0 +1,47 @@
+-- Conditional compilation example for fwgsl.
+--
+-- Compile with different feature flags to get different output:
+--   fwgsl compile conditional-compilation.fwgsl --feature debug
+--   fwgsl compile conditional-compilation.fwgsl --feature msaa
+--   fwgsl compile conditional-compilation.fwgsl --feature debug --feature msaa
+
+-- Conditional import: only import Debug module when debug is enabled
+import Debug when cfg.debug
+
+-- Block form: group related declarations behind one flag
+when cfg.debug
+  debugColor : Vec<4, F32> -> Vec<4, F32>
+  debugColor c = [1.0, 0.0, 1.0, 1.0]
+
+-- Either/or blocks: different implementations per flag
+when cfg.msaa
+  sampleCount : I32
+  sampleCount = 4
+else
+  sampleCount : I32
+  sampleCount = 1
+
+-- Regular declarations are always included
+baseColor : Vec<4, F32>
+baseColor = [0.2, 0.3, 0.8, 1.0]
+
+-- Chained else-when for tiered configurations
+when cfg.tier3
+  maxLights : I32
+  maxLights = 64
+else when cfg.tier2
+  maxLights : I32
+  maxLights = 16
+else
+  maxLights : I32
+  maxLights = 4
+
+-- Combine predicates: not, &&, ||
+when cfg.debug && cfg.msaa
+  debugSamples : I32
+  debugSamples = sampleCount
+
+-- Negation
+when not cfg.mobile
+  highResScale : F32
+  highResScale = 2.0
