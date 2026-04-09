@@ -1087,7 +1087,47 @@ impl Parser {
         lhs
     }
 
+    /// Parse an atom followed by any postfix `.field` or `[index]` operators.
+    /// This ensures that `tint.a` is parsed as a single unit in application
+    /// contexts like `f x tint.a`.
     fn parse_atom(&mut self) -> Expr {
+        let mut expr = self.parse_atom_core();
+
+        // Consume postfix field access and indexing
+        loop {
+            self.skip_trivia();
+            match self.peek_non_trivia() {
+                SyntaxKind::Dot => {
+                    self.skip_trivia();
+                    self.bump(); // consume `.`
+                    self.skip_trivia();
+                    if self.at(SyntaxKind::Ident) {
+                        let field_tok = self.bump();
+                        let field = self.text_of(&field_tok).to_owned();
+                        let span = expr.span().merge(field_tok.span);
+                        expr = Expr::FieldAccess(Box::new(expr), field, span);
+                    } else {
+                        break;
+                    }
+                }
+                SyntaxKind::LBracket => {
+                    self.skip_trivia();
+                    self.bump(); // consume `[`
+                    self.skip_trivia();
+                    let index = self.parse_expr();
+                    self.skip_trivia();
+                    self.expect(SyntaxKind::RBracket);
+                    let span = expr.span().merge(self.span_from(expr.span().start));
+                    expr = Expr::Index(Box::new(expr), Box::new(index), span);
+                }
+                _ => break,
+            }
+        }
+
+        expr
+    }
+
+    fn parse_atom_core(&mut self) -> Expr {
         self.skip_trivia();
 
         match self.peek() {

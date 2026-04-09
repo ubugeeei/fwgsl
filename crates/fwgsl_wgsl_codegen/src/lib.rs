@@ -115,6 +115,12 @@ impl WgslEmitter {
             self.newline();
         }
 
+        // Emit global bindings (resources)
+        for g in &program.globals {
+            self.emit_global(g);
+            self.newline();
+        }
+
         // Emit functions
         for f in &program.functions {
             self.emit_function(f);
@@ -149,6 +155,27 @@ impl WgslEmitter {
         }
         self.indent -= 1;
         self.write("}");
+        self.newline();
+    }
+
+    // -----------------------------------------------------------------------
+    // Global variable emission (resource bindings)
+    // -----------------------------------------------------------------------
+
+    fn emit_global(&mut self, g: &MirGlobal) {
+        let addr_space = match g.address_space {
+            AddressSpace::Uniform => "uniform",
+            AddressSpace::StorageRead => "storage, read",
+            AddressSpace::StorageReadWrite => "storage, read_write",
+        };
+        self.write(&format!(
+            "@group({}) @binding({}) var<{}> {}: {};",
+            g.group,
+            g.binding,
+            addr_space,
+            sanitize_identifier(&g.name),
+            self.format_type(&g.ty),
+        ));
         self.newline();
     }
 
@@ -303,6 +330,16 @@ impl WgslEmitter {
                 self.write_indent();
                 self.write(&format!("{} = ", sanitize_identifier(name)));
                 self.emit_expr(expr);
+                self.write(";");
+                self.newline();
+            }
+            MirStmt::IndexAssign(base, index, value) => {
+                self.write_indent();
+                self.emit_expr(base);
+                self.write("[");
+                self.emit_expr(index);
+                self.write("] = ");
+                self.emit_expr(value);
                 self.write(";");
                 self.newline();
             }
@@ -505,6 +542,7 @@ mod tests {
     fn test_emit_simple_function() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "add".to_string(),
                 params: vec![
@@ -538,6 +576,7 @@ mod tests {
     fn test_emit_void_function() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "do_nothing".to_string(),
                 params: vec![],
@@ -573,6 +612,7 @@ mod tests {
                     },
                 ],
             }],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![],
         };
@@ -588,6 +628,7 @@ mod tests {
     fn test_emit_compute_entry_point() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "main".to_string(),
@@ -626,6 +667,7 @@ mod tests {
     fn test_emit_vertex_entry_point() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "vs_main".to_string(),
@@ -660,6 +702,7 @@ mod tests {
     fn test_emit_fragment_entry_point() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "fs_main".to_string(),
@@ -692,6 +735,7 @@ mod tests {
     fn test_emit_if_statement() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "abs_val".to_string(),
                 params: vec![MirParam {
@@ -729,6 +773,7 @@ mod tests {
     fn test_emit_if_without_else() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "maybe_inc".to_string(),
                 params: vec![MirParam {
@@ -776,6 +821,7 @@ mod tests {
     fn test_emit_let_and_var() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "f".to_string(),
                 params: vec![],
@@ -802,6 +848,7 @@ mod tests {
     fn test_emit_literals() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "lits".to_string(),
                 params: vec![],
@@ -836,6 +883,7 @@ mod tests {
     fn test_emit_call_expression() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "f".to_string(),
                 params: vec![],
@@ -873,6 +921,7 @@ mod tests {
                     },
                 ],
             }],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "make_vec".to_string(),
                 params: vec![],
@@ -897,6 +946,7 @@ mod tests {
     fn test_emit_field_access() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "get_x".to_string(),
                 params: vec![MirParam {
@@ -925,6 +975,7 @@ mod tests {
     fn test_emit_index_access() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "get_elem".to_string(),
                 params: vec![MirParam {
@@ -953,6 +1004,7 @@ mod tests {
     fn test_emit_cast() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "to_float".to_string(),
                 params: vec![MirParam {
@@ -977,6 +1029,7 @@ mod tests {
     fn test_emit_block_statement() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "f".to_string(),
                 params: vec![],
@@ -999,6 +1052,7 @@ mod tests {
     fn test_emit_mat_type() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "identity".to_string(),
                 params: vec![],
@@ -1027,6 +1081,7 @@ mod tests {
                     ty: MirType::Array(Box::new(MirType::F32), 16),
                 }],
             }],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![],
         };
@@ -1039,6 +1094,7 @@ mod tests {
     fn test_emit_compute_default_workgroup() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "main".to_string(),
@@ -1073,6 +1129,7 @@ mod tests {
                     },
                 ],
             }],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "step_particle".to_string(),
                 params: vec![

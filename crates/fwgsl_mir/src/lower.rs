@@ -9,27 +9,122 @@
 //! - Simple enum ADTs map to u32 tag values
 //! - Record ADTs produce MirStruct definitions
 
+use std::collections::HashMap;
+
 use fwgsl_hir::*;
 use fwgsl_typechecker::Ty;
 
 use crate::*;
 
+/// Context for HIR → MIR lowering, carrying data type information.
+struct LowerCtx {
+    /// Map from data type name to its constructors
+    data_types: HashMap<String, Vec<HirConstructor>>,
+    /// Map from constructor name to (data_type_name, tag, fields)
+    constructors: HashMap<String, (String, u32, Vec<(String, Ty)>)>,
+}
+
+impl LowerCtx {
+    fn new(hir: &HirProgram) -> Self {
+        let mut data_types = HashMap::new();
+        let mut constructors = HashMap::new();
+        for dt in &hir.data_types {
+            data_types.insert(dt.name.clone(), dt.constructors.clone());
+            for con in &dt.constructors {
+                constructors.insert(
+                    con.name.clone(),
+                    (dt.name.clone(), con.tag, con.fields.clone()),
+                );
+            }
+        }
+        LowerCtx {
+            data_types,
+            constructors,
+        }
+    }
+
+    fn is_sum_type(&self, name: &str) -> bool {
+        self.data_types
+            .get(name)
+            .is_some_and(|cons| cons.len() > 1)
+    }
+
+    /// Check if a data type has any constructor with fields.
+    fn has_fields(&self, name: &str) -> bool {
+        self.data_types
+            .get(name)
+            .is_some_and(|cons| cons.iter().any(|c| !c.fields.is_empty()))
+    }
+
+    /// Check if a name is a pure enum (sum type with no fields on any constructor).
+    fn is_pure_enum(&self, name: &str) -> bool {
+        self.data_types
+            .get(name)
+            .is_some_and(|cons| cons.len() > 1 && cons.iter().all(|c| c.fields.is_empty()))
+    }
+
+    /// Resolve a type constructor name to MirType, taking ADTs into account.
+    fn resolve_type_con(&self, name: &str) -> Option<MirType> {
+        if self.is_pure_enum(name) {
+            Some(MirType::U32)
+        } else if self.is_sum_type(name) && self.has_fields(name) {
+            Some(MirType::Struct(name.to_string()))
+        } else if self.data_types.contains_key(name) {
+            // Single-constructor type — use struct if it has fields, otherwise u32
+            if self.has_fields(name) {
+                Some(MirType::Struct(name.to_string()))
+            } else {
+                Some(MirType::U32)
+            }
+        } else {
+            None // Not a known data type
+        }
+    }
+}
+
 /// Lower a complete HIR program to MIR.
 pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
+    let ctx = LowerCtx::new(hir);
     let mut errors = Vec::new();
     let mut structs = Vec::new();
+    let mut globals = Vec::new();
     let mut functions = Vec::new();
     let mut entry_points = Vec::new();
 
-    // Lower data types to structs (record ADTs)
+    // Lower data types to structs
     for dt in &hir.data_types {
-        for con in &dt.constructors {
+        if dt.constructors.len() > 1 && dt.constructors.iter().any(|c| !c.fields.is_empty()) {
+            // Sum type with fields: emit one struct with tag + union of fields
+            let mut fields = vec![MirField {
+                name: "tag".to_string(),
+                ty: MirType::U32,
+            }];
+            // Collect all field names/types from the largest constructor
+            let max_con = dt
+                .constructors
+                .iter()
+                .max_by_key(|c| c.fields.len())
+                .unwrap();
+            for (name, ty) in &max_con.fields {
+                let mir_ty = ty_to_mir_type_with_ctx(ty, Some(&ctx)).unwrap_or(MirType::I32);
+                fields.push(MirField {
+                    name: name.clone(),
+                    ty: mir_ty,
+                });
+            }
+            structs.push(MirStruct {
+                name: dt.name.clone(),
+                fields,
+            });
+        } else if dt.constructors.len() == 1 {
+            // Single constructor (record type): emit struct with just its fields
+            let con = &dt.constructors[0];
             if !con.fields.is_empty() {
                 let fields = con
                     .fields
                     .iter()
                     .map(|(name, ty)| {
-                        let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+                        let mir_ty = ty_to_mir_type_with_ctx(ty, Some(&ctx)).unwrap_or(MirType::I32);
                         MirField {
                             name: name.clone(),
                             ty: mir_ty,
@@ -37,16 +132,24 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
                     })
                     .collect();
                 structs.push(MirStruct {
-                    name: con.name.clone(),
+                    name: dt.name.clone(),
                     fields,
                 });
             }
+        }
+        // Pure enums (all nullary constructors) → no struct needed, use u32
+    }
+
+    // Lower resource declarations to global bindings
+    for res in &hir.resources {
+        if let Some(global) = lower_hir_resource(res) {
+            globals.push(global);
         }
     }
 
     // Lower functions
     for f in &hir.functions {
-        match lower_hir_function(f) {
+        match lower_hir_function(f, &ctx) {
             Ok(mir_f) => functions.push(mir_f),
             Err(e) => errors.push(e),
         }
@@ -54,7 +157,7 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
 
     // Lower entry points
     for ep in &hir.entry_points {
-        match lower_hir_entry_point(ep) {
+        match lower_hir_entry_point(ep, &ctx) {
             Ok(mir_ep) => entry_points.push(mir_ep),
             Err(e) => errors.push(e),
         }
@@ -63,6 +166,7 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
     if errors.is_empty() {
         Ok(MirProgram {
             structs,
+            globals,
             functions,
             entry_points,
         })
@@ -71,8 +175,13 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
     }
 }
 
-/// Convert a Ty to MirType.
+/// Convert a Ty to MirType (without ADT context).
 pub fn ty_to_mir_type(ty: &Ty) -> Result<MirType, String> {
+    ty_to_mir_type_with_ctx(ty, None)
+}
+
+/// Convert a Ty to MirType, optionally using ADT context.
+fn ty_to_mir_type_with_ctx(ty: &Ty, ctx: Option<&LowerCtx>) -> Result<MirType, String> {
     let ty = fwgsl_typechecker::normalize_type_aliases(ty);
 
     match &ty {
@@ -82,28 +191,47 @@ pub fn ty_to_mir_type(ty: &Ty) -> Result<MirType, String> {
             "F32" => Ok(MirType::F32),
             "Bool" => Ok(MirType::Bool),
             "()" => Ok(MirType::Unit),
-            other => Ok(MirType::Struct(other.to_string())),
+            other => {
+                if let Some(ctx) = ctx {
+                    if let Some(mir_ty) = ctx.resolve_type_con(other) {
+                        return Ok(mir_ty);
+                    }
+                }
+                Ok(MirType::Struct(other.to_string()))
+            }
         },
         Ty::App(f, arg) => match f.as_ref() {
             Ty::App(ff, n) => match (ff.as_ref(), n.as_ref()) {
                 (Ty::App(fff, nn), Ty::Nat(m)) => {
                     if let (Ty::Con(name), Ty::Nat(n)) = (fff.as_ref(), nn.as_ref()) {
                         if name == "Mat" {
-                            let scalar = ty_to_mir_type(arg)?;
+                            let scalar = ty_to_mir_type_with_ctx(arg, ctx)?;
                             return Ok(MirType::Mat(*n as u8, *m as u8, Box::new(scalar)));
                         }
                     }
                     Err(format!("Cannot convert to MIR type: {}", ty))
                 }
                 (Ty::Con(name), Ty::Nat(n)) if name == "Vec" => {
-                    let scalar = ty_to_mir_type(arg)?;
+                    let scalar = ty_to_mir_type_with_ctx(arg, ctx)?;
                     Ok(MirType::Vec(*n as u8, Box::new(scalar)))
                 }
                 (Ty::Con(name), Ty::Nat(n)) if name == "Tensor" => {
-                    let elem = ty_to_mir_type(arg)?;
+                    let elem = ty_to_mir_type_with_ctx(arg, ctx)?;
                     let len = u32::try_from(*n)
                         .map_err(|_| format!("Tensor length out of range for MIR: {}", n))?;
                     Ok(MirType::Array(Box::new(elem), len))
+                }
+                // Handle surface syntax order: Tensor<T, N> (Array<T, N>)
+                // where n is the elem type and arg is Nat
+                (Ty::Con(name), _elem_ty) if name == "Tensor" => {
+                    if let Ty::Nat(len) = arg.as_ref() {
+                        let elem = ty_to_mir_type_with_ctx(n, ctx)?;
+                        let len = u32::try_from(*len)
+                            .map_err(|_| format!("Tensor length out of range for MIR: {}", len))?;
+                        Ok(MirType::Array(Box::new(elem), len))
+                    } else {
+                        Err(format!("Cannot convert to MIR type: {}", ty))
+                    }
                 }
                 _ => Err(format!("Cannot convert to MIR type: {}", ty)),
             },
@@ -123,22 +251,22 @@ pub fn ty_to_mir_type(ty: &Ty) -> Result<MirType, String> {
     }
 }
 
-fn lower_hir_function(f: &HirFunction) -> Result<MirFunction, String> {
+fn lower_hir_function(f: &HirFunction, ctx: &LowerCtx) -> Result<MirFunction, String> {
+    let resolve = |ty: &Ty| ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
     let params: Vec<MirParam> = f
         .params
         .iter()
         .map(|(name, ty)| {
-            let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
             MirParam {
                 name: name.clone(),
-                ty: mir_ty,
+                ty: resolve(ty),
             }
         })
         .collect();
 
-    let return_ty = ty_to_mir_type(&f.return_ty).unwrap_or(MirType::I32);
+    let return_ty = resolve(&f.return_ty);
 
-    let (stmts, return_expr) = lower_hir_expr_to_body(&f.body)?;
+    let (stmts, return_expr) = lower_hir_expr_to_body(&f.body, ctx)?;
 
     Ok(MirFunction {
         name: f.name.clone(),
@@ -149,7 +277,7 @@ fn lower_hir_function(f: &HirFunction) -> Result<MirFunction, String> {
     })
 }
 
-fn lower_hir_entry_point(ep: &HirEntryPoint) -> Result<MirEntryPoint, String> {
+fn lower_hir_entry_point(ep: &HirEntryPoint, ctx: &LowerCtx) -> Result<MirEntryPoint, String> {
     // Parse stage and workgroup_size from attributes
     let mut stage = ShaderStage::Compute;
     let mut workgroup_size = None;
@@ -170,7 +298,7 @@ fn lower_hir_entry_point(ep: &HirEntryPoint) -> Result<MirEntryPoint, String> {
         }
     }
 
-    let (mut stmts, return_expr) = lower_hir_expr_to_body(&ep.body)?;
+    let (mut stmts, return_expr) = lower_hir_expr_to_body(&ep.body, ctx)?;
 
     // For compute shaders, remap user parameters to builtin bindings.
     // The first parameter becomes `i32(_gid.x)` via global_invocation_id.
@@ -205,7 +333,7 @@ fn lower_hir_entry_point(ep: &HirEntryPoint) -> Result<MirEntryPoint, String> {
             .params
             .iter()
             .map(|(name, ty)| {
-                let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+                let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
                 MirParam {
                     name: name.clone(),
                     ty: mir_ty,
@@ -218,7 +346,7 @@ fn lower_hir_entry_point(ep: &HirEntryPoint) -> Result<MirEntryPoint, String> {
     let return_ty = if stage == ShaderStage::Compute {
         MirType::Unit
     } else {
-        ty_to_mir_type(&ep.return_ty).unwrap_or(MirType::Unit)
+        ty_to_mir_type_with_ctx(&ep.return_ty, Some(ctx)).unwrap_or(MirType::Unit)
     };
 
     let return_expr = if return_ty == MirType::Unit {
@@ -241,39 +369,39 @@ fn lower_hir_entry_point(ep: &HirEntryPoint) -> Result<MirEntryPoint, String> {
 
 /// Lower a HIR expression that forms a function body.
 /// Returns (statements, final_return_expression).
-fn lower_hir_expr_to_body(expr: &HirExpr) -> Result<(Vec<MirStmt>, MirExpr), String> {
-    let (stmts, result_expr) = lower_hir_expr_to_stmts(expr)?;
+fn lower_hir_expr_to_body(expr: &HirExpr, ctx: &LowerCtx) -> Result<(Vec<MirStmt>, MirExpr), String> {
+    let (stmts, result_expr) = lower_hir_expr_to_stmts(expr, ctx)?;
     Ok((stmts, result_expr))
 }
 
 /// Lower a HIR expression, potentially producing statements (for Let, If, Case).
 /// Returns (prefix_statements, result_expression).
-fn lower_hir_expr_to_stmts(expr: &HirExpr) -> Result<(Vec<MirStmt>, MirExpr), String> {
+fn lower_hir_expr_to_stmts(expr: &HirExpr, ctx: &LowerCtx) -> Result<(Vec<MirStmt>, MirExpr), String> {
     match expr {
         HirExpr::Let(binds, body, _ty, _span) => {
             let mut stmts = Vec::new();
             for (name, bind_expr) in binds {
-                let (mut bind_stmts, bind_val) = lower_hir_expr_to_stmts(bind_expr)?;
+                let (mut bind_stmts, bind_val) = lower_hir_expr_to_stmts(bind_expr, ctx)?;
                 stmts.append(&mut bind_stmts);
-                let bind_ty = ty_to_mir_type(bind_expr.ty()).unwrap_or(MirType::I32);
+                let bind_ty = ty_to_mir_type_with_ctx(bind_expr.ty(), Some(ctx)).unwrap_or(MirType::I32);
                 stmts.push(MirStmt::Let(name.clone(), bind_ty, bind_val));
             }
-            let (mut body_stmts, body_expr) = lower_hir_expr_to_stmts(body)?;
+            let (mut body_stmts, body_expr) = lower_hir_expr_to_stmts(body, ctx)?;
             stmts.append(&mut body_stmts);
             Ok((stmts, body_expr))
         }
 
         HirExpr::If(cond, then_expr, else_expr, ty, _span) => {
-            let cond_mir = lower_hir_expr(cond)?;
-            let result_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+            let cond_mir = lower_hir_expr(cond, ctx)?;
+            let result_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
 
             // Flatten to: var tmp; if (cond) { tmp = then } else { tmp = else }; tmp
             let tmp_name = format!("_if_tmp_{}", _span.start);
 
-            let (mut then_stmts, then_val) = lower_hir_expr_to_stmts(then_expr)?;
+            let (mut then_stmts, then_val) = lower_hir_expr_to_stmts(then_expr, ctx)?;
             then_stmts.push(MirStmt::Assign(tmp_name.clone(), then_val));
 
-            let (mut else_stmts, else_val) = lower_hir_expr_to_stmts(else_expr)?;
+            let (mut else_stmts, else_val) = lower_hir_expr_to_stmts(else_expr, ctx)?;
             else_stmts.push(MirStmt::Assign(tmp_name.clone(), else_val));
 
             let stmts = vec![
@@ -289,10 +417,10 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr) -> Result<(Vec<MirStmt>, MirExpr), St
         }
 
         HirExpr::Case(scrutinee, arms, ty, _span) => {
-            let result_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+            let result_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
             let tmp_name = format!("_case_tmp_{}", _span.start);
-            let scrut_mir = lower_hir_expr(scrutinee)?;
-            let scrut_ty = ty_to_mir_type(scrutinee.ty()).unwrap_or(MirType::I32);
+            let scrut_mir = lower_hir_expr(scrutinee, ctx)?;
+            let scrut_ty = ty_to_mir_type_with_ctx(scrutinee.ty(), Some(ctx)).unwrap_or(MirType::I32);
             let scrut_name = format!("_scrut_{}", _span.start);
 
             let mut stmts = vec![
@@ -305,7 +433,7 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr) -> Result<(Vec<MirStmt>, MirExpr), St
             ];
 
             // Build if-else chain from arms
-            let if_chain = lower_case_arms(&scrut_name, &scrut_ty, arms, &tmp_name)?;
+            let if_chain = lower_case_arms(&scrut_name, &scrut_ty, arms, &tmp_name, ctx)?;
 
             if let Some(stmt) = if_chain {
                 stmts.push(stmt);
@@ -314,16 +442,32 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr) -> Result<(Vec<MirStmt>, MirExpr), St
             Ok((stmts, MirExpr::Var(tmp_name, result_ty)))
         }
 
+        // Check for writeAt calls which become IndexAssign statements
+        HirExpr::App(_, _, _, _) => {
+            let (func_name, args) = flatten_app(expr);
+            if func_name == "writeAt" && args.len() == 3 {
+                let buf = lower_hir_expr(args[0], ctx)?;
+                let idx = lower_hir_expr(args[1], ctx)?;
+                let val = lower_hir_expr(args[2], ctx)?;
+                let stmt = MirStmt::IndexAssign(buf, idx, val);
+                // writeAt returns (), so the result expression is a dummy
+                Ok((vec![stmt], MirExpr::Lit(MirLit::I32(0))))
+            } else {
+                let mir_expr = lower_hir_expr(expr, ctx)?;
+                Ok((vec![], mir_expr))
+            }
+        }
+
         // Simple expressions produce no statements
         _ => {
-            let mir_expr = lower_hir_expr(expr)?;
+            let mir_expr = lower_hir_expr(expr, ctx)?;
             Ok((vec![], mir_expr))
         }
     }
 }
 
 /// Lower a pure HIR expression to a MIR expression (no statements needed).
-fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
+fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
     match expr {
         HirExpr::Lit(lit, ty, _span) => {
             let mir_lit = lower_hir_lit(lit, ty);
@@ -331,14 +475,14 @@ fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
         }
 
         HirExpr::Var(name, ty, _span) => {
-            let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
             Ok(MirExpr::Var(name.clone(), mir_ty))
         }
 
         HirExpr::BinOp(op, lhs, rhs, ty, _span) => {
-            let mir_lhs = lower_hir_expr(lhs)?;
-            let mir_rhs = lower_hir_expr(rhs)?;
-            let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+            let mir_lhs = lower_hir_expr(lhs, ctx)?;
+            let mir_rhs = lower_hir_expr(rhs, ctx)?;
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
             let mir_op = lower_binop(op);
             Ok(MirExpr::BinOp(
                 mir_op,
@@ -352,8 +496,8 @@ fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
             // Flatten curried applications: App(App(f, a), b) -> Call(f, [a, b])
             let (func_name, args) = flatten_app(expr);
             let mir_args: Result<Vec<MirExpr>, String> =
-                args.iter().map(|a| lower_hir_expr(a)).collect();
-            let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+                args.iter().map(|a| lower_hir_expr(a, ctx)).collect();
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
             let mir_args = mir_args?;
 
             match (func_name.as_str(), mir_args.as_slice()) {
@@ -383,11 +527,18 @@ fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
                         mir_ty,
                     ))
                 }
-                ("$atan", [y, x]) => Ok(MirExpr::Call(
+                ("$atan", [y, x]) | ("$atan2", [y, x]) => Ok(MirExpr::Call(
                     "atan2".to_string(),
                     vec![y.clone(), x.clone()],
                     mir_ty,
                 )),
+                ("load", [arg]) => {
+                    // load is identity — just pass through the argument
+                    Ok(arg.clone())
+                }
+                ("toF32", [arg]) => {
+                    Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::F32))
+                }
                 ("$splat2", [arg]) => Ok(MirExpr::Call(
                     "$vec2".to_string(),
                     vec![arg.clone(), arg.clone()],
@@ -423,25 +574,47 @@ fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
                     "w".to_string(),
                     mir_ty,
                 )),
-                _ => Ok(MirExpr::Call(func_name, mir_args, mir_ty)),
+                _ => {
+                    // Check if this is a constructor call for a sum type with fields
+                    if let Some((dt_name, tag, _fields)) = ctx.constructors.get(func_name.as_str()) {
+                        if ctx.is_sum_type(dt_name) && ctx.has_fields(dt_name) {
+                            // Emit as DataType struct construction: DataType(tag, args...)
+                            let mut all_args = vec![MirExpr::Lit(MirLit::U32(*tag))];
+                            all_args.extend(mir_args);
+                            return Ok(MirExpr::ConstructStruct(dt_name.clone(), all_args));
+                        }
+                    }
+                    Ok(MirExpr::Call(func_name, mir_args, mir_ty))
+                }
             }
         }
 
         HirExpr::ConstructorCall(name, _tag, args, _ty, _span) => {
+            // Check if this constructor belongs to a sum type with fields
+            if let Some((dt_name, tag, _fields)) = ctx.constructors.get(name.as_str()) {
+                if ctx.is_sum_type(dt_name) && ctx.has_fields(dt_name) {
+                    // Emit as DataType struct: DataType(tag, field0, ...)
+                    let mut all_args = vec![MirExpr::Lit(MirLit::U32(*tag))];
+                    for arg in args {
+                        all_args.push(lower_hir_expr(arg, ctx)?);
+                    }
+                    return Ok(MirExpr::ConstructStruct(dt_name.clone(), all_args));
+                }
+            }
             if args.is_empty() {
                 // Nullary constructor: emit as u32 tag literal
                 Ok(MirExpr::Lit(MirLit::U32(*_tag)))
             } else {
                 // Record constructor: emit as struct construction
                 let mir_args: Result<Vec<MirExpr>, String> =
-                    args.iter().map(lower_hir_expr).collect();
+                    args.iter().map(|a| lower_hir_expr(a, ctx)).collect();
                 Ok(MirExpr::ConstructStruct(name.clone(), mir_args?))
             }
         }
 
         HirExpr::FieldAccess(expr, field, ty, _span) => {
-            let mir_expr = lower_hir_expr(expr)?;
-            let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+            let mir_expr = lower_hir_expr(expr, ctx)?;
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
             Ok(MirExpr::FieldAccess(
                 Box::new(mir_expr),
                 field.clone(),
@@ -449,9 +622,9 @@ fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
             ))
         }
         HirExpr::Index(base, index, ty, _span) => {
-            let mir_base = lower_hir_expr(base)?;
-            let mir_index = lower_hir_expr(index)?;
-            let mir_ty = ty_to_mir_type(ty).unwrap_or(MirType::I32);
+            let mir_base = lower_hir_expr(base, ctx)?;
+            let mir_index = lower_hir_expr(index, ctx)?;
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
             Ok(MirExpr::Index(
                 Box::new(mir_base),
                 Box::new(mir_index),
@@ -460,16 +633,11 @@ fn lower_hir_expr(expr: &HirExpr) -> Result<MirExpr, String> {
         }
 
         HirExpr::Let(binds, body, _ty, _span) => {
-            // For Let in expression position, we need to lower it.
-            // This shouldn't normally happen since lower_hir_expr_to_stmts
-            // handles Let, but handle it gracefully.
             let _ = binds;
-            lower_hir_expr(body)
+            lower_hir_expr(body, ctx)
         }
 
         HirExpr::If(cond, then_expr, else_expr, _ty, _span) => {
-            // If in pure expression position: try to lower directly
-            // This may lose some semantics, but is a fallback
             let _ = (cond, then_expr, else_expr);
             Err("If-expression in pure expression context; use lower_hir_expr_to_stmts".into())
         }
@@ -513,6 +681,7 @@ fn lower_case_arms(
     scrut_ty: &MirType,
     arms: &[HirCaseArm],
     result_name: &str,
+    ctx: &LowerCtx,
 ) -> Result<Option<MirStmt>, String> {
     if arms.is_empty() {
         return Ok(None);
@@ -522,22 +691,59 @@ fn lower_case_arms(
     let mut result: Option<MirStmt> = None;
 
     for arm in arms.iter().rev() {
-        let (mut body_stmts, body_expr) = lower_hir_expr_to_stmts(&arm.body)?;
+        let (mut body_stmts, body_expr) = lower_hir_expr_to_stmts(&arm.body, ctx)?;
         body_stmts.push(MirStmt::Assign(result_name.to_string(), body_expr));
 
         match &arm.pattern {
             HirPattern::Wild | HirPattern::Var(_, _) => {
-                // Wildcard/var: always matches — becomes the fallback else branch.
-                // In our right-fold, the wildcard arm seen first (from the end)
-                // is the outermost else.
                 result = Some(MirStmt::Block(body_stmts));
             }
 
-            HirPattern::Constructor(_name, tag, _sub_pats) => {
-                // Match on tag: if (scrut == tag) { ... }
+            HirPattern::Constructor(con_name, tag, sub_pats) => {
+                // Bind pattern variables from the scrutinee's fields
+                let mut bindings = Vec::new();
+                if let Some((dt_name, _, con_fields)) = ctx.constructors.get(con_name.as_str()) {
+                    if ctx.is_sum_type(dt_name) && ctx.has_fields(dt_name) {
+                        // Sum type with fields: extract from struct fields
+                        for (i, pat) in sub_pats.iter().enumerate() {
+                            if let HirPattern::Var(var_name, var_ty) = pat {
+                                let field_name = if i < con_fields.len() {
+                                    con_fields[i].0.clone()
+                                } else {
+                                    format!("field{}", i)
+                                };
+                                let mir_ty = ty_to_mir_type_with_ctx(var_ty, Some(ctx)).unwrap_or(MirType::F32);
+                                bindings.push(MirStmt::Let(
+                                    var_name.clone(),
+                                    mir_ty.clone(),
+                                    MirExpr::FieldAccess(
+                                        Box::new(MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())),
+                                        field_name,
+                                        mir_ty,
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // Prepend bindings to the body
+                let mut full_body = bindings;
+                full_body.append(&mut body_stmts);
+
+                // Match on tag: if (scrut.tag == tag) { ... }
+                let scrut_tag = if scrut_ty == &MirType::U32 {
+                    MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())
+                } else {
+                    MirExpr::FieldAccess(
+                        Box::new(MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())),
+                        "tag".to_string(),
+                        MirType::U32,
+                    )
+                };
                 let cond = MirExpr::BinOp(
                     MirBinOp::Eq,
-                    Box::new(MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())),
+                    Box::new(scrut_tag),
                     Box::new(MirExpr::Lit(MirLit::U32(*tag))),
                     MirType::Bool,
                 );
@@ -549,7 +755,7 @@ fn lower_case_arms(
                     None => vec![],
                 };
 
-                result = Some(MirStmt::If(cond, body_stmts, else_stmts));
+                result = Some(MirStmt::If(cond, full_body, else_stmts));
             }
 
             HirPattern::Lit(hir_lit) => {
@@ -610,6 +816,49 @@ fn lower_hir_lit(lit: &HirLit, ty: &Ty) -> MirLit {
     }
 }
 
+/// Lower a HIR resource declaration to a MIR global binding.
+fn lower_hir_resource(res: &HirResource) -> Option<MirGlobal> {
+    // Parse the resource type: Uniform<T> or Storage<ReadWrite, T>
+    // The `ty` from the semantic analyzer is the full applied type.
+    // We need to extract the inner type and determine the address space.
+    let (address_space, inner_ty) = parse_resource_type(&res.ty, &res.address_space);
+    let mir_ty = ty_to_mir_type_with_ctx(&inner_ty, None).ok()?;
+    Some(MirGlobal {
+        name: res.name.clone(),
+        address_space,
+        ty: mir_ty,
+        group: res.group,
+        binding: res.binding,
+    })
+}
+
+/// Parse a resource type to extract address space and inner type.
+fn parse_resource_type(ty: &Ty, hint: &str) -> (AddressSpace, Ty) {
+    // Try to extract inner type from App(Con("Uniform"), inner)
+    // or App(App(Con("Storage"), mode), inner)
+    if let Ty::App(f, inner) = ty {
+        if let Ty::Con(name) = f.as_ref() {
+            if name == "Uniform" {
+                return (AddressSpace::Uniform, *inner.clone());
+            }
+        }
+        if let Ty::App(ff, _mode) = f.as_ref() {
+            if let Ty::Con(name) = ff.as_ref() {
+                if name == "Storage" {
+                    return (AddressSpace::StorageReadWrite, *inner.clone());
+                }
+            }
+        }
+    }
+    // Fallback based on hint string
+    let space = if hint.contains("Uniform") {
+        AddressSpace::Uniform
+    } else {
+        AddressSpace::StorageReadWrite
+    };
+    (space, ty.clone())
+}
+
 fn default_lit_for_type(ty: &MirType) -> MirLit {
     match ty {
         MirType::I32 => MirLit::I32(0),
@@ -668,6 +917,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
+            resources: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
@@ -703,6 +953,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
+            resources: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
@@ -777,6 +1028,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
+            resources: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");

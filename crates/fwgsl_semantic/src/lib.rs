@@ -17,6 +17,9 @@ pub struct SemanticAnalyzer {
     pub engine: InferEngine,
     pub constructors: HashMap<String, ConstructorInfo>,
     pub data_types: HashMap<String, DataTypeInfo>,
+    /// User-defined type aliases (e.g. `alias Float2 = Vec<2, F32>`).
+    /// Maps alias name → expanded Ty so they can be resolved during type conversion.
+    pub type_aliases: HashMap<String, Ty>,
 }
 
 /// Information about a data type collected during semantic analysis.
@@ -34,6 +37,7 @@ impl SemanticAnalyzer {
             engine: InferEngine::new(),
             constructors: HashMap::new(),
             data_types: HashMap::new(),
+            type_aliases: HashMap::new(),
         };
         sa.add_builtins();
         sa
@@ -351,7 +355,7 @@ impl SemanticAnalyzer {
             Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(a), Ty::Var(a))),
         );
         self.insert_builtin_names(
-            &["$max", "$min", "$step", "$mod", "$pow", "$reflect", "$atan"],
+            &["$max", "$min", "$step", "$mod", "$pow", "$reflect", "$atan", "$atan2"],
             binary_numeric,
         );
 
@@ -472,6 +476,32 @@ impl SemanticAnalyzer {
             &["$vecX", "$vecY", "$vecZ", "$vecW"],
             Scheme::poly(vec![dim, scalar], Ty::arrow(vector, Ty::Var(scalar))),
         );
+
+        // load : a -> a  (loads value from a Uniform/Storage resource)
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["load"],
+            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), Ty::Var(a))),
+        );
+
+        // toF32 : a -> F32  (numeric cast to F32)
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["toF32"],
+            Scheme::poly(vec![a], Ty::arrow(Ty::Var(a), Ty::f32())),
+        );
+
+        // writeAt : a -> b -> c -> ()  (write to storage resource at index)
+        let a = fresh_var_id(&mut self.engine);
+        let b = fresh_var_id(&mut self.engine);
+        let c = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["writeAt"],
+            Scheme::poly(
+                vec![a, b, c],
+                Ty::arrow(Ty::Var(a), Ty::arrow(Ty::Var(b), Ty::arrow(Ty::Var(c), Ty::unit()))),
+            ),
+        );
     }
 
     fn register_builtin_data_type(
@@ -512,6 +542,8 @@ impl SemanticAnalyzer {
         for decl in &program.decls {
             if let Decl::TypeAlias { name, ty, .. } = decl {
                 let alias_ty = self.convert_syntax_type(ty);
+                // Store the expanded type for alias resolution during type conversion
+                self.type_aliases.insert(name.clone(), alias_ty.ty.clone());
                 // Register the alias name as a type constructor
                 self.env.insert(name.clone(), alias_ty);
             }
@@ -525,7 +557,10 @@ impl SemanticAnalyzer {
             }
             if let Decl::ResourceDecl { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type(ty);
-                self.env.insert(name.clone(), inferred_ty);
+                // Unwrap the resource wrapper (Uniform<T> → T, Storage<_, T> → T)
+                // so that in the body, the variable has the inner type.
+                let inner_ty = unwrap_resource_type(&inferred_ty.ty);
+                self.env.insert(name.clone(), Scheme::mono(inner_ty));
             }
         }
 
@@ -650,7 +685,12 @@ impl SemanticAnalyzer {
         scope: &mut HashMap<String, TyVarId>,
     ) -> Ty {
         let ty = match ty {
-            Type::Con(name, _) => Ty::Con(name.clone()),
+            Type::Con(name, _) => {
+                if let Some(expanded) = self.type_aliases.get(name).cloned() {
+                    return expanded;
+                }
+                Ty::Con(name.clone())
+            }
             Type::Var(name, _) => Ty::Var(
                 *scope
                     .entry(name.clone())
@@ -705,6 +745,22 @@ impl SemanticAnalyzer {
             let ty = self.engine.fresh_var();
             self.bind_pattern(pat, &ty, &mut local_env);
             param_types.push(ty);
+        }
+
+        // If there's a declared type, pre-unify parameter types so that
+        // concrete type information (e.g. Vec dimensions) is available
+        // during body inference for swizzle resolution and field access.
+        if let Some(scheme) = self.env.lookup(name) {
+            let declared_ty = self.engine.instantiate(scheme);
+            let mut cursor = &declared_ty;
+            for param_ty in &param_types {
+                if let Ty::Arrow(from, to) = cursor {
+                    self.engine.unify(param_ty, from, span);
+                    cursor = to;
+                } else {
+                    break;
+                }
+            }
         }
 
         // Infer body type. `where` is desugared to a local `let`.
@@ -1181,6 +1237,27 @@ pub fn extract_vec_type(ty: &Ty) -> Option<(u8, Ty)> {
         }
     }
     None
+}
+
+/// Unwrap a resource wrapper type: Uniform<T> → T, Storage<_, T> → T.
+/// If the type is not a recognized wrapper, return it unchanged.
+fn unwrap_resource_type(ty: &Ty) -> Ty {
+    if let Ty::App(f, inner) = ty {
+        if let Ty::Con(name) = f.as_ref() {
+            if name == "Uniform" {
+                return *inner.clone();
+            }
+        }
+        // Storage<mode, T> = App(App(Con("Storage"), mode), T)
+        if let Ty::App(ff, _mode) = f.as_ref() {
+            if let Ty::Con(name) = ff.as_ref() {
+                if name == "Storage" {
+                    return *inner.clone();
+                }
+            }
+        }
+    }
+    ty.clone()
 }
 
 #[cfg(test)]

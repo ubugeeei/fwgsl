@@ -16,8 +16,27 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub struct MirProgram {
     pub structs: Vec<MirStruct>,
+    pub globals: Vec<MirGlobal>,
     pub functions: Vec<MirFunction>,
     pub entry_points: Vec<MirEntryPoint>,
+}
+
+/// A module-scope variable declaration (resource binding).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MirGlobal {
+    pub name: String,
+    pub address_space: AddressSpace,
+    pub ty: MirType,
+    pub group: u32,
+    pub binding: u32,
+}
+
+/// WGSL address space for global bindings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AddressSpace {
+    Uniform,
+    StorageRead,
+    StorageReadWrite,
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +202,8 @@ pub enum MirStmt {
     Var(String, MirType, MirExpr),
     /// `name = expr;`
     Assign(String, MirExpr),
+    /// `base[index] = expr;`
+    IndexAssign(MirExpr, MirExpr, MirExpr),
     /// `if (cond) { then } else { else }`
     If(MirExpr, Vec<MirStmt>, Vec<MirStmt>),
     /// `return expr;`

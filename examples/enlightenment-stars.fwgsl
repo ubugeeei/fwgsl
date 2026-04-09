@@ -31,7 +31,8 @@ lineMask uv thickness =
 
 starMask : Float2 -> F32 -> F32
 starMask uv radius =
-  let a = $atan2 ($vecY uv) ($vecX uv)
+  -- let a = $atan2 ($vecY uv) ($vecX uv)
+  let a = $atan2 uv.y uv.x
       r = $length uv
       spokes = $abs ($sin (a * 5.0))
   in 1.0 - $smoothstep (radius * spokes) (radius * spokes + 0.01) r

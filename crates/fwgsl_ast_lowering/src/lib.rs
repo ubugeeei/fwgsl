@@ -20,6 +20,7 @@ pub struct AstLowering {
     pub engine: InferEngine,
     pub constructors: HashMap<String, ConstructorInfo>,
     pub data_types: HashMap<String, fwgsl_semantic::DataTypeInfo>,
+    pub type_aliases: HashMap<String, Ty>,
 }
 
 impl AstLowering {
@@ -34,6 +35,7 @@ impl AstLowering {
             engine,
             constructors: sa.constructors.clone(),
             data_types: sa.data_types.clone(),
+            type_aliases: sa.type_aliases.clone(),
         };
         lowering.add_builtins();
         lowering
@@ -114,6 +116,7 @@ impl AstLowering {
         let mut functions = Vec::new();
         let mut data_types = Vec::new();
         let mut entry_points = Vec::new();
+        let mut resources = Vec::new();
 
         for decl in &program.decls {
             match decl {
@@ -146,7 +149,23 @@ impl AstLowering {
                 } => {
                     data_types.push(self.lower_data_decl(name, constructors));
                 }
-                Decl::TypeSig { .. } | Decl::TypeAlias { .. } | Decl::ResourceDecl { .. } => {}
+                Decl::ResourceDecl {
+                    name,
+                    ty,
+                    group,
+                    binding,
+                    ..
+                } => {
+                    let scheme = self.convert_syntax_type_scheme(ty);
+                    resources.push(fwgsl_hir::HirResource {
+                        name: name.clone(),
+                        ty: scheme.ty,
+                        address_space: self.extract_address_space(ty),
+                        group: *group,
+                        binding: *binding,
+                    });
+                }
+                Decl::TypeSig { .. } | Decl::TypeAlias { .. } => {}
             }
         }
 
@@ -154,6 +173,7 @@ impl AstLowering {
             functions,
             data_types,
             entry_points,
+            resources,
         }
     }
 
@@ -842,7 +862,12 @@ impl AstLowering {
         scope: &mut HashMap<String, TyVarId>,
     ) -> Ty {
         let ty = match ty {
-            Type::Con(name, _) => Ty::Con(name.clone()),
+            Type::Con(name, _) => {
+                if let Some(expanded) = self.type_aliases.get(name).cloned() {
+                    return expanded;
+                }
+                Ty::Con(name.clone())
+            }
             Type::Var(name, _) => Ty::Var(
                 *scope
                     .entry(name.clone())
@@ -882,7 +907,12 @@ impl AstLowering {
     /// Pure version that doesn't need &mut self (no fresh vars for type vars).
     fn convert_syntax_type_pure(&self, ty: &Type) -> Ty {
         let ty = match ty {
-            Type::Con(name, _) => Ty::Con(name.clone()),
+            Type::Con(name, _) => {
+                if let Some(expanded) = self.type_aliases.get(name) {
+                    return expanded.clone();
+                }
+                Ty::Con(name.clone())
+            }
             Type::Var(name, _) => Ty::Con(name.clone()),
             Type::Nat(n, _) => Ty::Nat(*n),
             Type::Arrow(a, b, _) => {
@@ -906,6 +936,16 @@ impl AstLowering {
             Type::Unit(_) => Ty::unit(),
         };
         normalize_type_aliases(&ty)
+    }
+
+    /// Extract the address space hint from a resource type syntax node.
+    fn extract_address_space(&self, ty: &Type) -> String {
+        match ty {
+            Type::Con(name, _) => name.clone(),
+            Type::App(f, _, _) => self.extract_address_space(f),
+            Type::Paren(inner, _) => self.extract_address_space(inner),
+            _ => "Uniform".to_string(),
+        }
     }
 
     pub fn has_errors(&self) -> bool {

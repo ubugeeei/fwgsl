@@ -14,9 +14,11 @@ data Shape
 extern resource output : Storage<ReadWrite, Array<F32, 1024>> @group 0 @binding 0
 extern resource params : Uniform<ShapeParams> @group 0 @binding 1
 
-main idx p m =
-  let uv = p.offset.xy
-      c = p.color.rgb
+scaleBy : F32 -> F32 -> F32
+scaleBy factor x = x * factor
+
+@compute @workgroup_size(64, 1, 1)
+main idx =
+  let p = load params
       v = idx |> toF32 |> scaleBy p.scale
-      x = m[0][1]
   in writeAt output idx v

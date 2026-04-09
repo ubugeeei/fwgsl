@@ -69,6 +69,10 @@ struct LayoutResolver {
     line_map: LineMap,
     /// Suppress the next semicolon insertion (right after a LayoutBraceOpen).
     suppress_next_semi: bool,
+    /// Nesting depth of explicit `{ }` braces. Layout tokens (virtual
+    /// semicolons / braces) are suppressed while inside explicit braces so
+    /// that multi-line record type declarations work correctly.
+    explicit_brace_depth: u32,
 }
 
 impl LayoutResolver {
@@ -80,6 +84,7 @@ impl LayoutResolver {
             indent_stack: Vec::new(),
             line_map: LineMap::build(source),
             suppress_next_semi: false,
+            explicit_brace_depth: 0,
         }
     }
 
@@ -139,6 +144,11 @@ impl LayoutResolver {
                     // Emit the newline
                     self.output.push(self.tokens[self.pos].clone());
                     self.pos += 1;
+
+                    // Inside explicit braces, do not insert layout tokens.
+                    if self.explicit_brace_depth > 0 {
+                        continue;
+                    }
 
                     // Look at the next non-trivia token to determine layout actions
                     if let Some(next_idx) = self.next_non_trivia_index(self.pos) {
@@ -212,6 +222,14 @@ impl LayoutResolver {
                 }
 
                 _ => {
+                    // Track explicit brace nesting so layout tokens are
+                    // suppressed inside `{ }` (e.g. record type declarations).
+                    if kind == SyntaxKind::LBrace {
+                        self.explicit_brace_depth += 1;
+                    } else if kind == SyntaxKind::RBrace {
+                        self.explicit_brace_depth = self.explicit_brace_depth.saturating_sub(1);
+                    }
+
                     // When we emit a real (non-trivia) token after a LayoutBraceOpen
                     // *on the same line*, the suppress flag is no longer needed because
                     // the next newline should produce a LayoutSemicolon normally.

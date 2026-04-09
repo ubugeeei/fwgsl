@@ -1102,6 +1102,7 @@ mod codegen_tests {
     fn codegen_simple_add_function() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "add".to_string(),
                 params: vec![
@@ -1139,6 +1140,7 @@ mod codegen_tests {
     fn codegen_compute_shader_entry_point() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "main".to_string(),
@@ -1197,6 +1199,7 @@ mod codegen_tests {
                     },
                 ],
             }],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "get_life".to_string(),
                 params: vec![MirParam {
@@ -1234,6 +1237,7 @@ mod codegen_tests {
     fn codegen_if_else_statement() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "max_val".to_string(),
                 params: vec![
@@ -1273,6 +1277,7 @@ mod codegen_tests {
     fn codegen_vertex_shader() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "vs_main".to_string(),
@@ -1309,6 +1314,7 @@ mod codegen_tests {
     fn codegen_fragment_shader() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![MirEntryPoint {
                 name: "fs_main".to_string(),
@@ -1573,6 +1579,7 @@ show c = match c
     fn mir_to_wgsl_round_trip_is_valid_text() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "identity".to_string(),
                 params: vec![MirParam {
@@ -1600,6 +1607,7 @@ show c = match c
     fn wgsl_codegen_no_spurious_semicolons() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "f".to_string(),
                 params: vec![],
@@ -1630,6 +1638,7 @@ show c = match c
     fn wgsl_codegen_proper_indentation() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![MirFunction {
                 name: "f".to_string(),
                 params: vec![MirParam {
@@ -1673,6 +1682,7 @@ show c = match c
     fn full_mir_program_with_all_shader_stages() {
         let program = MirProgram {
             structs: vec![],
+            globals: vec![],
             functions: vec![],
             entry_points: vec![
                 MirEntryPoint {
