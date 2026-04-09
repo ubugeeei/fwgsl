@@ -334,6 +334,7 @@ impl SemanticAnalyzer {
         self.insert_builtin_names(
             &[
                 "$sin", "$cos", "$abs", "$fract", "$floor", "$sign", "$sqrt", "negate",
+                "$log", "$log2", "$exp", "$ceil", "$round", "$trunc",
             ],
             unary_numeric,
         );
@@ -409,6 +410,48 @@ impl SemanticAnalyzer {
             Scheme::poly(
                 vec![dim, scalar],
                 Ty::arrow(vector.clone(), Ty::arrow(vector.clone(), Ty::Var(scalar))),
+            ),
+        );
+
+        // $distance : Vec<n, a> -> Vec<n, a> -> a
+        let dim = fresh_var_id(&mut self.engine);
+        let scalar = fresh_var_id(&mut self.engine);
+        let vector = Ty::app(
+            Ty::app(Ty::Con("Vec".into()), Ty::Var(dim)),
+            Ty::Var(scalar),
+        );
+        self.insert_builtin_names(
+            &["$distance"],
+            Scheme::poly(
+                vec![dim, scalar],
+                Ty::arrow(vector.clone(), Ty::arrow(vector.clone(), Ty::Var(scalar))),
+            ),
+        );
+
+        // $cross : Vec<3, a> -> Vec<3, a> -> Vec<3, a>
+        let a = fresh_var_id(&mut self.engine);
+        let vec3_ty = vector_ty(3, Ty::Var(a));
+        self.insert_builtin_names(
+            &["$cross"],
+            Scheme::poly(
+                vec![a],
+                Ty::arrow(vec3_ty.clone(), Ty::arrow(vec3_ty.clone(), vec3_ty.clone())),
+            ),
+        );
+
+        // $select : a -> a -> Bool -> a  (WGSL: select(false_val, true_val, cond))
+        let a = fresh_var_id(&mut self.engine);
+        self.insert_builtin_names(
+            &["$select"],
+            Scheme::poly(
+                vec![a],
+                Ty::arrow(
+                    Ty::Var(a),
+                    Ty::arrow(
+                        Ty::Var(a),
+                        Ty::arrow(Ty::Con("Bool".into()), Ty::Var(a)),
+                    ),
+                ),
             ),
         );
 
@@ -546,6 +589,9 @@ impl SemanticAnalyzer {
                 self.type_aliases.insert(name.clone(), alias_ty.ty.clone());
                 // Register the alias name as a type constructor
                 self.env.insert(name.clone(), alias_ty);
+            }
+            if let Decl::BitfieldDecl { base_ty, .. } = decl {
+                let _base = self.convert_syntax_type(base_ty);
             }
         }
 

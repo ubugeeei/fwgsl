@@ -59,6 +59,19 @@ pub enum Decl {
         binding: u32,
         span: Span,
     },
+    BitfieldDecl {
+        name: String,
+        base_ty: Type,
+        fields: Vec<BitfieldField>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct BitfieldField {
+    pub name: String,
+    pub width: u32,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -458,6 +471,7 @@ impl Parser {
             SyntaxKind::KwNewtype => Some(self.parse_newtype_decl()),
             SyntaxKind::KwExtern => Some(self.parse_extern_resource_decl()),
             SyntaxKind::KwResource => Some(self.parse_resource_decl(false)),
+            SyntaxKind::KwBitfield => Some(self.parse_bitfield_decl()),
             SyntaxKind::Ident => {
                 // Could be a type signature or function declaration.
                 // Look ahead: name then `:` means type sig; otherwise fun decl.
@@ -902,6 +916,63 @@ impl Parser {
             ty,
             group: group.unwrap_or(0),
             binding: binding.unwrap_or(0),
+            span,
+        }
+    }
+
+    /// Parse `bitfield Name : U32 = { field1 : width, field2 : width, ... }`
+    fn parse_bitfield_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwBitfield);
+        self.skip_trivia();
+
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+
+        // `: BaseType`
+        self.expect(SyntaxKind::Colon);
+        self.skip_trivia();
+        let base_ty = self.parse_type_atom();
+        self.skip_trivia();
+
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+
+        // `{ field : width, ... }`
+        self.expect(SyntaxKind::LBrace);
+        let mut fields = Vec::new();
+        loop {
+            self.skip_trivia();
+            if self.at(SyntaxKind::RBrace) || self.at_end() {
+                break;
+            }
+            let field_start = self.current_span().start;
+            let field_name_tok = self.expect(SyntaxKind::Ident);
+            let field_name = self.text_of(&field_name_tok).to_owned();
+            self.skip_trivia();
+            self.expect(SyntaxKind::Colon);
+            self.skip_trivia();
+            let width_tok = self.expect(SyntaxKind::IntLiteral);
+            let width = parse_int_literal(self.text_of(&width_tok)).max(0) as u32;
+            let field_span = self.span_from(field_start);
+            fields.push(BitfieldField {
+                name: field_name,
+                width,
+                span: field_span,
+            });
+            self.skip_trivia();
+            if !self.eat(SyntaxKind::Comma) {
+                break;
+            }
+        }
+        self.expect(SyntaxKind::RBrace);
+
+        let span = self.span_from(start);
+        Decl::BitfieldDecl {
+            name,
+            base_ty,
+            fields,
             span,
         }
     }

@@ -142,6 +142,7 @@ pub enum SyntaxKind {
     KwInfixr,
     KwInfix,
     KwDeriving,
+    KwBitfield,
 
     // ── CST node kinds ─────────────────────────────────────────────
     SourceFile,
@@ -239,7 +240,7 @@ pub enum SyntaxKind {
 
 impl SyntaxKind {
     const FIRST_KEYWORD: Self = SyntaxKind::KwModule;
-    const LAST_KEYWORD: Self = SyntaxKind::KwDeriving;
+    const LAST_KEYWORD: Self = SyntaxKind::KwBitfield;
 
     const FIRST_OPERATOR: Self = SyntaxKind::Plus;
     const LAST_OPERATOR: Self = SyntaxKind::PipeForward;
@@ -317,6 +318,7 @@ pub fn keyword_from_str(s: &str) -> Option<SyntaxKind> {
         "infixr" => Some(SyntaxKind::KwInfixr),
         "infix" => Some(SyntaxKind::KwInfix),
         "deriving" => Some(SyntaxKind::KwDeriving),
+        "bitfield" => Some(SyntaxKind::KwBitfield),
         _ => None,
     }
 }
@@ -447,6 +449,7 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::KwInfixr => "'infixr'",
             SyntaxKind::KwInfix => "'infix'",
             SyntaxKind::KwDeriving => "'deriving'",
+            SyntaxKind::KwBitfield => "'bitfield'",
 
             // CST node kinds
             SyntaxKind::SourceFile => "source file",

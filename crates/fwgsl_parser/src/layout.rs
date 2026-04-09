@@ -141,9 +141,14 @@ impl LayoutResolver {
 
             match kind {
                 SyntaxKind::Newline => {
-                    // Emit the newline
-                    self.output.push(self.tokens[self.pos].clone());
-                    self.pos += 1;
+                    // Emit the newline and all subsequent trivia (whitespace,
+                    // comments, more newlines).  Only the *last* newline before
+                    // a real token matters for layout, so coalescing avoids
+                    // duplicate LayoutSemicolons from comment-only lines.
+                    while !self.at_end() && self.peek_kind().is_trivia() {
+                        self.output.push(self.tokens[self.pos].clone());
+                        self.pos += 1;
+                    }
 
                     // Inside explicit braces, do not insert layout tokens.
                     if self.explicit_brace_depth > 0 {
@@ -301,6 +306,26 @@ mod tests {
             .filter(|k| **k == SyntaxKind::LayoutBraceClose)
             .count();
         assert_eq!(open_count, close_count);
+    }
+
+    #[test]
+    fn layout_comment_between_let_bindings() {
+        // A comment-only line between two let bindings at the same indent
+        // should produce exactly one LayoutSemicolon, not two.
+        let source = "let\n  x = 1\n  -- comment\n  y = 2\nin x";
+        let kinds = layout_kinds(source);
+        let semi_count = kinds
+            .iter()
+            .filter(|k| **k == SyntaxKind::LayoutSemicolon)
+            .count();
+        // One semicolon between `x = 1` and `y = 2`, one for the `in` line.
+        // The comment should NOT produce an extra semicolon.
+        assert!(
+            semi_count <= 2,
+            "comment-only line should not produce extra LayoutSemicolons, got {} in {:?}",
+            semi_count,
+            kinds
+        );
     }
 
     #[test]

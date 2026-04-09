@@ -337,6 +337,24 @@ impl<'a> IndexBuilder<'a> {
                     });
                     self.index.add_definition_span(symbol_id, name_span);
                 }
+                Decl::BitfieldDecl { name, span, .. } => {
+                    let name_span = self.first_name_span(name, *span).unwrap_or(*span);
+                    let symbol_id = self.top_level_types.get(name).copied().unwrap_or_else(|| {
+                        let id = self.index.push_symbol(NewSymbol {
+                            name: name.clone(),
+                            namespace: Namespace::Type,
+                            kind: SymbolKind::TypeAlias,
+                            span: name_span,
+                            scope_span: whole_file,
+                            scope_depth: 0,
+                            visible_from: 0,
+                            container: Some(name.clone()),
+                        });
+                        self.top_level_types.insert(name.clone(), id);
+                        id
+                    });
+                    self.index.add_definition_span(symbol_id, name_span);
+                }
             }
         }
     }
@@ -449,6 +467,9 @@ impl<'a> IndexBuilder<'a> {
             }
             Decl::ResourceDecl { ty, .. } => {
                 self.walk_type(ty, frames);
+            }
+            Decl::BitfieldDecl { base_ty, .. } => {
+                self.walk_type(base_ty, frames);
             }
         }
     }

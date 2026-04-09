@@ -1,0 +1,73 @@
+-- Bitfield example: GPU-side material and render state packed into u32 words.
+--
+-- Demonstrates bitfields alongside enums, record types, helper functions,
+-- resources, pattern matching, and the compute entry-point convention.
+
+-- Material properties packed into a single u32.
+bitfield MaterialFlags : U32 = {
+  metallic    : 1,
+  emissive    : 1,
+  transparent : 1,
+  roughness   : 5,
+  ior         : 8,
+}
+
+-- Per-object visibility / render state.
+bitfield ObjectFlags : U32 = {
+  visible     : 1,
+  castShadow  : 1,
+  layer       : 4,
+  stencilRef  : 8,
+}
+
+-- Enum: blend mode selector (pure enum -> u32 tag)
+data BlendMode = Opaque | AlphaBlend | Additive | Multiply
+
+blendFactor : BlendMode -> F32
+blendFactor mode = match mode
+  | Opaque     -> 1.0
+  | AlphaBlend -> 0.5
+  | _ -> 1.0
+  -- | Additive   -> 1.0
+  -- | Multiply   -> 0.0
+
+-- Record type holding packed bitfield words alongside a tint color
+type DrawParams = {
+  tint : Vec<4, F32>,
+}
+
+-- Resources
+extern resource matFlags : Uniform<MaterialFlags>                    @group 0 @binding 0
+extern resource objFlags : Uniform<ObjectFlags>                      @group 0 @binding 1
+extern resource params   : Uniform<DrawParams>                       @group 0 @binding 2
+extern resource output   : Storage<ReadWrite, Array<Vec<4, F32>, 64>> @group 0 @binding 3
+
+-- Decode IOR from 8-bit integer encoding: stored as (ior - 1.0) * 100
+decodeIor : U32 -> F32
+decodeIor raw = 1.0 + toF32 raw * 0.01
+
+-- Decode roughness from 5-bit encoding: 0..31 -> 0.0..1.0
+decodeRoughness : U32 -> F32
+decodeRoughness raw = toF32 raw * 0.03226
+
+-- Choose a base color depending on whether the material is metallic
+metallicColor : F32 -> Vec<4, F32> -> Vec<4, F32>
+metallicColor metallic tint =
+  if metallic > 0.5
+    then $vec4 (tint.r * 0.8) (tint.g * 0.7) (tint.b * 0.9) tint.a
+    else tint
+
+-- Compute entry point
+@compute @workgroup_size(64, 1, 1)
+main idx =
+  let mat    = load matFlags
+      obj    = load objFlags
+      p      = load params
+      rough  = decodeRoughness mat.roughness
+      ior    = decodeIor mat.ior
+      metalF = if mat.metallic then 1.0 else 0.0
+      layerF = toF32 obj.layer
+      bf     = blendFactor Opaque
+      base   = metallicColor metalF p.tint
+      color  = $vec4 (base.r * rough) (base.g * ior * 0.1) (base.b * bf) (base.a * layerF * 0.0625)
+  in writeAt output idx color

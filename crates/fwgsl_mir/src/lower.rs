@@ -16,12 +16,21 @@ use fwgsl_typechecker::Ty;
 
 use crate::*;
 
+/// Bitfield field metadata used during lowering.
+#[derive(Clone, Debug)]
+struct BitfieldFieldInfo {
+    offset: u32,
+    width: u32,
+}
+
 /// Context for HIR → MIR lowering, carrying data type information.
 struct LowerCtx {
     /// Map from data type name to its constructors
     data_types: HashMap<String, Vec<HirConstructor>>,
     /// Map from constructor name to (data_type_name, tag, fields)
     constructors: HashMap<String, (String, u32, Vec<(String, Ty)>)>,
+    /// Map from bitfield type name to its field metadata
+    bitfields: HashMap<String, Vec<(String, BitfieldFieldInfo)>>,
 }
 
 impl LowerCtx {
@@ -37,10 +46,35 @@ impl LowerCtx {
                 );
             }
         }
+        let mut bitfields = HashMap::new();
+        for bf in &hir.bitfields {
+            let fields: Vec<(String, BitfieldFieldInfo)> = bf
+                .fields
+                .iter()
+                .map(|f| {
+                    (
+                        f.name.clone(),
+                        BitfieldFieldInfo {
+                            offset: f.offset,
+                            width: f.width,
+                        },
+                    )
+                })
+                .collect();
+            bitfields.insert(bf.name.clone(), fields);
+        }
         LowerCtx {
             data_types,
             constructors,
+            bitfields,
         }
+    }
+
+    /// Look up a bitfield field by type name and field name.
+    fn lookup_bitfield_field(&self, type_name: &str, field_name: &str) -> Option<&BitfieldFieldInfo> {
+        self.bitfields.get(type_name).and_then(|fields| {
+            fields.iter().find(|(n, _)| n == field_name).map(|(_, info)| info)
+        })
     }
 
     fn is_sum_type(&self, name: &str) -> bool {
@@ -63,8 +97,13 @@ impl LowerCtx {
             .is_some_and(|cons| cons.len() > 1 && cons.iter().all(|c| c.fields.is_empty()))
     }
 
-    /// Resolve a type constructor name to MirType, taking ADTs into account.
+    /// Resolve a type constructor name to MirType, taking ADTs and bitfields into account.
     fn resolve_type_con(&self, name: &str) -> Option<MirType> {
+        // Check if this is a bitfield type — resolve to its base MIR type
+        if self.bitfields.contains_key(name) {
+            // Bitfields are backed by u32 (could be extended to support u16/u8)
+            return Some(MirType::U32);
+        }
         if self.is_pure_enum(name) {
             Some(MirType::U32)
         } else if self.is_sum_type(name) && self.has_fields(name) {
@@ -142,7 +181,7 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
 
     // Lower resource declarations to global bindings
     for res in &hir.resources {
-        if let Some(global) = lower_hir_resource(res) {
+        if let Some(global) = lower_hir_resource(res, &ctx) {
             globals.push(global);
         }
     }
@@ -383,7 +422,11 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr, ctx: &LowerCtx) -> Result<(Vec<MirStm
             for (name, bind_expr) in binds {
                 let (mut bind_stmts, bind_val) = lower_hir_expr_to_stmts(bind_expr, ctx)?;
                 stmts.append(&mut bind_stmts);
-                let bind_ty = ty_to_mir_type_with_ctx(bind_expr.ty(), Some(ctx)).unwrap_or(MirType::I32);
+                // Prefer the MIR expression's result type (more accurate after
+                // bitfield desugaring) over the HIR type (may be an unresolved var).
+                let bind_ty = bind_val
+                    .result_type()
+                    .unwrap_or_else(|| ty_to_mir_type_with_ctx(bind_expr.ty(), Some(ctx)).unwrap_or(MirType::I32));
                 stmts.push(MirStmt::Let(name.clone(), bind_ty, bind_val));
             }
             let (mut body_stmts, body_expr) = lower_hir_expr_to_stmts(body, ctx)?;
@@ -612,8 +655,43 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
             }
         }
 
-        HirExpr::FieldAccess(expr, field, ty, _span) => {
-            let mir_expr = lower_hir_expr(expr, ctx)?;
+        HirExpr::FieldAccess(inner_expr, field, ty, _span) => {
+            // Check if this is a bitfield field access
+            let inner_ty = inner_expr.ty();
+            if let Ty::Con(type_name) = inner_ty {
+                if let Some(bf_info) = ctx.lookup_bitfield_field(type_name, field) {
+                    let mir_expr = lower_hir_expr(inner_expr, ctx)?;
+                    let mask = (1u32 << bf_info.width) - 1;
+                    // (val >> offset) & mask
+                    let shifted = if bf_info.offset > 0 {
+                        MirExpr::BinOp(
+                            MirBinOp::Shr,
+                            Box::new(mir_expr),
+                            Box::new(MirExpr::Lit(MirLit::U32(bf_info.offset))),
+                            MirType::U32,
+                        )
+                    } else {
+                        mir_expr
+                    };
+                    let masked = MirExpr::BinOp(
+                        MirBinOp::BitAnd,
+                        Box::new(shifted),
+                        Box::new(MirExpr::Lit(MirLit::U32(mask))),
+                        MirType::U32,
+                    );
+                    // For 1-bit fields, compare != 0 to produce bool
+                    if bf_info.width == 1 {
+                        return Ok(MirExpr::BinOp(
+                            MirBinOp::Neq,
+                            Box::new(masked),
+                            Box::new(MirExpr::Lit(MirLit::U32(0))),
+                            MirType::Bool,
+                        ));
+                    }
+                    return Ok(masked);
+                }
+            }
+            let mir_expr = lower_hir_expr(inner_expr, ctx)?;
             let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
             Ok(MirExpr::FieldAccess(
                 Box::new(mir_expr),
@@ -817,12 +895,12 @@ fn lower_hir_lit(lit: &HirLit, ty: &Ty) -> MirLit {
 }
 
 /// Lower a HIR resource declaration to a MIR global binding.
-fn lower_hir_resource(res: &HirResource) -> Option<MirGlobal> {
+fn lower_hir_resource(res: &HirResource, ctx: &LowerCtx) -> Option<MirGlobal> {
     // Parse the resource type: Uniform<T> or Storage<ReadWrite, T>
     // The `ty` from the semantic analyzer is the full applied type.
     // We need to extract the inner type and determine the address space.
     let (address_space, inner_ty) = parse_resource_type(&res.ty, &res.address_space);
-    let mir_ty = ty_to_mir_type_with_ctx(&inner_ty, None).ok()?;
+    let mir_ty = ty_to_mir_type_with_ctx(&inner_ty, Some(ctx)).ok()?;
     Some(MirGlobal {
         name: res.name.clone(),
         address_space,
@@ -918,6 +996,7 @@ mod tests {
             data_types: vec![],
             entry_points: vec![],
             resources: vec![],
+            bitfields: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
@@ -954,6 +1033,7 @@ mod tests {
             data_types: vec![],
             entry_points: vec![],
             resources: vec![],
+            bitfields: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
@@ -1029,6 +1109,7 @@ mod tests {
             data_types: vec![],
             entry_points: vec![],
             resources: vec![],
+            bitfields: vec![],
         };
 
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");

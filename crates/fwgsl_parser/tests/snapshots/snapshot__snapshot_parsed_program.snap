@@ -29,13 +29,13 @@ Program {
                     fields: Empty,
                     span: Span {
                         start: 27,
-                        end: 32,
+                        end: 33,
                     },
                 },
             ],
             span: Span {
                 start: 0,
-                end: 32,
+                end: 33,
             },
         },
         TypeSig {
@@ -145,13 +145,13 @@ Program {
                 ],
                 Span {
                     start: 62,
-                    end: 115,
+                    end: 116,
                 },
             ),
             where_binds: [],
             span: Span {
                 start: 53,
-                end: 115,
+                end: 116,
             },
         },
         TypeSig {
@@ -236,7 +236,7 @@ Program {
             where_binds: [],
             span: Span {
                 start: 140,
-                end: 156,
+                end: 157,
             },
         },
         TypeSig {

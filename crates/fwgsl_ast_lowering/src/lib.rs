@@ -117,6 +117,7 @@ impl AstLowering {
         let mut data_types = Vec::new();
         let mut entry_points = Vec::new();
         let mut resources = Vec::new();
+        let mut bitfields = Vec::new();
 
         for decl in &program.decls {
             match decl {
@@ -165,6 +166,32 @@ impl AstLowering {
                         binding: *binding,
                     });
                 }
+                Decl::BitfieldDecl {
+                    name,
+                    base_ty,
+                    fields,
+                    ..
+                } => {
+                    let base_scheme = self.convert_syntax_type_scheme(base_ty);
+                    let mut offset = 0u32;
+                    let hir_fields: Vec<fwgsl_hir::HirBitfieldField> = fields
+                        .iter()
+                        .map(|f| {
+                            let hf = fwgsl_hir::HirBitfieldField {
+                                name: f.name.clone(),
+                                offset,
+                                width: f.width,
+                            };
+                            offset += f.width;
+                            hf
+                        })
+                        .collect();
+                    bitfields.push(fwgsl_hir::HirBitfield {
+                        name: name.clone(),
+                        base_ty: base_scheme.ty,
+                        fields: hir_fields,
+                    });
+                }
                 Decl::TypeSig { .. } | Decl::TypeAlias { .. } => {}
             }
         }
@@ -174,6 +201,7 @@ impl AstLowering {
             data_types,
             entry_points,
             resources,
+            bitfields,
         }
     }
 

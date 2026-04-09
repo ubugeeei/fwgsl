@@ -239,6 +239,28 @@ pub enum MirExpr {
     Cast(Box<MirExpr>, MirType),
 }
 
+impl MirExpr {
+    /// Return the result type of this expression, if it carries one.
+    pub fn result_type(&self) -> Option<MirType> {
+        match self {
+            MirExpr::Lit(lit) => Some(match lit {
+                MirLit::I32(_) => MirType::I32,
+                MirLit::U32(_) => MirType::U32,
+                MirLit::F32(_) => MirType::F32,
+                MirLit::Bool(_) => MirType::Bool,
+            }),
+            MirExpr::Var(_, ty) => Some(ty.clone()),
+            MirExpr::BinOp(_, _, _, ty) => Some(ty.clone()),
+            MirExpr::UnaryOp(_, _, ty) => Some(ty.clone()),
+            MirExpr::Call(_, _, ty) => Some(ty.clone()),
+            MirExpr::ConstructStruct(name, _) => Some(MirType::Struct(name.clone())),
+            MirExpr::FieldAccess(_, _, ty) => Some(ty.clone()),
+            MirExpr::Index(_, _, ty) => Some(ty.clone()),
+            MirExpr::Cast(_, ty) => Some(ty.clone()),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Literals
 // ---------------------------------------------------------------------------

@@ -14,6 +14,23 @@ pub struct HirProgram {
     pub data_types: Vec<HirDataType>,
     pub entry_points: Vec<HirEntryPoint>,
     pub resources: Vec<HirResource>,
+    pub bitfields: Vec<HirBitfield>,
+}
+
+/// A bitfield type declaration.
+#[derive(Debug, Clone)]
+pub struct HirBitfield {
+    pub name: String,
+    pub base_ty: Ty,
+    pub fields: Vec<HirBitfieldField>,
+}
+
+/// A single field within a bitfield declaration.
+#[derive(Debug, Clone)]
+pub struct HirBitfieldField {
+    pub name: String,
+    pub offset: u32,
+    pub width: u32,
 }
 
 /// A resource binding declaration (uniform / storage).
@@ -212,6 +229,7 @@ mod tests {
     #[test]
     fn test_hir_program_construction() {
         let program = HirProgram {
+            bitfields: vec![],
             functions: vec![HirFunction {
                 name: "add".into(),
                 params: vec![("x".into(), Ty::i32()), ("y".into(), Ty::i32())],
