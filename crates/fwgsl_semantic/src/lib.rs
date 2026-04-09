@@ -24,7 +24,8 @@ pub struct TraitInfo {
 /// Information about a trait impl.
 #[derive(Debug, Clone)]
 pub struct ImplInfo {
-    pub trait_name: String,
+    /// None for standalone impls.
+    pub trait_name: Option<String>,
     /// The concrete type this impl is for.
     pub ty: Ty,
     /// Method implementations: method_name → mangled function name.
@@ -713,28 +714,43 @@ impl SemanticAnalyzer {
                 for m in methods {
                     let mangled = mangle_instance_method(&m.name, &type_suffix);
                     impl_methods.insert(m.name.clone(), mangled.clone());
-                    // Build the concrete type for this method by instantiating the trait
-                    // method type with the impl type
-                    if let Some(trait_info) = self.traits.get(trait_name) {
-                        for (tmethod_name, tmethod_ty) in &trait_info.methods {
-                            if tmethod_name == &m.name {
-                                // Build a substitution: trait var_id → concrete type
-                                let var_id = fresh_var_id(&mut self.engine);
-                                let mut subst = fwgsl_typechecker::Substitution::new();
-                                subst.insert(var_id, impl_ty_scheme.ty.clone());
-                                // The trait method was typed with some var_id; we need to
-                                // substitute the trait's var with the concrete type.
-                                // Since we used a fresh scope per method above, here we
-                                // reconstruct by replacing any Var in the method type.
-                                let concrete_ty = replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
-                                self.env.insert(mangled.clone(), Scheme::mono(concrete_ty));
+
+                    if let Some(tname) = trait_name {
+                        // Trait impl: look up trait method signature and substitute
+                        if let Some(trait_info) = self.traits.get(tname) {
+                            for (tmethod_name, tmethod_ty) in &trait_info.methods {
+                                if tmethod_name == &m.name {
+                                    let concrete_ty = replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
+                                    self.env.insert(mangled.clone(), Scheme::mono(concrete_ty));
+                                }
                             }
+                        } else {
+                            self.engine.diagnostics.push(
+                                Diagnostic::error(format!("Unknown trait '{}' in impl declaration", tname))
+                                    .with_label(Label::primary(*span, "unknown trait")),
+                            );
                         }
                     } else {
-                        self.engine.diagnostics.push(
-                            Diagnostic::error(format!("Unknown trait '{}' in impl declaration", trait_name))
-                                .with_label(Label::primary(*span, "unknown trait")),
-                        );
+                        // Standalone impl: build a partial function type from the impl type
+                        // and the number of parameters. First param gets the impl type;
+                        // the rest and the return type are fresh vars (quantified so they
+                        // get instantiated fresh in each call site's inference engine).
+                        let mut poly_vars = Vec::new();
+                        let ret_var = self.engine.fresh_var();
+                        if let Ty::Var(id) = ret_var { poly_vars.push(id); }
+                        let mut result_ty = ret_var;
+                        for i in (0..m.params.len()).rev() {
+                            let param_ty = if i == 0 {
+                                impl_ty_scheme.ty.clone()
+                            } else {
+                                let v = self.engine.fresh_var();
+                                if let Ty::Var(id) = v { poly_vars.push(id); }
+                                v
+                            };
+                            result_ty = Ty::arrow(param_ty, result_ty);
+                        }
+                        self.env.insert(m.name.clone(), Scheme::poly(poly_vars.clone(), result_ty.clone()));
+                        self.env.insert(mangled.clone(), Scheme::poly(poly_vars, result_ty));
                     }
                 }
                 self.impls.push(ImplInfo {

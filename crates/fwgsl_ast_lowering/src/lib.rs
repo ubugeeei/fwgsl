@@ -246,25 +246,46 @@ impl AstLowering {
                     methods,
                     span: _,
                 } => {
-                    // Collect method lowering info first to avoid borrow conflict.
                     let impl_ty_scheme = self.convert_syntax_type_scheme(ty);
                     let type_suffix = fwgsl_semantic::format_type_suffix(&impl_ty_scheme.ty);
-                    let mut method_info: Vec<(String, Ty)> = Vec::new();
-                    if let Some(trait_info) = self.traits.get(trait_name) {
-                        for m in methods {
-                            let mangled = fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
-                            for (tmethod_name, tmethod_ty) in &trait_info.methods {
-                                if tmethod_name == &m.name {
-                                    let concrete_ty = fwgsl_semantic::replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
-                                    method_info.push((mangled.clone(), concrete_ty));
+
+                    if let Some(tname) = trait_name {
+                        // Trait impl: look up trait method types
+                        let mut method_info: Vec<(String, Ty)> = Vec::new();
+                        if let Some(trait_info) = self.traits.get(tname) {
+                            for m in methods {
+                                let mangled = fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
+                                for (tmethod_name, tmethod_ty) in &trait_info.methods {
+                                    if tmethod_name == &m.name {
+                                        let concrete_ty = fwgsl_semantic::replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
+                                        method_info.push((mangled.clone(), concrete_ty));
+                                    }
                                 }
                             }
                         }
-                    }
-                    // Now lower each method body
-                    for (i, m) in methods.iter().enumerate() {
-                        if let Some((mangled, concrete_ty)) = method_info.get(i) {
-                            if let Some(f) = self.lower_impl_method(mangled, &m.params, &m.body, concrete_ty, m.span) {
+                        for (i, m) in methods.iter().enumerate() {
+                            if let Some((mangled, concrete_ty)) = method_info.get(i) {
+                                if let Some(f) = self.lower_impl_method(mangled, &m.params, &m.body, concrete_ty, m.span) {
+                                    functions.push(f);
+                                }
+                            }
+                        }
+                    } else {
+                        // Standalone impl: lower each method as a regular function
+                        // with the impl type as the first parameter type.
+                        for m in methods {
+                            let mangled = fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
+                            if let Some(f) = self.lower_standalone_impl_method(&mangled, &m.params, &m.body, &impl_ty_scheme.ty, m.span) {
+                                // Register the inferred function type so subsequent
+                                // call sites (method-call syntax, pipelines) resolve
+                                // the correct return type.
+                                let mut fun_ty = f.return_ty.clone();
+                                for (_, pty) in f.params.iter().rev() {
+                                    fun_ty = Ty::arrow(pty.clone(), fun_ty);
+                                }
+                                let scheme = Scheme::mono(fun_ty);
+                                self.env.insert(m.name.clone(), scheme.clone());
+                                self.env.insert(mangled.clone(), scheme);
                                 functions.push(f);
                             }
                         }
@@ -375,6 +396,44 @@ impl AstLowering {
 
         let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
         self.engine.unify(&body_ty, &remaining_ty, span);
+
+        let final_params: Vec<(String, Ty)> = hir_params
+            .into_iter()
+            .map(|(n, ty)| (n, self.engine.finalize(&ty)))
+            .collect();
+        let return_ty = self.engine.finalize(&body_ty);
+        let body = self.finalize_expr(hir_body);
+
+        Some(HirFunction {
+            name: mangled_name.to_string(),
+            params: final_params,
+            return_ty,
+            body,
+            span,
+        })
+    }
+
+    /// Lower a standalone impl method — infer types from parameters and body.
+    fn lower_standalone_impl_method(
+        &mut self,
+        mangled_name: &str,
+        params: &[Pat],
+        body: &Expr,
+        impl_ty: &Ty,
+        span: Span,
+    ) -> Option<HirFunction> {
+        let mut local_env = self.env.clone();
+        let mut hir_params = Vec::new();
+
+        for (i, pat) in params.iter().enumerate() {
+            // First parameter gets the impl type; rest are inferred.
+            let param_ty = if i == 0 { impl_ty.clone() } else { self.engine.fresh_var() };
+            let pname = pat_name(pat);
+            self.bind_pattern(pat, &param_ty, &mut local_env);
+            hir_params.push((pname, param_ty));
+        }
+
+        let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
 
         let final_params: Vec<(String, Ty)> = hir_params
             .into_iter()
@@ -856,7 +915,9 @@ impl AstLowering {
                 }
 
                 // 3. Regular field access (struct fields, bitfield fields)
-                let result_ty = self.engine.fresh_var();
+                // Try to resolve the field type from the constructor info
+                let result_ty = self.resolve_record_field_type(&expr_ty_final, field)
+                    .unwrap_or_else(|| self.engine.fresh_var());
                 (
                     HirExpr::FieldAccess(
                         Box::new(hir_expr),
@@ -1424,12 +1485,31 @@ impl AstLowering {
 
     /// Check if an operator (e.g. "+") has a trait impl for the given operand type.
     /// Returns the mangled function name if found (e.g. "add_Fp64"), None otherwise.
+    /// Resolve a record field type from the constructor info.
+    /// Given a base type like `Fp64` and a field name like `high`, returns `Some(F32)`.
+    fn resolve_record_field_type(&self, base_ty: &Ty, field: &str) -> Option<Ty> {
+        let type_name = match base_ty {
+            Ty::Con(name) => name.as_str(),
+            _ => return None,
+        };
+        if let Some(con_info) = self.constructors.get(type_name) {
+            if let ConstructorFields::Record(fields) = &con_info.fields {
+                for (fname, fty) in fields {
+                    if fname == field {
+                        return Some(fty.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn resolve_operator_trait(&self, op: &str, operand_ty: &Ty) -> Option<String> {
         for trait_info in self.traits.values() {
             for (method_name, _) in &trait_info.methods {
                 if method_name == op {
                     for inst in &self.impls {
-                        if inst.trait_name == trait_info.name && inst.ty == *operand_ty {
+                        if inst.trait_name.as_deref() == Some(trait_info.name.as_str()) && inst.ty == *operand_ty {
                             if let Some(mangled) = inst.methods.get(op) {
                                 return Some(mangled.clone());
                             }
@@ -1441,26 +1521,33 @@ impl AstLowering {
         None
     }
 
-    /// Resolve a trait method name to a concrete impl method name,
+    /// Resolve a trait or standalone impl method name to a concrete mangled name,
     /// if the resolved type is concrete and a matching impl exists.
     fn resolve_trait_method(&self, name: &str, ty: &Ty) -> String {
-        // Check if this name is a method in any trait
+        // Check trait methods
         for trait_info in self.traits.values() {
             for (method_name, _) in &trait_info.methods {
                 if method_name == name {
-                    // Extract the concrete type from the resolved type.
-                    // The method type is `a -> a -> a` (or similar), so the first
-                    // argument type tells us the impl type.
                     let concrete = extract_first_arg_type(ty);
                     if let Some(concrete_ty) = concrete {
-                        // Look for a matching impl
                         for inst in &self.impls {
-                            if inst.trait_name == trait_info.name && inst.ty == concrete_ty {
+                            if inst.trait_name.as_deref() == Some(trait_info.name.as_str()) && inst.ty == concrete_ty {
                                 if let Some(mangled) = inst.methods.get(name) {
                                     return mangled.clone();
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+        // Check standalone impl methods
+        let concrete = extract_first_arg_type(ty);
+        if let Some(concrete_ty) = concrete {
+            for inst in &self.impls {
+                if inst.trait_name.is_none() && inst.ty == concrete_ty {
+                    if let Some(mangled) = inst.methods.get(name) {
+                        return mangled.clone();
                     }
                 }
             }

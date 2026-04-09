@@ -21,8 +21,6 @@ use crate::*;
 struct BitfieldFieldInfo {
     offset: u32,
     width: u32,
-    /// If this field references an enum type, the type name.
-    enum_type: Option<String>,
 }
 
 /// Context for HIR → MIR lowering, carrying data type information.
@@ -59,7 +57,6 @@ impl LowerCtx {
                         BitfieldFieldInfo {
                             offset: f.offset,
                             width: f.width,
-                            enum_type: f.enum_type.clone(),
                         },
                     )
                 })

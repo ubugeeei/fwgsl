@@ -2031,7 +2031,7 @@ mod trait_tests {
         assert_eq!(program.decls.len(), 1);
         match &program.decls[0] {
             Decl::ImplDecl { trait_name, methods, .. } => {
-                assert_eq!(trait_name, "Num");
+                assert_eq!(trait_name.as_deref(), Some("Num"));
                 assert_eq!(methods.len(), 2);
                 assert_eq!(methods[0].name, "add");
                 assert_eq!(methods[1].name, "sub");

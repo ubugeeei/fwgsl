@@ -79,9 +79,12 @@ pub enum Decl {
         methods: Vec<TraitMethod>,
         span: Span,
     },
-    /// Impl declaration: `impl Num F32 where (+) x y = $add x y ...`
+    /// Impl declaration.
+    /// Trait impl: `impl Add Fp64 where (+) a b = ...`
+    /// Standalone impl: `impl Fp64 where collapse v = ...`
     ImplDecl {
-        trait_name: String,
+        /// None for standalone impls.
+        trait_name: Option<String>,
         /// The concrete type this impl is for.
         ty: Type,
         methods: Vec<ImplMethod>,
@@ -1191,18 +1194,37 @@ impl Parser {
         }
     }
 
-    /// Parse `impl TraitName Type where method1 args = body ...`
+    /// Parse `impl TraitName Type where ...` or `impl Type where ...`
     fn parse_impl_decl(&mut self) -> Decl {
         let start = self.current_span().start;
         self.expect(SyntaxKind::KwImpl);
         self.skip_trivia();
 
-        let trait_tok = self.expect(SyntaxKind::UpperIdent);
-        let trait_name = self.text_of(&trait_tok).to_owned();
+        // Parse the first type — could be trait name or the target type.
+        let first_ty = self.parse_type_atom();
         self.skip_trivia();
 
-        let ty = self.parse_type_atom();
-        self.skip_trivia();
+        // If `where` follows immediately, this is a standalone impl (no trait).
+        // Otherwise, the first type was the trait name and we parse a second type.
+        let (trait_name, ty) = if self.at(SyntaxKind::KwWhere) {
+            (None, first_ty)
+        } else {
+            // first_ty should be a simple Con (the trait name)
+            let tname = match &first_ty {
+                Type::Con(name, _) => name.clone(),
+                _ => {
+                    let span = first_ty.span();
+                    self.diagnostics.push(
+                        Diagnostic::error("expected trait name".to_string())
+                            .with_label(Label::primary(span, "expected uppercase identifier")),
+                    );
+                    "_unknown_".to_string()
+                }
+            };
+            let second_ty = self.parse_type_atom();
+            self.skip_trivia();
+            (Some(tname), second_ty)
+        };
 
         self.expect(SyntaxKind::KwWhere);
         self.skip_trivia();
