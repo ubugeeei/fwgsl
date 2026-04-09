@@ -269,9 +269,8 @@ fn cmd_check(file: &str, feature_flags: &[String]) {
 
 fn cmd_fmt(file: &str) {
     let source = read_file(file);
-    // TODO: Implement formatter
-    // For now, just print the source back
-    print!("{}", source);
+    let formatted = fwgsl_formatter::format_default(&source);
+    print!("{}", formatted);
 }
 
 fn read_file(path: &str) -> String {

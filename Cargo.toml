@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["tree-sitter-fwgsl"]
 members = [
     "crates/fwgsl_allocator",
     "crates/fwgsl_span",
@@ -15,6 +16,7 @@ members = [
     "crates/fwgsl_hir",
     "crates/fwgsl_mir",
     "crates/fwgsl_wgsl_codegen",
+    "crates/fwgsl_formatter",
     "crates/fwgsl_cli",
     "crates/fwgsl_wasm",
     "crates/fwgsl_language_server",
@@ -36,6 +38,7 @@ default-members = [
     "crates/fwgsl_hir",
     "crates/fwgsl_mir",
     "crates/fwgsl_wgsl_codegen",
+    "crates/fwgsl_formatter",
     "crates/fwgsl_cli",
     "crates/fwgsl_language_server",
     "crates/fwgsl_integration_tests",
@@ -61,6 +64,7 @@ fwgsl_semantic = { path = "crates/fwgsl_semantic" }
 fwgsl_hir = { path = "crates/fwgsl_hir" }
 fwgsl_mir = { path = "crates/fwgsl_mir" }
 fwgsl_wgsl_codegen = { path = "crates/fwgsl_wgsl_codegen" }
+fwgsl_formatter = { path = "crates/fwgsl_formatter" }
 fwgsl_language_server = { path = "crates/fwgsl_language_server" }
 
 bumpalo = { version = "3", features = ["collections"] }

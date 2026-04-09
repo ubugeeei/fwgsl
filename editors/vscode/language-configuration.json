@@ -1,0 +1,30 @@
+{
+  "comments": {
+    "lineComment": "--",
+    "blockComment": ["{-", "-}"]
+  },
+  "brackets": [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"]
+  ],
+  "autoClosingPairs": [
+    { "open": "(", "close": ")" },
+    { "open": "[", "close": "]" },
+    { "open": "{", "close": "}" },
+    { "open": "{-", "close": "-}" },
+    { "open": "\"", "close": "\"", "notIn": ["string"] },
+    { "open": "'", "close": "'", "notIn": ["string"] }
+  ],
+  "surroundingPairs": [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["\"", "\""],
+    ["'", "'"]
+  ],
+  "indentationRules": {
+    "increaseIndentPattern": "^.*\\b(where|let|in|of|do)\\s*$|^.*\\s(->|=)\\s*$",
+    "decreaseIndentPattern": "^\\s*(in|else)\\b"
+  }
+}

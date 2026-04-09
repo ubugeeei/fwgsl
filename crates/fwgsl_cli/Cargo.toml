@@ -15,6 +15,7 @@ fwgsl_ast_lowering = { workspace = true }
 fwgsl_hir = { workspace = true }
 fwgsl_mir = { workspace = true }
 fwgsl_wgsl_codegen = { workspace = true }
+fwgsl_formatter = { workspace = true }
 fwgsl_diagnostics = { workspace = true }
 fwgsl_span = { workspace = true }
 miette = { workspace = true }

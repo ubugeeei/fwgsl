@@ -175,6 +175,7 @@ impl LanguageServer for FwgslBackend {
                         },
                     ),
                 ),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -302,6 +303,32 @@ impl LanguageServer for FwgslBackend {
             result_id: None,
             data: tokens,
         })))
+    }
+
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+
+        let text = match self.documents.get(uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+
+        let formatted = fwgsl_formatter::format_default(&text);
+
+        if formatted == text {
+            return Ok(None);
+        }
+
+        let line_count = text.lines().count() as u32;
+        let last_line_len = text.lines().last().map_or(0, |l| l.len()) as u32;
+
+        Ok(Some(vec![TextEdit {
+            range: Range::new(Position::new(0, 0), Position::new(line_count, last_line_len)),
+            new_text: formatted,
+        }]))
     }
 }
 

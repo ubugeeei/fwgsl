@@ -1,0 +1,11 @@
+[package]
+name = "fwgsl_formatter"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+fwgsl_syntax = { workspace = true }
+fwgsl_parser = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

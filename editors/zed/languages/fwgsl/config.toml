@@ -1,0 +1,14 @@
+name = "fwgsl"
+grammar = "fwgsl"
+path_suffixes = ["fwgsl"]
+line_comments = ["-- "]
+block_comment = ["{- ", " -}"]
+autoclose_before = ";:.,=}])|> "
+brackets = [
+  { start = "(", end = ")", close = true, newline = true },
+  { start = "[", end = "]", close = true, newline = true },
+  { start = "{", end = "}", close = true, newline = true },
+  { start = "{-", end = "-}", close = true, newline = false },
+]
+word_characters = ["'"]
+tab_size = 2

@@ -1,0 +1,14 @@
+id = "fwgsl"
+name = "fwgsl"
+description = "Language support for fwgsl — pure functional WebGPU shading language"
+version = "0.1.0"
+schema_version = 1
+authors = ["fwgsl contributors"]
+repository = "https://github.com/user/fwgsl"
+
+[grammars.fwgsl]
+repository = "https://github.com/user/tree-sitter-fwgsl"
+rev = "main"
+
+[language_servers.fwgsl-lsp]
+language = "fwgsl"

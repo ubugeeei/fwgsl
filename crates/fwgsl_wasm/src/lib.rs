@@ -114,8 +114,7 @@ pub fn compile(source: &str) -> String {
 
 #[wasm_bindgen]
 pub fn format(source: &str) -> String {
-    // TODO: implement formatter
-    source.to_string()
+    fwgsl_formatter::format_default(source)
 }
 
 #[wasm_bindgen]
