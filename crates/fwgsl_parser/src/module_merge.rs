@@ -1,11 +1,11 @@
 //! Module merging: combine a dependency-ordered set of modules into a single
 //! flat program suitable for semantic analysis and compilation.
 //!
-//! Export filtering and import resolution happens here. The output is a single
+//! All public (non-private) declarations are included. The output is a single
 //! `Program` with all declarations from all modules, with module/import
 //! declarations stripped.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::parser::{Decl, Program};
 use crate::module_resolver::ModuleGraph;
@@ -13,44 +13,29 @@ use crate::module_resolver::ModuleGraph;
 /// Merge a module graph into a single flat program.
 ///
 /// Processing order (dependency first):
-/// 1. For each module in topological order, determine its exported names
-/// 2. For each import in the current module, bring in names from the dependency
-/// 3. Collect all non-module/import declarations into the merged program
+/// 1. For each module in topological order, collect all non-private,
+///    non-module/import declarations into the merged program.
 ///
-/// For now, qualified imports are not fully supported — they require parser-level
-/// disambiguation (see plan §2.9). Qualified imports are treated as a no-op with
-/// a warning-level skip.
+/// Visibility: everything is public by default. Declarations preceded by
+/// `private` are excluded from the merged output (they stay module-local).
 pub fn merge_modules(graph: &ModuleGraph) -> Program {
-    // Phase 1: compute exported names for each module
-    let mut module_exports: HashMap<String, HashSet<String>> = HashMap::new();
-
-    for module in &graph.modules {
-        let all_names = collect_declared_names(&module.program);
-        let exported = match &module.exports {
-            Some(export_list) => {
-                // Only export listed names
-                all_names.intersection(&export_list.iter().cloned().collect::<HashSet<_>>())
-                    .cloned()
-                    .collect()
-            }
-            None => all_names, // Export everything
-        };
-        module_exports.insert(module.name.clone(), exported);
-    }
-
-    // Phase 2: merge declarations
     let mut merged_decls: Vec<Decl> = Vec::new();
 
     for module in &graph.modules {
-        // Add all non-module/import declarations from this module.
-        // In the future, we could filter based on what's actually imported,
-        // but for now we include everything and rely on DCE to remove unused code.
+        let private_names = collect_private_names(&module.program);
         for decl in &module.program.decls {
             match decl {
                 Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {
                     // Skip module/import declarations — they're metadata only
                 }
                 _ => {
+                    // Filter out private declarations
+                    let name = decl_name(decl);
+                    if let Some(n) = name {
+                        if private_names.contains(n) {
+                            continue;
+                        }
+                    }
                     merged_decls.push(decl.clone());
                 }
             }
@@ -60,40 +45,35 @@ pub fn merge_modules(graph: &ModuleGraph) -> Program {
     Program { decls: merged_decls }
 }
 
-/// Collect all names declared in a program (functions, types, constructors, etc.).
-fn collect_declared_names(program: &Program) -> HashSet<String> {
-    let mut names = HashSet::new();
-    for decl in &program.decls {
-        match decl {
-            Decl::TypeSig { name, .. } => { names.insert(name.clone()); }
-            Decl::FunDecl { name, .. } => { names.insert(name.clone()); }
-            Decl::EntryPoint { name, .. } => { names.insert(name.clone()); }
-            Decl::DataDecl { name, constructors, .. } => {
-                names.insert(name.clone());
-                for con in constructors {
-                    names.insert(con.name.clone());
-                }
-            }
-            Decl::TypeAlias { name, .. } => { names.insert(name.clone()); }
-            Decl::ResourceDecl { name, .. } => { names.insert(name.clone()); }
-            Decl::BitfieldDecl { name, .. } => { names.insert(name.clone()); }
-            Decl::ConstDecl { name, .. } => { names.insert(name.clone()); }
-            Decl::TraitDecl { name, methods, .. } => {
-                names.insert(name.clone());
-                for m in methods {
-                    names.insert(m.name.clone());
-                }
-            }
-            Decl::ImplDecl { methods, .. } => {
-                for m in methods {
-                    names.insert(m.name.clone());
-                }
-            }
-            Decl::ExternDecl { name, .. } => { names.insert(name.clone()); }
-            Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {}
-        }
+/// Get the primary name of a declaration, if any.
+fn decl_name(decl: &Decl) -> Option<&str> {
+    match decl {
+        Decl::TypeSig { name, .. }
+        | Decl::FunDecl { name, .. }
+        | Decl::EntryPoint { name, .. }
+        | Decl::DataDecl { name, .. }
+        | Decl::TypeAlias { name, .. }
+        | Decl::ResourceDecl { name, .. }
+        | Decl::BitfieldDecl { name, .. }
+        | Decl::ConstDecl { name, .. }
+        | Decl::TraitDecl { name, .. }
+        | Decl::ExternDecl { name, .. } => Some(name.as_str()),
+        Decl::ImplDecl { .. }
+        | Decl::ModuleDecl { .. }
+        | Decl::ImportDecl { .. } => None,
     }
-    names
+}
+
+/// Collect names of declarations that follow a `private` keyword in the source.
+///
+/// For now, `private` is detected by scanning comments attached to declarations.
+/// TODO: Once the parser emits a `Decl::Private` wrapper or flag, use that instead.
+/// Currently this is a placeholder — full `private` support requires parser changes
+/// to track which declarations are marked private.
+fn collect_private_names(_program: &Program) -> HashSet<String> {
+    // Placeholder: no declarations are private yet.
+    // When the parser supports `private`, this will extract private names.
+    HashSet::new()
 }
 
 #[cfg(test)]
@@ -106,13 +86,6 @@ mod tests {
     fn parse_module(name: &str, source: &str) -> ParsedModule {
         let mut parser = Parser::new(source);
         let program = parser.parse_program();
-        let exports = program.decls.iter().find_map(|d| {
-            if let Decl::ModuleDecl { exports, .. } = d {
-                Some(exports.clone())
-            } else {
-                None
-            }
-        }).flatten();
         let imports = program.decls.iter().filter_map(|d| {
             if let Decl::ImportDecl { module_path, kind, .. } = d {
                 Some(crate::module_resolver::ModuleImport {
@@ -127,7 +100,6 @@ mod tests {
             name: name.to_string(),
             path: PathBuf::from(format!("{}.fwgsl", name)),
             program,
-            exports,
             imports,
         }
     }

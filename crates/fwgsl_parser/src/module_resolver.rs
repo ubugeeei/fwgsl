@@ -22,8 +22,6 @@ pub struct ParsedModule {
     pub path: PathBuf,
     /// The parsed AST.
     pub program: Program,
-    /// Exported names (None = export all).
-    pub exports: Option<Vec<String>>,
     /// What this module imports.
     pub imports: Vec<ModuleImport>,
 }
@@ -120,18 +118,16 @@ pub fn resolve_modules(
 ) -> Result<ModuleGraph, Vec<ModuleResolveError>> {
     let mut resolver = Resolver::new(source_roots.to_vec(), reader);
 
-    // Determine root module name from its module decl, or derive from filename
+    // Determine root module name from its module decl, or derive from file path
     let root_name = extract_module_name(&root_program)
-        .unwrap_or_else(|| derive_module_name(root_path));
+        .unwrap_or_else(|| derive_module_name(root_path, source_roots));
 
-    let root_exports = extract_exports_from_program(&root_program);
     let root_imports = extract_imports(&root_program);
 
     let root_module = ParsedModule {
         name: root_name.clone(),
         path: root_path.to_path_buf(),
         program: root_program,
-        exports: root_exports,
         imports: root_imports,
     };
 
@@ -169,75 +165,48 @@ impl<'a> Resolver<'a> {
 
     /// Recursively discover and parse all imported modules.
     fn discover_imports(&mut self, module_name: &str) -> Result<(), Vec<ModuleResolveError>> {
-        // Collect import paths from this module
-        let import_paths: Vec<String> = self.modules
+        // Collect imports from this module
+        let imports: Vec<ModuleImport> = self.modules
             .get(module_name)
-            .map(|m| m.imports.iter().map(|i| i.module_path.clone()).collect())
+            .map(|m| m.imports.clone())
             .unwrap_or_default();
 
-        for import_path in import_paths {
-            if self.modules.contains_key(&import_path) {
-                continue; // Already loaded
-            }
-
-            // Find the file
-            let file_path = match self.find_module_file(&import_path) {
-                Some(p) => p,
-                None => {
-                    let searched = self.source_roots.first()
-                        .cloned()
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    self.errors.push(ModuleResolveError::FileNotFound {
-                        module_path: import_path.clone(),
-                        searched,
-                    });
-                    continue;
+        for import in imports {
+            match &import.kind {
+                ImportKind::Wildcard => {
+                    // Wildcard: `import Foo.*` — discover all .fwgsl files under Foo/
+                    let wildcard_modules = self.find_wildcard_modules(&import.module_path);
+                    for (mod_name, file_path) in wildcard_modules {
+                        if self.modules.contains_key(&mod_name) {
+                            continue;
+                        }
+                        self.load_module(&mod_name, &file_path)?;
+                        self.discover_imports(&mod_name)?;
+                    }
                 }
-            };
+                _ => {
+                    if self.modules.contains_key(&import.module_path) {
+                        continue;
+                    }
 
-            // Read and parse
-            let source = match self.reader.read_source(&file_path) {
-                Ok(s) => s,
-                Err(msg) => {
-                    self.errors.push(ModuleResolveError::IoError {
-                        file: file_path,
-                        message: msg,
-                    });
-                    continue;
+                    let file_path = match self.find_module_file(&import.module_path) {
+                        Some(p) => p,
+                        None => {
+                            let searched = self.source_roots.first()
+                                .cloned()
+                                .unwrap_or_else(|| PathBuf::from("."));
+                            self.errors.push(ModuleResolveError::FileNotFound {
+                                module_path: import.module_path.clone(),
+                                searched,
+                            });
+                            continue;
+                        }
+                    };
+
+                    self.load_module(&import.module_path, &file_path)?;
+                    self.discover_imports(&import.module_path)?;
                 }
-            };
-
-            let mut parser = Parser::new(&source);
-            let program = parser.parse_program();
-
-            if parser.diagnostics().has_errors() {
-                let messages: Vec<String> = parser.diagnostics()
-                    .iter()
-                    .map(|d| d.message.clone())
-                    .collect();
-                self.errors.push(ModuleResolveError::ParseError {
-                    module_path: import_path.clone(),
-                    file: file_path.clone(),
-                    messages,
-                });
-                continue;
             }
-
-            let exports = extract_exports_from_program(&program);
-            let imports = extract_imports(&program);
-
-            let parsed = ParsedModule {
-                name: import_path.clone(),
-                path: file_path,
-                program,
-                exports,
-                imports,
-            };
-
-            self.modules.insert(import_path.clone(), parsed);
-
-            // Recurse into this module's imports
-            self.discover_imports(&import_path)?;
         }
 
         if self.errors.is_empty() {
@@ -245,6 +214,48 @@ impl<'a> Resolver<'a> {
         } else {
             Err(std::mem::take(&mut self.errors))
         }
+    }
+
+    /// Load, parse, and register a single module.
+    fn load_module(&mut self, name: &str, file_path: &Path) -> Result<(), Vec<ModuleResolveError>> {
+        let source = match self.reader.read_source(file_path) {
+            Ok(s) => s,
+            Err(msg) => {
+                self.errors.push(ModuleResolveError::IoError {
+                    file: file_path.to_path_buf(),
+                    message: msg,
+                });
+                return Ok(());
+            }
+        };
+
+        let mut parser = Parser::new(&source);
+        let program = parser.parse_program();
+
+        if parser.diagnostics().has_errors() {
+            let messages: Vec<String> = parser.diagnostics()
+                .iter()
+                .map(|d| d.message.clone())
+                .collect();
+            self.errors.push(ModuleResolveError::ParseError {
+                module_path: name.to_string(),
+                file: file_path.to_path_buf(),
+                messages,
+            });
+            return Ok(());
+        }
+
+        let imports = extract_imports(&program);
+
+        let parsed = ParsedModule {
+            name: name.to_string(),
+            path: file_path.to_path_buf(),
+            program,
+            imports,
+        };
+
+        self.modules.insert(name.to_string(), parsed);
+        Ok(())
     }
 
     /// Find the file for a module path like "Math.Fp64" → "Math/Fp64.fwgsl".
@@ -257,6 +268,31 @@ impl<'a> Resolver<'a> {
             }
         }
         None
+    }
+
+    /// Find all .fwgsl files under a namespace directory for wildcard imports.
+    /// `import Foo.*` looks for all `Foo/*.fwgsl` files in source roots.
+    fn find_wildcard_modules(&self, namespace: &str) -> Vec<(String, PathBuf)> {
+        let dir_relative = namespace.replace('.', "/");
+        let mut results = Vec::new();
+        for root in &self.source_roots {
+            let dir = root.join(&dir_relative);
+            // List all .fwgsl files in the directory
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("fwgsl") {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            let mod_name = format!("{}.{}", namespace, stem);
+                            if !results.iter().any(|(n, _): &(String, PathBuf)| n == &mod_name) {
+                                results.push((mod_name, path));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        results
     }
 
     /// Topological sort of modules. Returns modules in dependency order.
@@ -330,16 +366,6 @@ fn extract_module_name(program: &Program) -> Option<String> {
     None
 }
 
-/// Extract the export list from a module declaration.
-fn extract_exports_from_program(program: &Program) -> Option<Vec<String>> {
-    for decl in &program.decls {
-        if let Decl::ModuleDecl { exports, .. } = decl {
-            return exports.clone();
-        }
-    }
-    None
-}
-
 /// Extract all import declarations from a program.
 fn extract_imports(program: &Program) -> Vec<ModuleImport> {
     program.decls.iter().filter_map(|decl| {
@@ -354,12 +380,29 @@ fn extract_imports(program: &Program) -> Vec<ModuleImport> {
     }).collect()
 }
 
-/// Derive a module name from a file path: `src/Math/Fp64.fwgsl` → `Math.Fp64`.
-fn derive_module_name(path: &Path) -> String {
-    let stem = path.file_stem()
+/// Derive a module name from a file path relative to source roots.
+/// `src/Math/Fp64.fwgsl` with source root `src/` → `Math.Fp64`.
+/// Falls back to just the file stem if no source root matches.
+fn derive_module_name(path: &Path, source_roots: &[PathBuf]) -> String {
+    let path = if path.is_absolute() { path.to_path_buf() } else { path.to_path_buf() };
+    for root in source_roots {
+        if let Ok(relative) = path.strip_prefix(root) {
+            let name = relative
+                .with_extension("")
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(".");
+            if !name.is_empty() {
+                return name;
+            }
+        }
+    }
+    // Fallback: just the file stem
+    path.file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("Main");
-    stem.to_string()
+        .unwrap_or("Main")
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +458,7 @@ mod tests {
 import Utils
 add x y = x + y
 "#;
-        let utils_source = r#"module Utils exposing (helper)
+        let utils_source = r#"module Utils
 helper x = x
 "#;
         let mut parser = Parser::new(root_source);
@@ -518,7 +561,7 @@ f x = x
 import Math.Fp64
 f x = x
 "#;
-        let fp64_source = r#"module Math.Fp64 exposing (Fp64)
+        let fp64_source = r#"module Math.Fp64
 data Fp64 = Fp64 F32 F32
 "#;
 

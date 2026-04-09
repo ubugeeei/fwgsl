@@ -167,14 +167,18 @@ pub enum Decl {
         span: Span,
         comments: Vec<String>,
     },
-    /// Module header: `module Math.Fp64 exposing (Fp64, sumFp64)`
+    /// Module header (optional): `module Math.Fp64`
+    /// If absent, the module name is derived from the file path.
     ModuleDecl {
         name: String,
-        exports: Option<Vec<String>>,
         span: Span,
         comments: Vec<String>,
     },
-    /// Import declaration: `import Math.Fp64 (Fp64, sumFp64)`
+    /// Import declaration:
+    ///   `import Math.Fp64`            — import all public names
+    ///   `import Math.Fp64 (Fp64, f)`  — import specific names
+    ///   `import Math.Fp64 as Fp`      — qualified access: Fp.f
+    ///   `import Math.*`               — import all sub-modules
     ImportDecl {
         module_path: String,
         kind: ImportKind,
@@ -186,14 +190,14 @@ pub enum Decl {
 /// How names are imported from a module.
 #[derive(Debug, Clone)]
 pub enum ImportKind {
-    /// `import Foo` — import all exported names unqualified.
+    /// `import Foo` — import all public names unqualified.
     All,
     /// `import Foo (bar, baz)` — import only listed names.
     Selective(Vec<String>),
-    /// `import Foo qualified` or `import Foo qualified as F` — qualified access only.
-    Qualified(Option<String>),
-    /// `import Foo hiding (bar)` — import all except listed names.
-    Hiding(Vec<String>),
+    /// `import Foo as F` — qualified access only.
+    Qualified(String),
+    /// `import Foo.*` — import all sub-modules under Foo/.
+    Wildcard,
 }
 
 /// A method signature inside a `trait` declaration.
@@ -899,7 +903,7 @@ impl Parser {
         binds
     }
 
-    /// Parse `module Foo.Bar exposing (x, y, z)` or `module Foo.Bar`.
+    /// Parse `module Foo.Bar`.
     fn parse_module_decl(&mut self) -> Decl {
         let start = self.current_span().start;
         self.expect(SyntaxKind::KwModule);
@@ -907,26 +911,19 @@ impl Parser {
 
         let name = self.parse_dotted_upper_name();
 
-        // Optional `exposing (name, name, ...)`
-        self.skip_trivia();
-        let exports = if self.at(SyntaxKind::KwExposing) {
-            self.bump(); // consume `exposing`
-            self.skip_trivia();
-            Some(self.parse_name_list())
-        } else {
-            None
-        };
-
         let span = self.span_from(start);
         Decl::ModuleDecl {
             name,
-            exports,
             span,
             comments: vec![],
         }
     }
 
-    /// Parse `import Foo.Bar (x, y)` / `import Foo.Bar` / `import Foo.Bar qualified [as X]` / `import Foo.Bar hiding (x)`.
+    /// Parse import declarations:
+    ///   `import Foo.Bar`            — all public names
+    ///   `import Foo.Bar (x, y)`     — selective
+    ///   `import Foo.Bar as F`       — qualified
+    ///   `import Foo.*`              — wildcard (all sub-modules)
     fn parse_import_decl(&mut self) -> Decl {
         let start = self.current_span().start;
         self.expect(SyntaxKind::KwImport);
@@ -935,26 +932,33 @@ impl Parser {
         let module_path = self.parse_dotted_upper_name();
         self.skip_trivia();
 
-        let kind = if self.at(SyntaxKind::KwQualified) {
-            self.bump(); // consume `qualified`
-            self.skip_trivia();
-            let alias = if self.at(SyntaxKind::KwAs) {
-                self.bump(); // consume `as`
+        // Check for wildcard: `import Foo.*`
+        let (module_path, kind) = if self.at(SyntaxKind::Dot) {
+            // Peek ahead for `*`
+            let saved_pos = self.pos;
+            self.bump(); // consume `.`
+            if self.at(SyntaxKind::Star) {
+                self.bump(); // consume `*`
                 self.skip_trivia();
-                let tok = self.expect(SyntaxKind::UpperIdent);
-                Some(self.text_of(&tok).to_owned())
+                (module_path, ImportKind::Wildcard)
             } else {
-                None
-            };
-            ImportKind::Qualified(alias)
-        } else if self.at(SyntaxKind::KwHiding) {
-            self.bump(); // consume `hiding`
-            self.skip_trivia();
-            ImportKind::Hiding(self.parse_name_list())
-        } else if self.at(SyntaxKind::LParen) {
-            ImportKind::Selective(self.parse_name_list())
+                // Not a wildcard — it's a dotted name continuation, restore
+                self.pos = saved_pos;
+                // Continue parsing the dotted name
+                let mut full_name = module_path;
+                while self.at(SyntaxKind::Dot) {
+                    self.bump();
+                    let part = self.expect(SyntaxKind::UpperIdent);
+                    full_name.push('.');
+                    full_name.push_str(&self.text_of(&part));
+                }
+                self.skip_trivia();
+                let kind = self.parse_import_suffix();
+                (full_name, kind)
+            }
         } else {
-            ImportKind::All
+            let kind = self.parse_import_suffix();
+            (module_path, kind)
         };
 
         let span = self.span_from(start);
@@ -963,6 +967,21 @@ impl Parser {
             kind,
             span,
             comments: vec![],
+        }
+    }
+
+    /// Parse the suffix of an import: `(names)`, `as Alias`, or nothing.
+    fn parse_import_suffix(&mut self) -> ImportKind {
+        if self.at(SyntaxKind::KwAs) {
+            self.bump(); // consume `as`
+            self.skip_trivia();
+            let tok = self.expect(SyntaxKind::UpperIdent);
+            let alias = self.text_of(&tok).to_owned();
+            ImportKind::Qualified(alias)
+        } else if self.at(SyntaxKind::LParen) {
+            ImportKind::Selective(self.parse_name_list())
+        } else {
+            ImportKind::All
         }
     }
 

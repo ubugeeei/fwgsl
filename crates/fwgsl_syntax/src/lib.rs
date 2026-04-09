@@ -143,10 +143,8 @@ pub enum SyntaxKind {
     KwBitfield,
     KwConst,
     KwLoop,
-    KwExposing,
-    KwQualified,
-    KwHiding,
     KwAs,
+    KwPrivate,
 
     // ── CST node kinds ─────────────────────────────────────────────
     SourceFile,
@@ -244,7 +242,7 @@ pub enum SyntaxKind {
 
 impl SyntaxKind {
     const FIRST_KEYWORD: Self = SyntaxKind::KwModule;
-    const LAST_KEYWORD: Self = SyntaxKind::KwAs;
+    const LAST_KEYWORD: Self = SyntaxKind::KwPrivate;
 
     const FIRST_OPERATOR: Self = SyntaxKind::Plus;
     const LAST_OPERATOR: Self = SyntaxKind::PipeForward;
@@ -323,10 +321,8 @@ pub fn keyword_from_str(s: &str) -> Option<SyntaxKind> {
         "bitfield" => Some(SyntaxKind::KwBitfield),
         "const" => Some(SyntaxKind::KwConst),
         "loop" => Some(SyntaxKind::KwLoop),
-        "exposing" => Some(SyntaxKind::KwExposing),
-        "qualified" => Some(SyntaxKind::KwQualified),
-        "hiding" => Some(SyntaxKind::KwHiding),
         "as" => Some(SyntaxKind::KwAs),
+        "private" => Some(SyntaxKind::KwPrivate),
         _ => None,
     }
 }
@@ -458,10 +454,8 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::KwBitfield => "'bitfield'",
             SyntaxKind::KwConst => "'const'",
             SyntaxKind::KwLoop => "'loop'",
-            SyntaxKind::KwExposing => "'exposing'",
-            SyntaxKind::KwQualified => "'qualified'",
-            SyntaxKind::KwHiding => "'hiding'",
             SyntaxKind::KwAs => "'as'",
+            SyntaxKind::KwPrivate => "'private'",
 
             // CST node kinds
             SyntaxKind::SourceFile => "source file",

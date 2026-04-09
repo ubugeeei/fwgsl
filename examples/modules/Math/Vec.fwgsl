@@ -1,0 +1,12 @@
+-- No `module` header needed — module name is derived from path: Math.Vec
+
+-- 2D vector helpers
+
+dot2 : Vec<2, F32> -> Vec<2, F32> -> F32
+dot2 a b = a.x * b.x + a.y * b.y
+
+len2 : Vec<2, F32> -> F32
+len2 v = sqrt (dot2 v v)
+
+scale2 : F32 -> Vec<2, F32> -> Vec<2, F32>
+scale2 s v = [v.x * s, v.y * s]

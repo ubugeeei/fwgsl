@@ -1,11 +1,23 @@
-module Main
+-- Multi-module example demonstrating the simplified module system.
+--
+-- Module resolution:
+--   - No `module` header needed (derived from file path)
+--   - `import Foo` brings all public names into scope
+--   - `import Foo (bar)` selective import
+--   - `import Foo as F` qualified access
+--   - `import Foo.*` wildcard (all sub-modules under Foo/)
 
-import Utils
+import Particle
+import Math.Vec
 
-extern resource input : Storage<ReadWrite, Array<F32, 64>> @group 0 @binding 0
-extern resource output : Storage<ReadWrite, Array<F32, 64>> @group 0 @binding 1
+gravity : Vec<2, F32>
+gravity = [0.0, -9.81]
 
-@compute @workgroup_size(64, 1, 1)
-main idx =
-  let val = load (input[idx])
-  in writeAt output idx (double val)
+simulate : F32 -> Particle -> Particle
+simulate dt p =
+  let p2 = applyForce gravity dt p
+  in step dt p2
+
+-- Use dot2 from Math.Vec and kineticEnergy from Particle
+totalEnergy : Particle -> F32
+totalEnergy p = kineticEnergy p

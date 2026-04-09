@@ -1,0 +1,26 @@
+-- Module name derived from path: Particle
+
+import Math.Vec
+
+data Particle = Particle {
+  pos : Vec<2, F32>,
+  vel : Vec<2, F32>,
+  mass : F32,
+}
+
+makeParticle : Vec<2, F32> -> F32 -> Particle
+makeParticle p m = Particle { pos = p, vel = [0.0, 0.0], mass = m }
+
+applyForce : Vec<2, F32> -> F32 -> Particle -> Particle
+applyForce force dt p =
+  let accel = scale2 (1.0 / p.mass) force
+      dv    = scale2 dt accel
+  in p { vel = [p.vel.x + dv.x, p.vel.y + dv.y] }
+
+step : F32 -> Particle -> Particle
+step dt p =
+  let dx = scale2 dt p.vel
+  in p { pos = [p.pos.x + dx.x, p.pos.y + dx.y] }
+
+kineticEnergy : Particle -> F32
+kineticEnergy p = 0.5 * p.mass * dot2 p.vel p.vel
