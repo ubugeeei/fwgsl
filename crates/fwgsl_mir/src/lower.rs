@@ -486,18 +486,30 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr, ctx: &LowerCtx) -> Result<(Vec<MirStm
         }
 
         // Check for writeAt calls which become IndexAssign statements
-        HirExpr::App(_, _, _, _) => {
+        HirExpr::App(_, _, ty, _) => {
             let (func_name, args) = flatten_app(expr);
-            if func_name == "writeAt" && args.len() == 3 {
-                let buf = lower_hir_expr(args[0], ctx)?;
-                let idx = lower_hir_expr(args[1], ctx)?;
-                let val = lower_hir_expr(args[2], ctx)?;
-                let stmt = MirStmt::IndexAssign(buf, idx, val);
-                // writeAt returns (), so the result expression is a dummy
-                Ok((vec![stmt], MirExpr::Lit(MirLit::I32(0))))
+            // Lower each argument via lower_hir_expr_to_stmts so that
+            // Let-bindings inside arguments (from beta-reduced lambdas)
+            // are properly emitted as preceding statements.
+            let mut pre_stmts = Vec::new();
+            let mut mir_args = Vec::new();
+            for a in &args {
+                let (mut arg_stmts, arg_expr) = lower_hir_expr_to_stmts(a, ctx)?;
+                pre_stmts.append(&mut arg_stmts);
+                mir_args.push(arg_expr);
+            }
+            if func_name == "writeAt" && mir_args.len() == 3 {
+                let stmt = MirStmt::IndexAssign(
+                    mir_args[0].clone(),
+                    mir_args[1].clone(),
+                    mir_args[2].clone(),
+                );
+                pre_stmts.push(stmt);
+                Ok((pre_stmts, MirExpr::Lit(MirLit::I32(0))))
             } else {
-                let mir_expr = lower_hir_expr(expr, ctx)?;
-                Ok((vec![], mir_expr))
+                let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
+                let result = lower_app_with_args(&func_name, mir_args, mir_ty, ctx)?;
+                Ok((pre_stmts, result))
             }
         }
 
@@ -542,94 +554,7 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
                 args.iter().map(|a| lower_hir_expr(a, ctx)).collect();
             let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
             let mir_args = mir_args?;
-
-            match (func_name.as_str(), mir_args.as_slice()) {
-                ("negate", [arg]) => Ok(MirExpr::UnaryOp(
-                    MirUnaryOp::Neg,
-                    Box::new(arg.clone()),
-                    mir_ty,
-                )),
-                ("$mod", [lhs, rhs]) => {
-                    let div = MirExpr::BinOp(
-                        MirBinOp::Div,
-                        Box::new(lhs.clone()),
-                        Box::new(rhs.clone()),
-                        mir_ty.clone(),
-                    );
-                    let floored = MirExpr::Call("$floor".to_string(), vec![div], mir_ty.clone());
-                    let product = MirExpr::BinOp(
-                        MirBinOp::Mul,
-                        Box::new(rhs.clone()),
-                        Box::new(floored),
-                        mir_ty.clone(),
-                    );
-                    Ok(MirExpr::BinOp(
-                        MirBinOp::Sub,
-                        Box::new(lhs.clone()),
-                        Box::new(product),
-                        mir_ty,
-                    ))
-                }
-                ("$atan", [y, x]) | ("$atan2", [y, x]) => Ok(MirExpr::Call(
-                    "atan2".to_string(),
-                    vec![y.clone(), x.clone()],
-                    mir_ty,
-                )),
-                ("load", [arg]) => {
-                    // load is identity — just pass through the argument
-                    Ok(arg.clone())
-                }
-                ("toF32", [arg]) => {
-                    Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::F32))
-                }
-                ("$splat2", [arg]) => Ok(MirExpr::Call(
-                    "$vec2".to_string(),
-                    vec![arg.clone(), arg.clone()],
-                    mir_ty,
-                )),
-                ("$splat3", [arg]) => Ok(MirExpr::Call(
-                    "$vec3".to_string(),
-                    vec![arg.clone(), arg.clone(), arg.clone()],
-                    mir_ty,
-                )),
-                ("$splat4", [arg]) => Ok(MirExpr::Call(
-                    "$vec4".to_string(),
-                    vec![arg.clone(), arg.clone(), arg.clone(), arg.clone()],
-                    mir_ty,
-                )),
-                ("$vecX", [arg]) => Ok(MirExpr::FieldAccess(
-                    Box::new(arg.clone()),
-                    "x".to_string(),
-                    mir_ty,
-                )),
-                ("$vecY", [arg]) => Ok(MirExpr::FieldAccess(
-                    Box::new(arg.clone()),
-                    "y".to_string(),
-                    mir_ty,
-                )),
-                ("$vecZ", [arg]) => Ok(MirExpr::FieldAccess(
-                    Box::new(arg.clone()),
-                    "z".to_string(),
-                    mir_ty,
-                )),
-                ("$vecW", [arg]) => Ok(MirExpr::FieldAccess(
-                    Box::new(arg.clone()),
-                    "w".to_string(),
-                    mir_ty,
-                )),
-                _ => {
-                    // Check if this is a constructor call for a sum type with fields
-                    if let Some((dt_name, tag, _fields)) = ctx.constructors.get(func_name.as_str()) {
-                        if ctx.is_sum_type(dt_name) && ctx.has_fields(dt_name) {
-                            // Emit as DataType struct construction: DataType(tag, args...)
-                            let mut all_args = vec![MirExpr::Lit(MirLit::U32(*tag))];
-                            all_args.extend(mir_args);
-                            return Ok(MirExpr::ConstructStruct(dt_name.clone(), all_args));
-                        }
-                    }
-                    Ok(MirExpr::Call(func_name, mir_args, mir_ty))
-                }
-            }
+            lower_app_with_args(&func_name, mir_args, mir_ty, ctx)
         }
 
         HirExpr::ConstructorCall(name, _tag, args, _ty, _span) => {
@@ -722,6 +647,99 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
 
         HirExpr::Case(_, _, _ty, _span) => {
             Err("Case-expression in pure expression context; use lower_hir_expr_to_stmts".into())
+        }
+    }
+}
+
+/// Lower an application with already-lowered arguments into a MIR expression.
+fn lower_app_with_args(
+    func_name: &str,
+    mir_args: Vec<MirExpr>,
+    mir_ty: MirType,
+    ctx: &LowerCtx,
+) -> Result<MirExpr, String> {
+    match (func_name, mir_args.as_slice()) {
+        ("negate", [arg]) => Ok(MirExpr::UnaryOp(
+            MirUnaryOp::Neg,
+            Box::new(arg.clone()),
+            mir_ty,
+        )),
+        ("$mod", [lhs, rhs]) => {
+            let div = MirExpr::BinOp(
+                MirBinOp::Div,
+                Box::new(lhs.clone()),
+                Box::new(rhs.clone()),
+                mir_ty.clone(),
+            );
+            let floored = MirExpr::Call("$floor".to_string(), vec![div], mir_ty.clone());
+            let product = MirExpr::BinOp(
+                MirBinOp::Mul,
+                Box::new(rhs.clone()),
+                Box::new(floored),
+                mir_ty.clone(),
+            );
+            Ok(MirExpr::BinOp(
+                MirBinOp::Sub,
+                Box::new(lhs.clone()),
+                Box::new(product),
+                mir_ty,
+            ))
+        }
+        ("$atan", [y, x]) | ("$atan2", [y, x]) => Ok(MirExpr::Call(
+            "atan2".to_string(),
+            vec![y.clone(), x.clone()],
+            mir_ty,
+        )),
+        ("load", [arg]) => {
+            // load is identity — just pass through the argument
+            Ok(arg.clone())
+        }
+        ("toF32", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::F32)),
+        ("$splat2", [arg]) => Ok(MirExpr::Call(
+            "$vec2".to_string(),
+            vec![arg.clone(), arg.clone()],
+            mir_ty,
+        )),
+        ("$splat3", [arg]) => Ok(MirExpr::Call(
+            "$vec3".to_string(),
+            vec![arg.clone(), arg.clone(), arg.clone()],
+            mir_ty,
+        )),
+        ("$splat4", [arg]) => Ok(MirExpr::Call(
+            "$vec4".to_string(),
+            vec![arg.clone(), arg.clone(), arg.clone(), arg.clone()],
+            mir_ty,
+        )),
+        ("$vecX", [arg]) => Ok(MirExpr::FieldAccess(
+            Box::new(arg.clone()),
+            "x".to_string(),
+            mir_ty,
+        )),
+        ("$vecY", [arg]) => Ok(MirExpr::FieldAccess(
+            Box::new(arg.clone()),
+            "y".to_string(),
+            mir_ty,
+        )),
+        ("$vecZ", [arg]) => Ok(MirExpr::FieldAccess(
+            Box::new(arg.clone()),
+            "z".to_string(),
+            mir_ty,
+        )),
+        ("$vecW", [arg]) => Ok(MirExpr::FieldAccess(
+            Box::new(arg.clone()),
+            "w".to_string(),
+            mir_ty,
+        )),
+        _ => {
+            // Check if this is a constructor call for a sum type with fields
+            if let Some((dt_name, tag, _fields)) = ctx.constructors.get(func_name) {
+                if ctx.is_sum_type(dt_name) && ctx.has_fields(dt_name) {
+                    let mut all_args = vec![MirExpr::Lit(MirLit::U32(*tag))];
+                    all_args.extend(mir_args);
+                    return Ok(MirExpr::ConstructStruct(dt_name.clone(), all_args));
+                }
+            }
+            Ok(MirExpr::Call(func_name.to_string(), mir_args, mir_ty))
         }
     }
 }

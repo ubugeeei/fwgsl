@@ -393,15 +393,94 @@ impl AstLowering {
             }
 
             Expr::App(func, arg, span) => {
-                let (hir_func, func_ty) = self.lower_expr(func, env);
-                let (hir_arg, arg_ty) = self.lower_expr(arg, env);
-                let ret_ty = self.engine.fresh_var();
-                let expected = Ty::arrow(arg_ty, ret_ty.clone());
-                self.engine.unify(&func_ty, &expected, *span);
-                (
-                    HirExpr::App(Box::new(hir_func), Box::new(hir_arg), ret_ty.clone(), *span),
-                    ret_ty,
-                )
+                // Beta-reduce: App(Lambda([p], body), arg) → Let([(p, arg)], body)
+                // Unwrap Paren wrappers to find the underlying Lambda
+                let unwrapped_func = {
+                    let mut f = func.as_ref();
+                    while let Expr::Paren(inner, _) = f {
+                        f = inner.as_ref();
+                    }
+                    f
+                };
+                if let Expr::Lambda(pats, body, lam_span) = unwrapped_func {
+                    if let Some((first_pat, rest_pats)) = pats.split_first() {
+                        let mut local_env = env.clone();
+                        let param_ty = self.engine.fresh_var();
+                        let (hir_arg, arg_ty) = self.lower_expr(arg, &mut local_env);
+                        self.engine.unify(&param_ty, &arg_ty, *span);
+
+                        // Extract variable name from pattern for Let binding
+                        let param_name = match first_pat {
+                            Pat::Var(name, _) => name.clone(),
+                            Pat::Wild(_) => "_lambda_param".to_string(),
+                            _ => "_lambda_param".to_string(),
+                        };
+                        self.bind_pattern(first_pat, &param_ty, &mut local_env);
+
+                        if rest_pats.is_empty() {
+                            // Single-param lambda: Let([(name, arg)], body)
+                            let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
+                            (
+                                HirExpr::Let(
+                                    vec![(param_name, hir_arg)],
+                                    Box::new(hir_body),
+                                    body_ty.clone(),
+                                    *span,
+                                ),
+                                body_ty,
+                            )
+                        } else {
+                            // Multi-param lambda: reduce first param, recurse on remaining
+                            let inner_lambda = Expr::Lambda(
+                                rest_pats.to_vec(),
+                                body.clone(),
+                                *lam_span,
+                            );
+                            let (hir_body, body_ty) =
+                                self.lower_expr(&inner_lambda, &mut local_env);
+                            (
+                                HirExpr::Let(
+                                    vec![(param_name, hir_arg)],
+                                    Box::new(hir_body),
+                                    body_ty.clone(),
+                                    *span,
+                                ),
+                                body_ty,
+                            )
+                        }
+                    } else {
+                        // Empty lambda params — shouldn't happen, fall through to normal App
+                        let (hir_func, func_ty) = self.lower_expr(func, env);
+                        let (hir_arg, arg_ty) = self.lower_expr(arg, env);
+                        let ret_ty = self.engine.fresh_var();
+                        let expected = Ty::arrow(arg_ty, ret_ty.clone());
+                        self.engine.unify(&func_ty, &expected, *span);
+                        (
+                            HirExpr::App(
+                                Box::new(hir_func),
+                                Box::new(hir_arg),
+                                ret_ty.clone(),
+                                *span,
+                            ),
+                            ret_ty,
+                        )
+                    }
+                } else {
+                    let (hir_func, func_ty) = self.lower_expr(func, env);
+                    let (hir_arg, arg_ty) = self.lower_expr(arg, env);
+                    let ret_ty = self.engine.fresh_var();
+                    let expected = Ty::arrow(arg_ty, ret_ty.clone());
+                    self.engine.unify(&func_ty, &expected, *span);
+                    (
+                        HirExpr::App(
+                            Box::new(hir_func),
+                            Box::new(hir_arg),
+                            ret_ty.clone(),
+                            *span,
+                        ),
+                        ret_ty,
+                    )
+                }
             }
 
             Expr::Infix(lhs, op, rhs, span) => {
