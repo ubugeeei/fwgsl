@@ -323,6 +323,7 @@ fn lower_hir_function(f: &HirFunction, ctx: &LowerCtx) -> Result<MirFunction, St
             MirParam {
                 name: name.clone(),
                 ty: resolve(ty),
+                location: None,
             }
         })
         .collect();
@@ -392,6 +393,39 @@ fn lower_hir_entry_point(ep: &HirEntryPoint, ctx: &LowerCtx) -> Result<MirEntryP
             let cast_to_i32 = MirExpr::Cast(Box::new(gid_x), MirType::I32);
             stmts.insert(0, MirStmt::Let(name.clone(), MirType::I32, cast_to_i32));
         }
+    } else if stage == ShaderStage::Vertex {
+        // For vertex shaders, auto-map the first parameter to @builtin(vertex_index).
+        if let Some((name, _ty)) = ep.params.first() {
+            builtins.push((
+                name.clone(),
+                BuiltinBinding::VertexIndex,
+                MirType::U32,
+            ));
+        }
+        // Additional params beyond the first become regular params.
+        for (name, ty) in ep.params.iter().skip(1) {
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
+            params.push(MirParam {
+                name: name.clone(),
+                ty: mir_ty,
+                location: None,
+            });
+        }
+    } else if stage == ShaderStage::Fragment {
+        // Fragment shader params get auto-assigned @location(N) attributes.
+        params = ep
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, (name, ty))| {
+                let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
+                MirParam {
+                    name: name.clone(),
+                    ty: mir_ty,
+                    location: Some(i as u32),
+                }
+            })
+            .collect();
     } else {
         params = ep
             .params
@@ -401,6 +435,7 @@ fn lower_hir_entry_point(ep: &HirEntryPoint, ctx: &LowerCtx) -> Result<MirEntryP
                 MirParam {
                     name: name.clone(),
                     ty: mir_ty,
+                    location: None,
                 }
             })
             .collect();
