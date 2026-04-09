@@ -71,6 +71,39 @@ pub enum Decl {
         value: Expr,
         span: Span,
     },
+    /// Trait declaration: `trait Num a where (+) : a -> a -> a ...`
+    TraitDecl {
+        name: String,
+        /// Type variable the trait is parameterised over.
+        var: String,
+        methods: Vec<TraitMethod>,
+        span: Span,
+    },
+    /// Impl declaration: `impl Num F32 where (+) x y = $add x y ...`
+    ImplDecl {
+        trait_name: String,
+        /// The concrete type this impl is for.
+        ty: Type,
+        methods: Vec<ImplMethod>,
+        span: Span,
+    },
+}
+
+/// A method signature inside a `trait` declaration.
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// A method implementation inside an `impl` declaration.
+#[derive(Debug, Clone)]
+pub struct ImplMethod {
+    pub name: String,
+    pub params: Vec<Pat>,
+    pub body: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -504,6 +537,8 @@ impl Parser {
             SyntaxKind::KwResource => Some(self.parse_resource_decl(false)),
             SyntaxKind::KwBitfield => Some(self.parse_bitfield_decl()),
             SyntaxKind::KwConst => Some(self.parse_const_decl()),
+            SyntaxKind::KwTrait => Some(self.parse_trait_decl()),
+            SyntaxKind::KwImpl => Some(self.parse_impl_decl()),
             SyntaxKind::Ident => {
                 // Could be a type signature or function declaration.
                 // Look ahead: name then `:` means type sig; otherwise fun decl.
@@ -1085,6 +1120,153 @@ impl Parser {
             name,
             ty,
             value,
+            span,
+        }
+    }
+
+    /// Parse `class Name var where method1 : Type ... methodN : Type`
+    fn parse_trait_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwTrait);
+        self.skip_trivia();
+
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+
+        let var_tok = self.expect(SyntaxKind::Ident);
+        let var = self.text_of(&var_tok).to_owned();
+        self.skip_trivia();
+
+        self.expect(SyntaxKind::KwWhere);
+        self.skip_trivia();
+
+        // Parse method signatures — they follow layout rules (one per line)
+        let mut methods = Vec::new();
+        // Consume optional layout open brace
+        self.eat(SyntaxKind::LayoutBraceOpen);
+        self.skip_trivia();
+
+        while !self.at_layout_end() && !self.at_end() && self.consume_fuel() {
+            self.eat_layout_semi();
+            self.skip_trivia();
+            if self.at_layout_end() || self.at_end() {
+                break;
+            }
+
+            let mstart = self.current_span().start;
+            // Method name: either Ident or operator in parens e.g. (+)
+            let method_name = if self.at(SyntaxKind::LParen) {
+                self.bump(); // (
+                self.skip_trivia();
+                let op_tok = self.bump();
+                let op_name = self.text_of(&op_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::RParen);
+                op_name
+            } else {
+                let tok = self.expect(SyntaxKind::Ident);
+                self.text_of(&tok).to_owned()
+            };
+            self.skip_trivia();
+            self.expect(SyntaxKind::Colon);
+            self.skip_trivia();
+            let ty = self.parse_type();
+            let mspan = self.span_from(mstart);
+            methods.push(TraitMethod {
+                name: method_name,
+                ty,
+                span: mspan,
+            });
+            self.eat_layout_semi();
+        }
+        self.eat_layout_close();
+
+        let span = self.span_from(start);
+        Decl::TraitDecl {
+            name,
+            var,
+            methods,
+            span,
+        }
+    }
+
+    /// Parse `impl TraitName Type where method1 args = body ...`
+    fn parse_impl_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwImpl);
+        self.skip_trivia();
+
+        let trait_tok = self.expect(SyntaxKind::UpperIdent);
+        let trait_name = self.text_of(&trait_tok).to_owned();
+        self.skip_trivia();
+
+        let ty = self.parse_type_atom();
+        self.skip_trivia();
+
+        self.expect(SyntaxKind::KwWhere);
+        self.skip_trivia();
+
+        // Parse method implementations
+        let mut methods = Vec::new();
+        self.eat(SyntaxKind::LayoutBraceOpen);
+        self.skip_trivia();
+
+        while !self.at_layout_end() && !self.at_end() && self.consume_fuel() {
+            self.eat_layout_semi();
+            self.skip_trivia();
+            if self.at_layout_end() || self.at_end() {
+                break;
+            }
+
+            let mstart = self.current_span().start;
+            // Method name: either Ident or operator in parens
+            let method_name = if self.at(SyntaxKind::LParen) {
+                self.bump();
+                self.skip_trivia();
+                let op_tok = self.bump();
+                let op_name = self.text_of(&op_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::RParen);
+                op_name
+            } else {
+                let tok = self.expect(SyntaxKind::Ident);
+                self.text_of(&tok).to_owned()
+            };
+            self.skip_trivia();
+
+            // Parse params before `=`
+            let mut params = Vec::new();
+            while !self.at(SyntaxKind::Equals) && !self.at_end() && self.consume_fuel() {
+                if matches!(
+                    self.peek_non_trivia(),
+                    SyntaxKind::LayoutSemicolon | SyntaxKind::LayoutBraceClose
+                ) {
+                    break;
+                }
+                params.push(self.parse_pat_atom());
+                self.skip_trivia();
+            }
+
+            self.expect(SyntaxKind::Equals);
+            self.skip_trivia();
+            let body = self.parse_expr();
+            let mspan = self.span_from(mstart);
+            methods.push(ImplMethod {
+                name: method_name,
+                params,
+                body,
+                span: mspan,
+            });
+            self.eat_layout_semi();
+        }
+        self.eat_layout_close();
+
+        let span = self.span_from(start);
+        Decl::ImplDecl {
+            trait_name,
+            ty,
+            methods,
             span,
         }
     }

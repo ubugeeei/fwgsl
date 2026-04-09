@@ -21,6 +21,8 @@ pub struct AstLowering {
     pub constructors: HashMap<String, ConstructorInfo>,
     pub data_types: HashMap<String, fwgsl_semantic::DataTypeInfo>,
     pub type_aliases: HashMap<String, Ty>,
+    pub traits: HashMap<String, fwgsl_semantic::TraitInfo>,
+    pub impls: Vec<fwgsl_semantic::ImplInfo>,
 }
 
 impl AstLowering {
@@ -36,6 +38,8 @@ impl AstLowering {
             constructors: sa.constructors.clone(),
             data_types: sa.data_types.clone(),
             type_aliases: sa.type_aliases.clone(),
+            traits: sa.traits.clone(),
+            impls: sa.impls.clone(),
         };
         lowering.add_builtins();
         lowering
@@ -233,6 +237,39 @@ impl AstLowering {
                     });
                 }
                 Decl::TypeSig { .. } | Decl::TypeAlias { .. } => {}
+                Decl::TraitDecl { .. } => {
+                    // Trait declarations are type-level only — no HIR output.
+                }
+                Decl::ImplDecl {
+                    trait_name,
+                    ty,
+                    methods,
+                    span: _,
+                } => {
+                    // Collect method lowering info first to avoid borrow conflict.
+                    let impl_ty_scheme = self.convert_syntax_type_scheme(ty);
+                    let type_suffix = fwgsl_semantic::format_type_suffix(&impl_ty_scheme.ty);
+                    let mut method_info: Vec<(String, Ty)> = Vec::new();
+                    if let Some(trait_info) = self.traits.get(trait_name) {
+                        for m in methods {
+                            let mangled = fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
+                            for (tmethod_name, tmethod_ty) in &trait_info.methods {
+                                if tmethod_name == &m.name {
+                                    let concrete_ty = fwgsl_semantic::replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
+                                    method_info.push((mangled.clone(), concrete_ty));
+                                }
+                            }
+                        }
+                    }
+                    // Now lower each method body
+                    for (i, m) in methods.iter().enumerate() {
+                        if let Some((mangled, concrete_ty)) = method_info.get(i) {
+                            if let Some(f) = self.lower_impl_method(mangled, &m.params, &m.body, concrete_ty, m.span) {
+                                functions.push(f);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -301,6 +338,53 @@ impl AstLowering {
 
         Some(HirFunction {
             name: name.to_string(),
+            params: final_params,
+            return_ty,
+            body,
+            span,
+        })
+    }
+
+    /// Lower an impl method body into a regular HIR function.
+    fn lower_impl_method(
+        &mut self,
+        mangled_name: &str,
+        params: &[Pat],
+        body: &Expr,
+        concrete_ty: &Ty,
+        span: Span,
+    ) -> Option<HirFunction> {
+        let mut local_env = self.env.clone();
+
+        // Extract parameter types from the concrete method type (which is curried arrows)
+        let mut hir_params = Vec::new();
+        let mut remaining_ty = concrete_ty.clone();
+        for pat in params {
+            let param_ty = match &remaining_ty {
+                Ty::Arrow(arg, ret) => {
+                    let pt = (**arg).clone();
+                    remaining_ty = (**ret).clone();
+                    pt
+                }
+                _ => self.engine.fresh_var(),
+            };
+            let pname = pat_name(pat);
+            self.bind_pattern(pat, &param_ty, &mut local_env);
+            hir_params.push((pname, param_ty));
+        }
+
+        let (hir_body, body_ty) = self.lower_expr(body, &mut local_env);
+        self.engine.unify(&body_ty, &remaining_ty, span);
+
+        let final_params: Vec<(String, Ty)> = hir_params
+            .into_iter()
+            .map(|(n, ty)| (n, self.engine.finalize(&ty)))
+            .collect();
+        let return_ty = self.engine.finalize(&body_ty);
+        let body = self.finalize_expr(hir_body);
+
+        Some(HirFunction {
+            name: mangled_name.to_string(),
             params: final_params,
             return_ty,
             body,
@@ -727,28 +811,52 @@ impl AstLowering {
                 let (hir_expr, expr_ty) = self.lower_expr(expr, env);
                 let expr_ty_final = self.engine.finalize(&expr_ty);
 
-                // Check for Vec swizzle patterns
-                let result_ty = if fwgsl_semantic::is_swizzle(field) {
+                // 1. Check for Vec swizzle patterns
+                if fwgsl_semantic::is_swizzle(field) {
                     if let Some((n, scalar)) = fwgsl_semantic::extract_vec_type(&expr_ty_final) {
                         if fwgsl_semantic::validate_swizzle(field, n) {
-                            if field.len() == 1 {
+                            let result_ty = if field.len() == 1 {
                                 scalar
                             } else {
                                 Ty::app(
                                     Ty::app(Ty::Con("Vec".into()), Ty::Nat(field.len() as u64)),
                                     scalar,
                                 )
-                            }
-                        } else {
-                            self.engine.fresh_var()
+                            };
+                            return (
+                                HirExpr::FieldAccess(
+                                    Box::new(hir_expr),
+                                    field.clone(),
+                                    result_ty.clone(),
+                                    *span,
+                                ),
+                                result_ty,
+                            );
                         }
-                    } else {
-                        self.engine.fresh_var()
                     }
-                } else {
-                    self.engine.fresh_var()
-                };
+                }
 
+                // 2. Method-call syntax sugar: `x.method` → `method x`
+                //    If the field name is a function in the env (not a struct field),
+                //    desugar to function application.
+                if let Some(scheme) = env.lookup(field) {
+                    let func_ty = self.engine.instantiate(scheme);
+                    let ret_ty = self.engine.fresh_var();
+                    let expected = Ty::arrow(expr_ty, ret_ty.clone());
+                    self.engine.unify(&func_ty, &expected, *span);
+                    return (
+                        HirExpr::App(
+                            Box::new(HirExpr::Var(field.clone(), func_ty, *span)),
+                            Box::new(hir_expr),
+                            ret_ty.clone(),
+                            *span,
+                        ),
+                        ret_ty,
+                    );
+                }
+
+                // 3. Regular field access (struct fields, bitfield fields)
+                let result_ty = self.engine.fresh_var();
                 (
                     HirExpr::FieldAccess(
                         Box::new(hir_expr),
@@ -1215,7 +1323,13 @@ impl AstLowering {
     fn finalize_expr(&self, expr: HirExpr) -> HirExpr {
         match expr {
             HirExpr::Lit(lit, ty, span) => HirExpr::Lit(lit, self.engine.finalize(&ty), span),
-            HirExpr::Var(name, ty, span) => HirExpr::Var(name, self.engine.finalize(&ty), span),
+            HirExpr::Var(name, ty, span) => {
+                let final_ty = self.engine.finalize(&ty);
+                // Trait method dispatch: if this var is a trait method and the
+                // type resolves to a concrete type, rewrite to the mangled impl function.
+                let resolved_name = self.resolve_trait_method(&name, &final_ty);
+                HirExpr::Var(resolved_name, final_ty, span)
+            }
             HirExpr::App(func, arg, ty, span) => HirExpr::App(
                 Box::new(self.finalize_expr(*func)),
                 Box::new(self.finalize_expr(*arg)),
@@ -1249,13 +1363,26 @@ impl AstLowering {
                 self.engine.finalize(&ty),
                 span,
             ),
-            HirExpr::BinOp(op, lhs, rhs, ty, span) => HirExpr::BinOp(
-                op,
-                Box::new(self.finalize_expr(*lhs)),
-                Box::new(self.finalize_expr(*rhs)),
-                self.engine.finalize(&ty),
-                span,
-            ),
+            HirExpr::BinOp(op, lhs, rhs, ty, span) => {
+                let final_lhs = self.finalize_expr(*lhs);
+                let final_rhs = self.finalize_expr(*rhs);
+                let final_ty = self.engine.finalize(&ty);
+                let lhs_ty = final_lhs.ty().clone();
+
+                // Check if there's a trait instance for this operator on the lhs type.
+                // Built-in operator-to-trait mapping: + → Add, - → Sub, * → Mul, / → Div, etc.
+                let op_str = op.to_str();
+                if let Some(mangled) = self.resolve_operator_trait(op_str, &lhs_ty) {
+                    // Rewrite BinOp → App(App(Var(mangled), lhs), rhs)
+                    let method_ty = Ty::arrow(lhs_ty, Ty::arrow(final_rhs.ty().clone(), final_ty.clone()));
+                    let var_expr = HirExpr::Var(mangled, method_ty, span);
+                    let partial_ty = Ty::arrow(final_rhs.ty().clone(), final_ty.clone());
+                    let app1 = HirExpr::App(Box::new(var_expr), Box::new(final_lhs), partial_ty, span);
+                    HirExpr::App(Box::new(app1), Box::new(final_rhs), final_ty, span)
+                } else {
+                    HirExpr::BinOp(op, Box::new(final_lhs), Box::new(final_rhs), final_ty, span)
+                }
+            }
             HirExpr::ConstructorCall(name, tag, args, ty, span) => HirExpr::ConstructorCall(
                 name,
                 tag,
@@ -1295,6 +1422,52 @@ impl AstLowering {
         }
     }
 
+    /// Check if an operator (e.g. "+") has a trait impl for the given operand type.
+    /// Returns the mangled function name if found (e.g. "add_Fp64"), None otherwise.
+    fn resolve_operator_trait(&self, op: &str, operand_ty: &Ty) -> Option<String> {
+        for trait_info in self.traits.values() {
+            for (method_name, _) in &trait_info.methods {
+                if method_name == op {
+                    for inst in &self.impls {
+                        if inst.trait_name == trait_info.name && inst.ty == *operand_ty {
+                            if let Some(mangled) = inst.methods.get(op) {
+                                return Some(mangled.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Resolve a trait method name to a concrete impl method name,
+    /// if the resolved type is concrete and a matching impl exists.
+    fn resolve_trait_method(&self, name: &str, ty: &Ty) -> String {
+        // Check if this name is a method in any trait
+        for trait_info in self.traits.values() {
+            for (method_name, _) in &trait_info.methods {
+                if method_name == name {
+                    // Extract the concrete type from the resolved type.
+                    // The method type is `a -> a -> a` (or similar), so the first
+                    // argument type tells us the impl type.
+                    let concrete = extract_first_arg_type(ty);
+                    if let Some(concrete_ty) = concrete {
+                        // Look for a matching impl
+                        for inst in &self.impls {
+                            if inst.trait_name == trait_info.name && inst.ty == concrete_ty {
+                                if let Some(mangled) = inst.methods.get(name) {
+                                    return mangled.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        name.to_string()
+    }
+
     fn finalize_pattern(&self, pattern: HirPattern) -> HirPattern {
         match pattern {
             HirPattern::Wild => HirPattern::Wild,
@@ -1322,6 +1495,15 @@ fn desugar_where(body: &Expr, where_binds: &[(String, Expr)], span: Span) -> Exp
         body.clone()
     } else {
         Expr::Let(where_binds.to_vec(), Box::new(body.clone()), span)
+    }
+}
+
+/// Extract the first argument type from a curried function type.
+/// `(A -> B -> C)` → `Some(A)`
+fn extract_first_arg_type(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::Arrow(arg, _) => Some((**arg).clone()),
+        _ => None,
     }
 }
 

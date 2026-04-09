@@ -700,8 +700,8 @@ pub fn classify_tokens(tokens: &[Token], _source: &str) -> Vec<ClassifiedToken> 
             | SyntaxKind::KwImport
             | SyntaxKind::KwData
             | SyntaxKind::KwType
-            | SyntaxKind::KwClass
-            | SyntaxKind::KwInstance
+            | SyntaxKind::KwTrait
+            | SyntaxKind::KwImpl
             | SyntaxKind::KwForall
             | SyntaxKind::KwCase
             | SyntaxKind::KwOf
@@ -1144,7 +1144,7 @@ mod tests {
 
     #[test]
     fn test_classify_all_keywords() {
-        let source = "module where import data type class instance let in case of match if then else do forall infixl infixr infix deriving";
+        let source = "module where import data type trait impl let in case of match if then else do forall infixl infixr infix deriving";
         let tokens = lex(source);
         let classified = classify_tokens(&tokens, source);
 

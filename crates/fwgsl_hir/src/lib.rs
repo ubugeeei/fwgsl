@@ -200,6 +200,25 @@ impl BinOp {
         }
     }
 
+    /// Return the fwgsl source-level operator string (inverse of `parse`).
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Mod => "%",
+            BinOp::Eq => "==",
+            BinOp::Ne => "/=",
+            BinOp::Lt => "<",
+            BinOp::Gt => ">",
+            BinOp::Le => "<=",
+            BinOp::Ge => ">=",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
+        }
+    }
+
     pub fn to_wgsl_str(&self) -> &'static str {
         match self {
             BinOp::Add => "+",

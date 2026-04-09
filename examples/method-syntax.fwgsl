@@ -1,0 +1,41 @@
+-- Method-call syntax sugar example.
+--
+-- Demonstrates `x.method y` as sugar for `method x y`,
+-- and how it integrates with the pipeline operator.
+
+-- A trait for types that support clamping.
+trait Clampable a where
+  clampVal : a -> a -> a -> a
+
+-- F32 clamping via the built-in $clamp.
+impl Clampable F32 where
+  clampVal x lo hi = $clamp x lo hi
+
+-- A standalone helper (not in a trait) to demonstrate method sugar.
+half : F32 -> F32
+half x = x * 0.5
+
+double : F32 -> F32
+double x = x * 2.0
+
+type Params = {
+  value : F32,
+  lo    : F32,
+  hi    : F32,
+}
+
+extern resource params : Uniform<Params> @group 0 @binding 0
+extern resource output : Storage<ReadWrite, Array<Vec<4, F32>, 64>> @group 0 @binding 1
+
+@compute @workgroup_size(64, 1, 1)
+main idx =
+  let p  = load params
+      -- Method-call sugar: p.value.half is half(p.value)
+      h  = p.value.half
+      -- Method-call sugar with args: p.value.clampVal p.lo p.hi
+      -- is clampVal(p.value, p.lo, p.hi)
+      cl = p.value.clampVal p.lo p.hi
+      -- Pipeline compatibility: value |> half |> double
+      d  = p.value |> half |> double
+      color = $vec4 h cl d 1.0
+  in writeAt output idx color

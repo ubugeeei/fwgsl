@@ -11,6 +11,26 @@ use fwgsl_parser::parser::*;
 use fwgsl_span::Span;
 use fwgsl_typechecker::*;
 
+/// Information about a trait declaration.
+#[derive(Debug, Clone)]
+pub struct TraitInfo {
+    pub name: String,
+    /// The type variable the trait is parameterised over.
+    pub var: String,
+    /// Method signatures: method_name → type (with `var` as a free type variable).
+    pub methods: Vec<(String, Ty)>,
+}
+
+/// Information about a trait impl.
+#[derive(Debug, Clone)]
+pub struct ImplInfo {
+    pub trait_name: String,
+    /// The concrete type this impl is for.
+    pub ty: Ty,
+    /// Method implementations: method_name → mangled function name.
+    pub methods: HashMap<String, String>,
+}
+
 /// The semantic analyzer: collects definitions and performs type inference.
 pub struct SemanticAnalyzer {
     pub env: TypeEnv,
@@ -20,6 +40,10 @@ pub struct SemanticAnalyzer {
     /// User-defined type aliases (e.g. `alias Float2 = Vec<2, F32>`).
     /// Maps alias name → expanded Ty so they can be resolved during type conversion.
     pub type_aliases: HashMap<String, Ty>,
+    /// Trait declarations: trait_name → TraitInfo.
+    pub traits: HashMap<String, TraitInfo>,
+    /// Trait impls.
+    pub impls: Vec<ImplInfo>,
 }
 
 /// Information about a data type collected during semantic analysis.
@@ -38,6 +62,8 @@ impl SemanticAnalyzer {
             constructors: HashMap::new(),
             data_types: HashMap::new(),
             type_aliases: HashMap::new(),
+            traits: HashMap::new(),
+            impls: Vec::new(),
         };
         sa.add_builtins();
         sa
@@ -55,6 +81,19 @@ impl SemanticAnalyzer {
         );
         for op in ["+", "-", "*", "/", "%"] {
             self.env.insert(op.to_string(), numeric_binop.clone());
+        }
+
+        // Built-in operator trait classes: Add(+), Sub(-), Mul(*), Div(/)
+        let binop_ty = Ty::arrow(Ty::Var(scalar), Ty::arrow(Ty::Var(scalar), Ty::Var(scalar)));
+        for (trait_name, op) in [("Add", "+"), ("Sub", "-"), ("Mul", "*"), ("Div", "/")] {
+            self.traits.insert(
+                trait_name.to_string(),
+                TraitInfo {
+                    name: trait_name.to_string(),
+                    var: "a".to_string(),
+                    methods: vec![(op.to_string(), binop_ty.clone())],
+                },
+            );
         }
 
         // Comparison: a -> a -> Bool
@@ -626,6 +665,86 @@ impl SemanticAnalyzer {
             }
         }
 
+        // Pass 2b: collect trait declarations
+        for decl in &program.decls {
+            if let Decl::TraitDecl {
+                name,
+                var,
+                methods,
+                span: _,
+            } = decl
+            {
+                // Build a type variable scope seeded with the trait variable
+                let var_id = fresh_var_id(&mut self.engine);
+                let mut trait_methods = Vec::new();
+                for m in methods {
+                    let mut scope = HashMap::new();
+                    scope.insert(var.clone(), var_id);
+                    let method_ty = self.convert_syntax_type_with_scope(&m.ty, &mut scope);
+                    let scheme = Scheme::poly(scope_vars(&scope), method_ty.clone());
+                    // Register the method as a polymorphic function in the env
+                    // (overrides any existing builtin operator with the same name)
+                    self.env.insert(m.name.clone(), scheme);
+                    trait_methods.push((m.name.clone(), method_ty));
+                }
+                self.traits.insert(
+                    name.clone(),
+                    TraitInfo {
+                        name: name.clone(),
+                        var: var.clone(),
+                        methods: trait_methods,
+                    },
+                );
+            }
+        }
+
+        // Pass 2c: collect impl declarations — generate mangled function names
+        for decl in &program.decls {
+            if let Decl::ImplDecl {
+                trait_name,
+                ty,
+                methods,
+                span,
+            } = decl
+            {
+                let impl_ty_scheme = self.convert_syntax_type(ty);
+                let type_suffix = format_type_suffix(&impl_ty_scheme.ty);
+                let mut impl_methods = HashMap::new();
+                for m in methods {
+                    let mangled = mangle_instance_method(&m.name, &type_suffix);
+                    impl_methods.insert(m.name.clone(), mangled.clone());
+                    // Build the concrete type for this method by instantiating the trait
+                    // method type with the impl type
+                    if let Some(trait_info) = self.traits.get(trait_name) {
+                        for (tmethod_name, tmethod_ty) in &trait_info.methods {
+                            if tmethod_name == &m.name {
+                                // Build a substitution: trait var_id → concrete type
+                                let var_id = fresh_var_id(&mut self.engine);
+                                let mut subst = fwgsl_typechecker::Substitution::new();
+                                subst.insert(var_id, impl_ty_scheme.ty.clone());
+                                // The trait method was typed with some var_id; we need to
+                                // substitute the trait's var with the concrete type.
+                                // Since we used a fresh scope per method above, here we
+                                // reconstruct by replacing any Var in the method type.
+                                let concrete_ty = replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
+                                self.env.insert(mangled.clone(), Scheme::mono(concrete_ty));
+                            }
+                        }
+                    } else {
+                        self.engine.diagnostics.push(
+                            Diagnostic::error(format!("Unknown trait '{}' in impl declaration", trait_name))
+                                .with_label(Label::primary(*span, "unknown trait")),
+                        );
+                    }
+                }
+                self.impls.push(ImplInfo {
+                    trait_name: trait_name.clone(),
+                    ty: impl_ty_scheme.ty,
+                    methods: impl_methods,
+                });
+            }
+        }
+
         // Pass 3: type check function bodies
         for decl in &program.decls {
             match decl {
@@ -647,6 +766,12 @@ impl SemanticAnalyzer {
                     ..
                 } => {
                     self.check_function(name, params, body, &[], *span);
+                }
+                Decl::ImplDecl { methods, .. } => {
+                    // Type-check impl method bodies
+                    for m in methods {
+                        self.check_function(&m.name, &m.params, &m.body, &[], m.span);
+                    }
                 }
                 _ => {}
             }
@@ -1101,7 +1226,7 @@ impl SemanticAnalyzer {
                 self.engine.fresh_var()
             }
 
-            Expr::FieldAccess(expr, field, _span) => {
+            Expr::FieldAccess(expr, field, span) => {
                 let base_ty = self.infer_expr(expr, env);
                 let base_ty = self.engine.finalize(&base_ty);
 
@@ -1109,7 +1234,6 @@ impl SemanticAnalyzer {
                 if is_swizzle(field) {
                     if let Some((n, scalar)) = extract_vec_type(&base_ty) {
                         let swizzle_len = field.len();
-                        // Validate: each component index must be < n
                         if validate_swizzle(field, n) {
                             if swizzle_len == 1 {
                                 return scalar;
@@ -1121,6 +1245,15 @@ impl SemanticAnalyzer {
                             }
                         }
                     }
+                }
+
+                // Method-call syntax sugar: `x.method` → `method x`
+                if let Some(scheme) = env.lookup(field) {
+                    let func_ty = self.engine.instantiate(scheme);
+                    let ret_ty = self.engine.fresh_var();
+                    let expected = Ty::arrow(base_ty, ret_ty.clone());
+                    self.engine.unify(&func_ty, &expected, *span);
+                    return ret_ty;
                 }
 
                 // Fallback: fresh var (record field access)
@@ -1286,6 +1419,67 @@ fn builtin_type_con(name: &str) -> Type {
 
 fn builtin_type_var(name: &str) -> Type {
     Type::Var(name.to_string(), builtin_span())
+}
+
+/// Produce a short suffix string from a Ty for name-mangling.
+pub fn format_type_suffix(ty: &Ty) -> String {
+    match ty {
+        Ty::Con(name) => name.clone(),
+        Ty::App(f, a) => format!("{}_{}", format_type_suffix(f), format_type_suffix(a)),
+        Ty::Nat(n) => format!("{}", n),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// Map operator symbols to readable names for mangling.
+pub fn sanitise_operator_name(name: &str) -> String {
+    match name {
+        "+" => "add".to_string(),
+        "-" => "sub".to_string(),
+        "*" => "mul".to_string(),
+        "/" => "div".to_string(),
+        "%" => "mod".to_string(),
+        "==" => "eq".to_string(),
+        "/=" => "ne".to_string(),
+        "<" => "lt".to_string(),
+        ">" => "gt".to_string(),
+        "<=" => "le".to_string(),
+        ">=" => "ge".to_string(),
+        "&&" => "and".to_string(),
+        "||" => "or".to_string(),
+        _ => name.replace(|c: char| !c.is_alphanumeric() && c != '_', "_"),
+    }
+}
+
+/// Mangle an instance method name: `(+)` for F32 → `add_F32`, `scale` for F32 → `scale_F32`.
+pub fn mangle_instance_method(method_name: &str, type_suffix: &str) -> String {
+    let sanitised = sanitise_operator_name(method_name);
+    format!("{}_{}", sanitised, type_suffix)
+}
+
+/// Replace all `Ty::Var(_)` occurrences in a type with a concrete type.
+/// Used for building concrete instance method types from trait method types
+/// that have a single polymorphic type variable (the class parameter).
+pub fn replace_all_vars(ty: &Ty, replacement: &Ty) -> Ty {
+    match ty {
+        Ty::Var(_) => replacement.clone(),
+        Ty::Con(_) | Ty::Nat(_) | Ty::Error => ty.clone(),
+        Ty::App(f, a) => Ty::App(
+            Box::new(replace_all_vars(f, replacement)),
+            Box::new(replace_all_vars(a, replacement)),
+        ),
+        Ty::Arrow(a, b) => Ty::Arrow(
+            Box::new(replace_all_vars(a, replacement)),
+            Box::new(replace_all_vars(b, replacement)),
+        ),
+        Ty::Tuple(elems) => Ty::Tuple(
+            elems.iter().map(|e| replace_all_vars(e, replacement)).collect(),
+        ),
+        Ty::Forall(vars, body) => Ty::Forall(
+            vars.clone(),
+            Box::new(replace_all_vars(body, replacement)),
+        ),
+    }
 }
 
 fn fresh_var_id(engine: &mut InferEngine) -> TyVarId {

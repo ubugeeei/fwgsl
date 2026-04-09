@@ -373,6 +373,38 @@ impl<'a> IndexBuilder<'a> {
                     });
                     self.index.add_definition_span(symbol_id, name_span);
                 }
+                Decl::TraitDecl { name, span, methods, .. } => {
+                    let name_span = self.first_name_span(name, *span).unwrap_or(*span);
+                    let symbol_id = self.index.push_symbol(NewSymbol {
+                        name: name.clone(),
+                        namespace: Namespace::Type,
+                        kind: SymbolKind::TypeAlias,
+                        span: name_span,
+                        scope_span: whole_file,
+                        scope_depth: 0,
+                        visible_from: 0,
+                        container: Some(name.clone()),
+                    });
+                    self.top_level_types.insert(name.clone(), symbol_id);
+                    for m in methods {
+                        let mspan = self.first_name_span(&m.name, m.span).unwrap_or(m.span);
+                        let mid = self.index.push_symbol(NewSymbol {
+                            name: m.name.clone(),
+                            namespace: Namespace::Value,
+                            kind: SymbolKind::Function,
+                            span: mspan,
+                            scope_span: whole_file,
+                            scope_depth: 0,
+                            visible_from: 0,
+                            container: Some(name.clone()),
+                        });
+                        self.top_level_values.insert(m.name.clone(), mid);
+                    }
+                }
+                Decl::ImplDecl { .. } => {
+                    // Impl methods are lowered as mangled functions;
+                    // no separate top-level symbols needed.
+                }
             }
         }
     }
@@ -492,6 +524,17 @@ impl<'a> IndexBuilder<'a> {
             Decl::ConstDecl { ty, value, .. } => {
                 self.walk_type(ty, frames);
                 self.walk_expr(value, frames);
+            }
+            Decl::TraitDecl { methods, .. } => {
+                for m in methods {
+                    self.walk_type(&m.ty, frames);
+                }
+            }
+            Decl::ImplDecl { ty, methods, .. } => {
+                self.walk_type(ty, frames);
+                for m in methods {
+                    self.walk_expr(&m.body, frames);
+                }
             }
         }
     }

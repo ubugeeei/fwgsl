@@ -1970,3 +1970,176 @@ mod full_pipeline_tests {
         );
     }
 }
+
+// =========================================================================
+// 10. Trait system tests
+// =========================================================================
+
+mod trait_tests {
+    use super::*;
+
+    fn compile_to_wgsl(source: &str) -> Result<String, String> {
+        let mut parser = Parser::new(source);
+        let program = parser.parse_program();
+
+        if parser.diagnostics().has_errors() {
+            return Err("parse error".into());
+        }
+
+        let mut sa = SemanticAnalyzer::new();
+        sa.analyze(&program);
+
+        if sa.has_errors() {
+            return Err("semantic error".into());
+        }
+
+        let mut lowering = AstLowering::new(&sa);
+        let hir = lowering.lower_program(&program);
+
+        if lowering.has_errors() {
+            return Err("HIR lowering error".into());
+        }
+
+        let mir = fwgsl_mir::lower::lower_hir_to_mir(&hir).map_err(|e| e.join(", "))?;
+
+        Ok(fwgsl_wgsl_codegen::emit_wgsl(&mir))
+    }
+
+    #[test]
+    fn parse_trait_decl() {
+        let source = "trait Num a where\n  add : a -> a -> a\n  sub : a -> a -> a";
+        let (program, has_errors) = parse(source);
+        assert!(!has_errors, "trait decl should parse without errors");
+        assert_eq!(program.decls.len(), 1);
+        match &program.decls[0] {
+            Decl::TraitDecl { name, var, methods, .. } => {
+                assert_eq!(name, "Num");
+                assert_eq!(var, "a");
+                assert_eq!(methods.len(), 2);
+                assert_eq!(methods[0].name, "add");
+                assert_eq!(methods[1].name, "sub");
+            }
+            other => panic!("expected TraitDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_impl_decl() {
+        let source = "impl Num F32 where\n  add x y = x + y\n  sub x y = x - y";
+        let (program, has_errors) = parse(source);
+        assert!(!has_errors, "impl decl should parse without errors");
+        assert_eq!(program.decls.len(), 1);
+        match &program.decls[0] {
+            Decl::ImplDecl { trait_name, methods, .. } => {
+                assert_eq!(trait_name, "Num");
+                assert_eq!(methods.len(), 2);
+                assert_eq!(methods[0].name, "add");
+                assert_eq!(methods[1].name, "sub");
+            }
+            other => panic!("expected ImplDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_trait_with_operator_methods() {
+        let source = "trait Num a where\n  (+) : a -> a -> a\n  (-) : a -> a -> a";
+        let (program, has_errors) = parse(source);
+        assert!(!has_errors, "trait with operators should parse without errors");
+        match &program.decls[0] {
+            Decl::TraitDecl { methods, .. } => {
+                assert_eq!(methods[0].name, "+");
+                assert_eq!(methods[1].name, "-");
+            }
+            other => panic!("expected TraitDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn trait_impl_lowers_to_function() {
+        let source = r#"
+trait Scalable a where
+  scale : a -> F32 -> a
+
+impl Scalable F32 where
+  scale x factor = x * factor
+
+applyScale : F32 -> F32 -> F32
+applyScale value factor = scale value factor
+"#;
+        let wgsl = compile_to_wgsl(source).expect("compilation should succeed");
+        assert!(
+            wgsl.contains("fn scale_F32("),
+            "WGSL should contain mangled impl method, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("scale_F32(value"),
+            "WGSL should dispatch to mangled method, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn method_call_syntax_sugar() {
+        let source = r#"
+half : F32 -> F32
+half x = x * 0.5
+
+apply : F32 -> F32
+apply x = x.half
+"#;
+        let wgsl = compile_to_wgsl(source).expect("compilation should succeed");
+        assert!(
+            wgsl.contains("half(x)"),
+            "method-call sugar should desugar to function call, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn trait_example_compiles() {
+        let source = include_str!("../../../examples/traits.fwgsl");
+        let wgsl = compile_to_wgsl(source).expect("traits example should compile");
+        assert!(wgsl.contains("fn scale_F32("));
+        assert!(wgsl.contains("fn applyScale("));
+    }
+
+    #[test]
+    fn method_syntax_example_compiles() {
+        let source = include_str!("../../../examples/method-syntax.fwgsl");
+        let wgsl = compile_to_wgsl(source).expect("method-syntax example should compile");
+        assert!(wgsl.contains("fn half("));
+        assert!(wgsl.contains("fn double("));
+        assert!(wgsl.contains("fn clampVal_F32("));
+    }
+
+    #[test]
+    fn semantic_analysis_with_traits() {
+        let source = r#"
+trait Show a where
+  display : a -> F32
+
+impl Show F32 where
+  display x = x
+
+test : F32 -> F32
+test x = display x
+"#;
+        let (_, has_errors) = parse_and_analyze(source);
+        assert!(!has_errors, "trait-using program should pass semantic analysis");
+    }
+
+    #[test]
+    fn unknown_trait_in_impl_produces_error() {
+        let source = r#"
+impl Nonexistent F32 where
+  foo x = x
+"#;
+        let (sa, has_errors) = parse_and_analyze(source);
+        assert!(has_errors, "unknown trait in impl should produce error");
+        assert!(
+            sa.engine.diagnostics.has_errors(),
+            "diagnostics should contain error about unknown trait"
+        );
+    }
+}

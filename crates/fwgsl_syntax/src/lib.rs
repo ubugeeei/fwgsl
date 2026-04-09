@@ -126,8 +126,8 @@ pub enum SyntaxKind {
     KwNewtype,
     KwExtern,
     KwResource,
-    KwClass,
-    KwInstance,
+    KwTrait,
+    KwImpl,
     KwLet,
     KwIn,
     KwCase,
@@ -164,8 +164,8 @@ pub enum SyntaxKind {
     /// Type alias declaration.
     TypeDecl,
 
-    ClassDecl,
-    InstanceDecl,
+    TraitDecl,
+    ImplDecl,
     MethodDecl,
 
     TypeSig,
@@ -304,8 +304,8 @@ pub fn keyword_from_str(s: &str) -> Option<SyntaxKind> {
         "newtype" => Some(SyntaxKind::KwNewtype),
         "extern" => Some(SyntaxKind::KwExtern),
         "resource" => Some(SyntaxKind::KwResource),
-        "class" => Some(SyntaxKind::KwClass),
-        "instance" => Some(SyntaxKind::KwInstance),
+        "trait" => Some(SyntaxKind::KwTrait),
+        "impl" => Some(SyntaxKind::KwImpl),
         "let" => Some(SyntaxKind::KwLet),
         "in" => Some(SyntaxKind::KwIn),
         "case" => Some(SyntaxKind::KwCase),
@@ -437,8 +437,8 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::KwNewtype => "'newtype'",
             SyntaxKind::KwExtern => "'extern'",
             SyntaxKind::KwResource => "'resource'",
-            SyntaxKind::KwClass => "'class'",
-            SyntaxKind::KwInstance => "'instance'",
+            SyntaxKind::KwTrait => "'trait'",
+            SyntaxKind::KwImpl => "'impl'",
             SyntaxKind::KwLet => "'let'",
             SyntaxKind::KwIn => "'in'",
             SyntaxKind::KwCase => "'case'",
@@ -474,8 +474,8 @@ impl fmt::Display for SyntaxKind {
 
             SyntaxKind::TypeDecl => "type alias declaration",
 
-            SyntaxKind::ClassDecl => "class declaration",
-            SyntaxKind::InstanceDecl => "instance declaration",
+            SyntaxKind::TraitDecl => "trait declaration",
+            SyntaxKind::ImplDecl => "impl declaration",
             SyntaxKind::MethodDecl => "method declaration",
 
             SyntaxKind::TypeSig => "type signature",

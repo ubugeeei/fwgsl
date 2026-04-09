@@ -1,0 +1,31 @@
+-- Trait system example.
+--
+-- Demonstrates trait declarations, impl blocks,
+-- method-call syntax sugar, and trait-based dispatch.
+
+-- A trait for types that can be scaled by a scalar factor.
+trait Scalable a where
+  scale : a -> F32 -> a
+
+-- Impl for F32: scaling is just multiplication.
+impl Scalable F32 where
+  scale x factor = x * factor
+
+-- A helper function that uses the Scalable trait.
+applyScale : F32 -> F32 -> F32
+applyScale value factor = scale value factor
+
+type Params = {
+  intensity : F32,
+  factor    : F32,
+}
+
+extern resource params : Uniform<Params> @group 0 @binding 0
+extern resource output : Storage<ReadWrite, Array<Vec<4, F32>, 64>> @group 0 @binding 1
+
+@compute @workgroup_size(64, 1, 1)
+main idx =
+  let p      = load params
+      scaled = applyScale p.intensity p.factor
+      color  = $vec4 scaled scaled scaled 1.0
+  in writeAt output idx color
