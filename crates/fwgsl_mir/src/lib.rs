@@ -218,6 +218,15 @@ pub enum MirStmt {
     Return(MirExpr),
     /// A nested block `{ ... }`
     Block(Vec<MirStmt>),
+    /// `switch (expr) { case Xu: { ... } ... default: { ... } }`
+    Switch(MirExpr, Vec<MirSwitchCase>, Vec<MirStmt>),
+}
+
+/// A single `case` arm in a switch statement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MirSwitchCase {
+    pub value: MirLit,
+    pub body: Vec<MirStmt>,
 }
 
 // ---------------------------------------------------------------------------

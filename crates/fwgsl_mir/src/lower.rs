@@ -780,7 +780,8 @@ fn flatten_app(expr: &HirExpr) -> (String, Vec<&HirExpr>) {
     }
 }
 
-/// Lower case arms into a chain of if-else statements.
+/// Lower case arms into a chain of if-else statements (or a switch statement
+/// when all arms are integer literal patterns on an I32/U32 scrutinee).
 fn lower_case_arms(
     scrut_name: &str,
     scrut_ty: &MirType,
@@ -792,7 +793,47 @@ fn lower_case_arms(
         return Ok(None);
     }
 
-    // Build from last to first (fold right)
+    // --- Try to emit a native WGSL switch for integer literal patterns ---
+    if matches!(scrut_ty, MirType::I32 | MirType::U32) {
+        let all_int_or_wild = arms.iter().all(|arm| {
+            matches!(
+                arm.pattern,
+                HirPattern::Lit(HirLit::Int(_)) | HirPattern::Wild | HirPattern::Var(_, _)
+            )
+        });
+
+        if all_int_or_wild {
+            let mut cases: Vec<MirSwitchCase> = Vec::new();
+            let mut default_body: Vec<MirStmt> = Vec::new();
+
+            for arm in arms {
+                let (mut body_stmts, body_expr) = lower_hir_expr_to_stmts(&arm.body, ctx)?;
+                body_stmts.push(MirStmt::Assign(result_name.to_string(), body_expr));
+
+                match &arm.pattern {
+                    HirPattern::Lit(HirLit::Int(v)) => {
+                        let mir_lit = match scrut_ty {
+                            MirType::U32 => MirLit::U32(*v as u32),
+                            _ => MirLit::I32(*v as i32),
+                        };
+                        cases.push(MirSwitchCase {
+                            value: mir_lit,
+                            body: body_stmts,
+                        });
+                    }
+                    HirPattern::Wild | HirPattern::Var(_, _) => {
+                        default_body = body_stmts;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            let scrut_expr = MirExpr::Var(scrut_name.to_string(), scrut_ty.clone());
+            return Ok(Some(MirStmt::Switch(scrut_expr, cases, default_body)));
+        }
+    }
+
+    // --- Fallback: build from last to first (fold right) as if-else chain ---
     let mut result: Option<MirStmt> = None;
 
     for arm in arms.iter().rev() {

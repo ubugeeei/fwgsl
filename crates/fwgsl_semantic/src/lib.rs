@@ -601,6 +601,10 @@ impl SemanticAnalyzer {
                 let inferred_ty = self.convert_syntax_type(ty);
                 self.env.insert(name.clone(), inferred_ty);
             }
+            if let Decl::ConstDecl { name, ty, .. } = decl {
+                let inferred_ty = self.convert_syntax_type(ty);
+                self.env.insert(name.clone(), inferred_ty);
+            }
             if let Decl::ResourceDecl { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type(ty);
                 // Unwrap the resource wrapper (Uniform<T> → T, Storage<_, T> → T)

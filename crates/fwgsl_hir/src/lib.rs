@@ -15,6 +15,16 @@ pub struct HirProgram {
     pub entry_points: Vec<HirEntryPoint>,
     pub resources: Vec<HirResource>,
     pub bitfields: Vec<HirBitfield>,
+    pub constants: Vec<HirConst>,
+}
+
+/// A module-level constant declaration.
+#[derive(Debug)]
+pub struct HirConst {
+    pub name: String,
+    pub ty: Ty,
+    pub value: HirExpr,
+    pub span: Span,
 }
 
 /// A bitfield type declaration.
@@ -238,6 +248,7 @@ mod tests {
     fn test_hir_program_construction() {
         let program = HirProgram {
             bitfields: vec![],
+            constants: vec![],
             functions: vec![HirFunction {
                 name: "add".into(),
                 params: vec![("x".into(), Ty::i32()), ("y".into(), Ty::i32())],

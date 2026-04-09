@@ -65,6 +65,12 @@ pub enum Decl {
         fields: Vec<BitfieldField>,
         span: Span,
     },
+    ConstDecl {
+        name: String,
+        ty: Type,
+        value: Expr,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +130,9 @@ pub enum Expr {
     Do(Vec<DoStmt>, Span),
     /// Vec literal: `[a, b, c]` — desugared to vecN constructor call.
     VecLit(Vec<Expr>, Span),
+    /// Loop: `loop var = init while (cond) in body`
+    /// Fields: (binding_name, initial_value, condition, body, span)
+    Loop(String, Box<Expr>, Box<Expr>, Box<Expr>, Span),
 }
 
 #[derive(Debug, Clone)]
@@ -189,7 +198,8 @@ impl Expr {
             | Expr::OpSection(_, s)
             | Expr::Neg(_, s)
             | Expr::Do(_, s)
-            | Expr::VecLit(_, s) => *s,
+            | Expr::VecLit(_, s)
+            | Expr::Loop(_, _, _, _, s) => *s,
         }
     }
 }
@@ -480,6 +490,7 @@ impl Parser {
             SyntaxKind::KwExtern => Some(self.parse_extern_resource_decl()),
             SyntaxKind::KwResource => Some(self.parse_resource_decl(false)),
             SyntaxKind::KwBitfield => Some(self.parse_bitfield_decl()),
+            SyntaxKind::KwConst => Some(self.parse_const_decl()),
             SyntaxKind::Ident => {
                 // Could be a type signature or function declaration.
                 // Look ahead: name then `:` means type sig; otherwise fun decl.
@@ -996,6 +1007,29 @@ impl Parser {
         }
     }
 
+    fn parse_const_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwConst);
+        self.skip_trivia();
+        let name_tok = self.expect(SyntaxKind::Ident);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Colon);
+        self.skip_trivia();
+        let ty = self.parse_type();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+        let value = self.parse_expr();
+        let span = self.span_from(start);
+        Decl::ConstDecl {
+            name,
+            ty,
+            value,
+            span,
+        }
+    }
+
     fn parse_attribute(&mut self) -> Attribute {
         let start = self.current_span().start;
         self.expect(SyntaxKind::At);
@@ -1072,6 +1106,7 @@ impl Parser {
             SyntaxKind::KwMatch => self.parse_match(),
             SyntaxKind::KwLet => self.parse_let(),
             SyntaxKind::KwDo => self.parse_do(),
+            SyntaxKind::KwLoop => self.parse_loop(),
             _ => self.parse_atom(),
         };
 
@@ -1263,6 +1298,7 @@ impl Parser {
             SyntaxKind::KwMatch => self.parse_match(),
             SyntaxKind::KwLet => self.parse_let(),
             SyntaxKind::KwDo => self.parse_do(),
+            SyntaxKind::KwLoop => self.parse_loop(),
             SyntaxKind::Backslash => self.parse_lambda(),
             _ => {
                 let tok = self.current_token().clone();

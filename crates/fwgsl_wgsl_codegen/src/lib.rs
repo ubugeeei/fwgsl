@@ -403,6 +403,46 @@ impl WgslEmitter {
                 self.write("}");
                 self.newline();
             }
+            MirStmt::Switch(expr, cases, default_body) => {
+                self.write_indent();
+                self.write("switch (");
+                self.emit_expr(expr);
+                self.write(") {");
+                self.newline();
+                self.indent += 1;
+                for case in cases {
+                    self.write_indent();
+                    self.write("case ");
+                    self.emit_lit(&case.value);
+                    self.write(": {");
+                    self.newline();
+                    self.indent += 1;
+                    for s in &case.body {
+                        self.emit_stmt(s);
+                    }
+                    self.indent -= 1;
+                    self.write_indent();
+                    self.write("}");
+                    self.newline();
+                }
+                if !default_body.is_empty() {
+                    self.write_indent();
+                    self.write("default: {");
+                    self.newline();
+                    self.indent += 1;
+                    for s in default_body {
+                        self.emit_stmt(s);
+                    }
+                    self.indent -= 1;
+                    self.write_indent();
+                    self.write("}");
+                    self.newline();
+                }
+                self.indent -= 1;
+                self.write_indent();
+                self.write("}");
+                self.newline();
+            }
         }
     }
 
@@ -1310,6 +1350,100 @@ mod tests {
         assert!(
             wgsl.contains("@location(1) @interpolate(linear, center) uv: vec2<f32>,"),
             "expected multiple attributes, got:\n{}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_emit_switch_statement() {
+        // Build a function that contains a switch on a u32 variable
+        let program = MirProgram {
+            structs: vec![],
+            globals: vec![],
+            functions: vec![MirFunction {
+                name: "classify".to_string(),
+                params: vec![MirParam {
+                    name: "x".to_string(),
+                    ty: MirType::U32,
+                }],
+                return_ty: MirType::I32,
+                body: vec![
+                    MirStmt::Var(
+                        "result".to_string(),
+                        MirType::I32,
+                        MirExpr::Lit(MirLit::I32(0)),
+                    ),
+                    MirStmt::Switch(
+                        MirExpr::Var("x".to_string(), MirType::U32),
+                        vec![
+                            MirSwitchCase {
+                                value: MirLit::U32(0),
+                                body: vec![MirStmt::Assign(
+                                    "result".to_string(),
+                                    MirExpr::Lit(MirLit::I32(10)),
+                                )],
+                            },
+                            MirSwitchCase {
+                                value: MirLit::U32(1),
+                                body: vec![MirStmt::Assign(
+                                    "result".to_string(),
+                                    MirExpr::Lit(MirLit::I32(20)),
+                                )],
+                            },
+                            MirSwitchCase {
+                                value: MirLit::U32(2),
+                                body: vec![MirStmt::Assign(
+                                    "result".to_string(),
+                                    MirExpr::Lit(MirLit::I32(30)),
+                                )],
+                            },
+                        ],
+                        // default body
+                        vec![MirStmt::Assign(
+                            "result".to_string(),
+                            MirExpr::Lit(MirLit::I32(-1)),
+                        )],
+                    ),
+                ],
+                return_expr: Some(MirExpr::Var("result".to_string(), MirType::I32)),
+            }],
+            entry_points: vec![],
+        };
+
+        let wgsl = emit_wgsl(&program);
+        assert!(
+            wgsl.contains("switch (x)"),
+            "expected switch statement, got:\n{}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("case 0u:"),
+            "expected case 0u, got:\n{}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("case 1u:"),
+            "expected case 1u, got:\n{}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("case 2u:"),
+            "expected case 2u, got:\n{}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("default:"),
+            "expected default case, got:\n{}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("result = 10i;"),
+            "expected result = 10i in case body, got:\n{}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("result = (-1i);"),
+            "expected result = (-1i) in default body, got:\n{}",
             wgsl
         );
     }

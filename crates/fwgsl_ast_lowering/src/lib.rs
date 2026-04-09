@@ -118,6 +118,7 @@ impl AstLowering {
         let mut entry_points = Vec::new();
         let mut resources = Vec::new();
         let mut bitfields = Vec::new();
+        let mut constants = Vec::new();
 
         for decl in &program.decls {
             match decl {
@@ -192,6 +193,22 @@ impl AstLowering {
                         fields: hir_fields,
                     });
                 }
+                Decl::ConstDecl {
+                    name,
+                    ty,
+                    value,
+                    span,
+                } => {
+                    let scheme = self.convert_syntax_type_scheme(ty);
+                    if let Some(hir_expr) = self.lower_expr(value) {
+                        constants.push(fwgsl_hir::HirConst {
+                            name: name.clone(),
+                            ty: scheme.ty,
+                            value: hir_expr,
+                            span: *span,
+                        });
+                    }
+                }
                 Decl::TypeSig { .. } | Decl::TypeAlias { .. } => {}
             }
         }
@@ -202,6 +219,7 @@ impl AstLowering {
             entry_points,
             resources,
             bitfields,
+            constants,
         }
     }
 
