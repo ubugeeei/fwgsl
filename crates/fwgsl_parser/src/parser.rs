@@ -1335,26 +1335,39 @@ impl Parser {
         }
 
         // Operator section `(+)`, `(-)`, etc.
+        // Special case: `(-expr)` is negation in parens, not an operator section.
         if is_operator_token(self.peek()) {
-            let op_tok = self.bump();
-            self.skip_trivia();
-            if self.at(SyntaxKind::RParen) {
-                self.bump();
+            let is_minus = self.peek() == SyntaxKind::Minus;
+            // Peek ahead past operator + trivia to see if it's `(op)`
+            let next_non_trivia = {
+                let mut i = self.pos + 1;
+                while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+                    i += 1;
+                }
+                if i < self.tokens.len() { self.tokens[i].kind } else { SyntaxKind::Eof }
+            };
+            if is_minus && next_non_trivia != SyntaxKind::RParen {
+                // `(-expr)` — fall through to parse as normal expression
+                // (the negation prefix will be handled by parse_expr)
+            } else if next_non_trivia == SyntaxKind::RParen {
+                // `(op)` — operator section
+                let op_tok = self.bump();
+                self.skip_trivia();
+                self.bump(); // consume `)`
                 let op = self.text_of(&op_tok).to_owned();
                 let span = self.span_from(start);
                 return Expr::OpSection(op, span);
+            } else {
+                // `(op expr)` — not a simple section, treat as error
+                let op_tok = self.bump();
+                let op = self.text_of(&op_tok).to_owned();
+                while !self.at(SyntaxKind::RParen) && !self.at_end() && self.consume_fuel() {
+                    self.bump();
+                }
+                self.eat(SyntaxKind::RParen);
+                let span = self.span_from(start);
+                return Expr::OpSection(op, span);
             }
-            // Not a simple section: this is something like `(+ 3)`.
-            // For now, treat it as error and return the op as a section anyway.
-            // A more complete parser would handle left/right sections.
-            let op = self.text_of(&op_tok).to_owned();
-            // Try to consume up to closing paren
-            while !self.at(SyntaxKind::RParen) && !self.at_end() && self.consume_fuel() {
-                self.bump();
-            }
-            self.eat(SyntaxKind::RParen);
-            let span = self.span_from(start);
-            return Expr::OpSection(op, span);
         }
 
         // Parse first expression
