@@ -957,6 +957,10 @@ pub fn sanitise_operator_name(name: &str) -> String {
         ">=" => "ge".to_string(),
         "&&" => "and".to_string(),
         "||" => "or".to_string(),
+        "&" => "bitand".to_string(),
+        "^" => "bitxor".to_string(),
+        "<<" => "shl".to_string(),
+        ">>" => "shr".to_string(),
         _ => name.replace(|c: char| !c.is_alphanumeric() && c != '_', "_"),
     }
 }

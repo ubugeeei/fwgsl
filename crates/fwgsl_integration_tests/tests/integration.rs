@@ -2567,4 +2567,148 @@ mod bitwise_tests {
             wgsl
         );
     }
+
+    #[test]
+    fn test_bitand_trait_overload() {
+        let source = r#"
+data Mask = Mask { bits : U32 }
+
+impl BitAnd Mask where
+  (&) a b = Mask { bits = a.bits & b.bits }
+
+andMask : Mask -> Mask -> Mask
+andMask a b = a & b
+"#;
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("fn bitand_Mask("),
+            "WGSL should contain mangled bitand impl, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("bitand_Mask(a, b)"),
+            "WGSL should dispatch & to bitand_Mask, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_bitxor_trait_overload() {
+        let source = r#"
+data Mask = Mask { bits : U32 }
+
+impl BitXor Mask where
+  (^) a b = Mask { bits = a.bits ^ b.bits }
+
+xorMask : Mask -> Mask -> Mask
+xorMask a b = a ^ b
+"#;
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("fn bitxor_Mask("),
+            "WGSL should contain mangled bitxor impl, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("bitxor_Mask(a, b)"),
+            "WGSL should dispatch ^ to bitxor_Mask, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_shl_trait_overload() {
+        let source = r#"
+data Mask = Mask { bits : U32 }
+
+impl Shl Mask where
+  (<<) a b = Mask { bits = a.bits << b.bits }
+
+shlMask : Mask -> Mask -> Mask
+shlMask a b = a << b
+"#;
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("fn shl_Mask("),
+            "WGSL should contain mangled shl impl, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("shl_Mask(a, b)"),
+            "WGSL should dispatch << to shl_Mask, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_shr_trait_overload() {
+        let source = r#"
+data Mask = Mask { bits : U32 }
+
+impl Shr Mask where
+  shr a b = Mask { bits = shr a.bits b.bits }
+
+shrMask : Mask -> Mask -> Mask
+shrMask a b = shr a b
+"#;
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("fn shr_Mask("),
+            "WGSL should contain mangled shr impl, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("shr_Mask(a, b)"),
+            "WGSL should dispatch shr to shr_Mask, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_bitnot_trait_overload() {
+        let source = r#"
+data Mask = Mask { bits : U32 }
+
+impl BitNot Mask where
+  bitnot a = Mask { bits = ~a.bits }
+
+notMask : Mask -> Mask
+notMask a = ~a
+"#;
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("fn bitnot_Mask("),
+            "WGSL should contain mangled bitnot impl, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("bitnot_Mask(a)"),
+            "WGSL should dispatch ~ to bitnot_Mask, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_neg_trait_overload() {
+        let source = r#"
+data Wrapper = Wrapper { val : F32 }
+
+impl Neg Wrapper where
+  negate a = Wrapper { val = -a.val }
+
+negWrapper : Wrapper -> Wrapper
+negWrapper a = -a
+"#;
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("fn negate_Wrapper("),
+            "WGSL should contain mangled negate impl, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("negate_Wrapper(a)"),
+            "WGSL should dispatch - to negate_Wrapper, got: {}",
+            wgsl
+        );
+    }
 }

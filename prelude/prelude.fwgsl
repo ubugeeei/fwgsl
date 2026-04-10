@@ -30,6 +30,24 @@ trait Div a where
 trait Mod a where
   (%) : a -> a -> a
 
+trait BitAnd a where
+  (&) : a -> a -> a
+
+trait BitXor a where
+  (^) : a -> a -> a
+
+trait Shl a where
+  (<<) : a -> a -> a
+
+trait Shr a where
+  shr : a -> a -> a
+
+trait BitNot a where
+  bitnot : a -> a
+
+trait Neg a where
+  negate : a -> a
+
 -- Operators (primitive types use native BinOp; these
 -- signatures provide the polymorphic type environment)
 

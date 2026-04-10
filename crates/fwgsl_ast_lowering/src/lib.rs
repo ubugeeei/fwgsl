@@ -1792,21 +1792,35 @@ impl AstLowering {
                 self.engine.finalize(&ty),
                 span,
             ),
-            HirExpr::UnaryNeg(inner, ty, span) => HirExpr::UnaryNeg(
-                Box::new(self.finalize_expr(*inner)),
-                self.engine.finalize(&ty),
-                span,
-            ),
+            HirExpr::UnaryNeg(inner, ty, span) => {
+                let final_inner = self.finalize_expr(*inner);
+                let final_ty = self.engine.finalize(&ty);
+                let inner_ty = final_inner.ty().clone();
+                if let Some(mangled) = self.resolve_operator_trait("negate", &inner_ty) {
+                    let method_ty = Ty::arrow(inner_ty, final_ty.clone());
+                    let var_expr = HirExpr::Var(mangled, method_ty, span);
+                    HirExpr::App(Box::new(var_expr), Box::new(final_inner), final_ty, span)
+                } else {
+                    HirExpr::UnaryNeg(Box::new(final_inner), final_ty, span)
+                }
+            }
             HirExpr::UnaryNot(inner, ty, span) => HirExpr::UnaryNot(
                 Box::new(self.finalize_expr(*inner)),
                 self.engine.finalize(&ty),
                 span,
             ),
-            HirExpr::UnaryBitNot(inner, ty, span) => HirExpr::UnaryBitNot(
-                Box::new(self.finalize_expr(*inner)),
-                self.engine.finalize(&ty),
-                span,
-            ),
+            HirExpr::UnaryBitNot(inner, ty, span) => {
+                let final_inner = self.finalize_expr(*inner);
+                let final_ty = self.engine.finalize(&ty);
+                let inner_ty = final_inner.ty().clone();
+                if let Some(mangled) = self.resolve_operator_trait("bitnot", &inner_ty) {
+                    let method_ty = Ty::arrow(inner_ty, final_ty.clone());
+                    let var_expr = HirExpr::Var(mangled, method_ty, span);
+                    HirExpr::App(Box::new(var_expr), Box::new(final_inner), final_ty, span)
+                } else {
+                    HirExpr::UnaryBitNot(Box::new(final_inner), final_ty, span)
+                }
+            }
             HirExpr::Loop(loop_name, bindings, body, ty, span) => HirExpr::Loop(
                 loop_name,
                 bindings

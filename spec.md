@@ -972,7 +972,9 @@ impl Fp64 where
 
 ### 9.4 Operator Overloading
 
-Built-in operator traits: `Add` (`+`), `Sub` (`-`), `Mul` (`*`), `Div` (`/`), `Mod` (`%`).
+**Arithmetic operator traits:** `Add` (`+`), `Sub` (`-`), `Mul` (`*`), `Div` (`/`), `Mod` (`%`).
+
+**Bitwise operator traits:** `BitAnd` (`&`), `BitXor` (`^`), `Shl` (`<<`), `Shr` (`shr`), `BitNot` (`bitnot`), `Neg` (`negate`).
 
 Operators on primitive types (I32, U32, F32) use native WGSL operators. Operators on user-defined types dispatch through trait implementations:
 
@@ -981,9 +983,24 @@ impl Add Fp64 where
   (+) a b = ...
 
 -- Now x + y where x, y : Fp64 calls the trait method
+
+impl BitAnd Mask where
+  (&) a b = Mask { bits = a.bits & b.bits }
+
+-- Now a & b where a, b : Mask calls bitand_Mask
+
+impl BitNot Mask where
+  bitnot a = Mask { bits = ~a.bits }
+
+-- Now ~a where a : Mask calls bitnot_Mask
+
+impl Neg Wrapper where
+  negate a = Wrapper { val = -a.val }
+
+-- Now -a where a : Wrapper calls negate_Wrapper
 ```
 
-The operator method syntax uses parenthesized operator names: `(+)`, `(-)`, `(*)`, etc.
+The operator method syntax uses parenthesized operator names: `(+)`, `(-)`, `(*)`, `(&)`, `(^)`, `(<<)`, etc. Non-operator trait methods like `shr`, `bitnot`, and `negate` use plain names.
 
 ### 9.5 Dispatch Mechanism
 
@@ -1291,12 +1308,23 @@ data Pair a b = Pair a b
 
 ### 14.2 Operator Traits
 
+**Arithmetic:**
 ```
 trait Add a where (+) : a -> a -> a
 trait Sub a where (-) : a -> a -> a
 trait Mul a where (*) : a -> a -> a
 trait Div a where (/) : a -> a -> a
 trait Mod a where (%) : a -> a -> a
+```
+
+**Bitwise:**
+```
+trait BitAnd a where (&) : a -> a -> a
+trait BitXor a where (^) : a -> a -> a
+trait Shl a where (<<) : a -> a -> a
+trait Shr a where shr : a -> a -> a
+trait BitNot a where bitnot : a -> a
+trait Neg a where negate : a -> a
 ```
 
 ### 14.3 Arithmetic Operators
