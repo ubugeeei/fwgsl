@@ -1,9 +1,9 @@
 {
-  "name": "fwgsl",
-  "displayName": "fwgsl — Functional WGSL",
-  "description": "Language support for fwgsl, a pure functional language for WebGPU that compiles to WGSL.",
+  "name": "shadml",
+  "displayName": "shadml — Functional WGSL",
+  "description": "Language support for shadml, a pure functional language for WebGPU that compiles to WGSL.",
   "version": "0.1.0",
-  "publisher": "fwgsl",
+  "publisher": "shadml",
   "license": "MIT",
   "engines": {
     "vscode": "^1.80.0"
@@ -12,38 +12,38 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:fwgsl"
+    "onLanguage:shadml"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
-        "id": "fwgsl",
+        "id": "shadml",
         "aliases": [
-          "fwgsl",
+          "shadml",
           "Functional WGSL"
         ],
         "extensions": [
-          ".fwgsl"
+          ".shadml"
         ],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "fwgsl",
-        "scopeName": "source.fwgsl",
-        "path": "./syntaxes/fwgsl.tmLanguage.json"
+        "language": "shadml",
+        "scopeName": "source.shadml",
+        "path": "./syntaxes/shadml.tmLanguage.json"
       }
     ],
     "configuration": {
       "type": "object",
-      "title": "fwgsl",
+      "title": "shadml",
       "properties": {
-        "fwgsl.server.path": {
+        "shadml.server.path": {
           "type": "string",
-          "default": "fwgsl-lsp",
-          "description": "Path to the fwgsl language server executable."
+          "default": "shadml-lsp",
+          "description": "Path to the shadml language server executable."
         }
       }
     }

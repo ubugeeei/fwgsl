@@ -42,7 +42,7 @@
 
 ## Showcase
 
-- See `examples/enlightenment-stars.fwgsl` for a creative end-to-end sketch combining:
+- See `examples/enlightenment-stars.shadml` for a creative end-to-end sketch combining:
   - `alias`, `newtype`, record `type`, and `data` ADTs
   - binding declarations (`@group/@binding`)
   - pipeline `|>`

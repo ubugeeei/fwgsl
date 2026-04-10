@@ -1,6 +1,6 @@
-# fwgsl
+# shadml
 
-`fwgsl` is a pure functional language for WebGPU that compiles to [WGSL](https://www.w3.org/TR/WGSL/).
+`shadml` is a pure functional language for WebGPU that compiles to [WGSL](https://www.w3.org/TR/WGSL/).
 
 It targets the space between ML/Haskell ergonomics and GPU reality: algebraic data types, pattern matching, Hindley-Milner inference, traits with operator overloading, modules, and a toolchain that aims to feel like a modern programming language rather than a shader macro layer.
 
@@ -140,7 +140,7 @@ For more examples, see [examples/README.md](examples/README.md).
 
 ### Language Server
 
-The `fwgsl-lsp` binary provides:
+The `shadml-lsp` binary provides:
 
 - Parse and semantic diagnostics on open/change.
 - Rich completion items with snippets, details, and markdown documentation.
@@ -186,10 +186,10 @@ mise run build
 mise run test
 
 # Compile a file through the CLI
-cargo run -p fwgsl_cli -- compile examples/hello.fwgsl
+cargo run -p shadml_cli -- compile examples/hello.shadml
 
 # Type-check a file
-cargo run -p fwgsl_cli -- check examples/lines.fwgsl
+cargo run -p shadml_cli -- check examples/lines.shadml
 
 # Start the playground dev server
 mise run dev
@@ -197,7 +197,7 @@ mise run dev
 
 ## Compiler Pipeline
 
-`fwgsl` is split into explicit phases so language work, tooling work, and WGSL lowering can evolve independently.
+`shadml` is split into explicit phases so language work, tooling work, and WGSL lowering can evolve independently.
 
 ```text
 Source Text
@@ -232,24 +232,24 @@ WGSL Codegen
 
 | Crate | Purpose |
 |-------|---------|
-| `fwgsl_allocator` | Arena allocation helpers |
-| `fwgsl_span` | Source spans, atoms, and source metadata |
-| `fwgsl_diagnostics` | Structured diagnostics with labels and help text |
-| `fwgsl_syntax` | `SyntaxKind` definitions for tokens and syntax nodes |
-| `fwgsl_parser` | Hand-written lexer, layout resolver, parser, module resolver |
-| `fwgsl_typechecker` | Types, schemes, substitutions, unification, inference engine |
-| `fwgsl_semantic` | Semantic analysis, environment building, trait/impl resolution |
-| `fwgsl_ast` | AST node definitions |
-| `fwgsl_ast_lowering` | AST to HIR lowering with trait dispatch and desugaring |
-| `fwgsl_hir` | Desugared typed high-level IR |
-| `fwgsl_mir` | Lowered WGSL-oriented IR |
-| `fwgsl_wgsl_codegen` | MIR to WGSL text emitter |
-| `fwgsl_ide` | Shared IDE logic (completions, hover, goto-def, references) |
-| `fwgsl_language_server` | LSP server implementation |
-| `fwgsl_formatter` | CST-based code formatter |
-| `fwgsl_wasm` | WASM bindings for the playground |
-| `fwgsl_cli` | CLI entry point |
-| `fwgsl_integration_tests` | End-to-end compiler pipeline tests |
+| `shadml_allocator` | Arena allocation helpers |
+| `shadml_span` | Source spans, atoms, and source metadata |
+| `shadml_diagnostics` | Structured diagnostics with labels and help text |
+| `shadml_syntax` | `SyntaxKind` definitions for tokens and syntax nodes |
+| `shadml_parser` | Hand-written lexer, layout resolver, parser, module resolver |
+| `shadml_typechecker` | Types, schemes, substitutions, unification, inference engine |
+| `shadml_semantic` | Semantic analysis, environment building, trait/impl resolution |
+| `shadml_ast` | AST node definitions |
+| `shadml_ast_lowering` | AST to HIR lowering with trait dispatch and desugaring |
+| `shadml_hir` | Desugared typed high-level IR |
+| `shadml_mir` | Lowered WGSL-oriented IR |
+| `shadml_wgsl_codegen` | MIR to WGSL text emitter |
+| `shadml_ide` | Shared IDE logic (completions, hover, goto-def, references) |
+| `shadml_language_server` | LSP server implementation |
+| `shadml_formatter` | CST-based code formatter |
+| `shadml_wasm` | WASM bindings for the playground |
+| `shadml_cli` | CLI entry point |
+| `shadml_integration_tests` | End-to-end compiler pipeline tests |
 
 ## Language Design Direction
 
@@ -263,7 +263,7 @@ WGSL Codegen
 
 ## WGSL Constraints
 
-WGSL is intentionally restrictive. `fwgsl` exists to bridge that gap.
+WGSL is intentionally restrictive. `shadml` exists to bridge that gap.
 
 | WGSL Constraint | Compiler Direction |
 |----------------|--------------------|
@@ -277,10 +277,10 @@ WGSL is intentionally restrictive. `fwgsl` exists to bridge that gap.
 
 A good starting point is usually one of:
 
-- Parser and diagnostics improvements in `crates/fwgsl_parser`
-- Semantic/type-system work in `crates/fwgsl_semantic` and `crates/fwgsl_typechecker`
-- WGSL lowering/codegen in `crates/fwgsl_mir` and `crates/fwgsl_wgsl_codegen`
-- Editor experience in `crates/fwgsl_language_server` and `playground/`
+- Parser and diagnostics improvements in `crates/shadml_parser`
+- Semantic/type-system work in `crates/shadml_semantic` and `crates/shadml_typechecker`
+- WGSL lowering/codegen in `crates/shadml_mir` and `crates/shadml_wgsl_codegen`
+- Editor experience in `crates/shadml_language_server` and `playground/`
 
 This repository uses `mise` for task entry points and keeps the workspace split into small crates.
 

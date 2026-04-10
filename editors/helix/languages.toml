@@ -1,17 +1,17 @@
 [[language]]
-name = "fwgsl"
-scope = "source.fwgsl"
-injection-regex = "fwgsl"
-file-types = ["fwgsl"]
+name = "shadml"
+scope = "source.shadml"
+injection-regex = "shadml"
+file-types = ["shadml"]
 comment-token = "--"
 block-comment-tokens = { start = "{-", end = "-}" }
 indent = { tab-width = 2, unit = "  " }
-language-servers = ["fwgsl-lsp"]
+language-servers = ["shadml-lsp"]
 auto-format = true
 
-[language-server.fwgsl-lsp]
-command = "fwgsl-lsp"
+[language-server.shadml-lsp]
+command = "shadml-lsp"
 
 [[grammar]]
-name = "fwgsl"
-source = { path = "../../tree-sitter-fwgsl" }
+name = "shadml"
+source = { path = "../../tree-sitter-shadml" }

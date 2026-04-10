@@ -1,47 +1,47 @@
 [workspace]
 resolver = "2"
-exclude = ["tree-sitter-fwgsl"]
+exclude = ["tree-sitter-shadml"]
 members = [
-    "crates/fwgsl_allocator",
-    "crates/fwgsl_span",
-    "crates/fwgsl_diagnostics",
-    "crates/fwgsl_ide",
-    "crates/fwgsl_syntax",
-    "crates/fwgsl_cst",
-    "crates/fwgsl_ast",
-    "crates/fwgsl_parser",
-    "crates/fwgsl_ast_lowering",
-    "crates/fwgsl_typechecker",
-    "crates/fwgsl_semantic",
-    "crates/fwgsl_hir",
-    "crates/fwgsl_mir",
-    "crates/fwgsl_wgsl_codegen",
-    "crates/fwgsl_formatter",
-    "crates/fwgsl_cli",
-    "crates/fwgsl_wasm",
-    "crates/fwgsl_language_server",
-    "crates/fwgsl_integration_tests",
+    "crates/shadml_allocator",
+    "crates/shadml_span",
+    "crates/shadml_diagnostics",
+    "crates/shadml_ide",
+    "crates/shadml_syntax",
+    "crates/shadml_cst",
+    "crates/shadml_ast",
+    "crates/shadml_parser",
+    "crates/shadml_ast_lowering",
+    "crates/shadml_typechecker",
+    "crates/shadml_semantic",
+    "crates/shadml_hir",
+    "crates/shadml_mir",
+    "crates/shadml_wgsl_codegen",
+    "crates/shadml_formatter",
+    "crates/shadml_cli",
+    "crates/shadml_wasm",
+    "crates/shadml_language_server",
+    "crates/shadml_integration_tests",
 ]
-# fwgsl_wasm requires wasm32 target, so exclude it from default workspace operations
+# shadml_wasm requires wasm32 target, so exclude it from default workspace operations
 default-members = [
-    "crates/fwgsl_allocator",
-    "crates/fwgsl_span",
-    "crates/fwgsl_diagnostics",
-    "crates/fwgsl_ide",
-    "crates/fwgsl_syntax",
-    "crates/fwgsl_cst",
-    "crates/fwgsl_ast",
-    "crates/fwgsl_parser",
-    "crates/fwgsl_ast_lowering",
-    "crates/fwgsl_typechecker",
-    "crates/fwgsl_semantic",
-    "crates/fwgsl_hir",
-    "crates/fwgsl_mir",
-    "crates/fwgsl_wgsl_codegen",
-    "crates/fwgsl_formatter",
-    "crates/fwgsl_cli",
-    "crates/fwgsl_language_server",
-    "crates/fwgsl_integration_tests",
+    "crates/shadml_allocator",
+    "crates/shadml_span",
+    "crates/shadml_diagnostics",
+    "crates/shadml_ide",
+    "crates/shadml_syntax",
+    "crates/shadml_cst",
+    "crates/shadml_ast",
+    "crates/shadml_parser",
+    "crates/shadml_ast_lowering",
+    "crates/shadml_typechecker",
+    "crates/shadml_semantic",
+    "crates/shadml_hir",
+    "crates/shadml_mir",
+    "crates/shadml_wgsl_codegen",
+    "crates/shadml_formatter",
+    "crates/shadml_cli",
+    "crates/shadml_language_server",
+    "crates/shadml_integration_tests",
 ]
 
 [workspace.package]
@@ -50,22 +50,22 @@ version = "0.1.0"
 license = "MIT"
 
 [workspace.dependencies]
-fwgsl_allocator = { path = "crates/fwgsl_allocator" }
-fwgsl_span = { path = "crates/fwgsl_span" }
-fwgsl_diagnostics = { path = "crates/fwgsl_diagnostics" }
-fwgsl_ide = { path = "crates/fwgsl_ide" }
-fwgsl_syntax = { path = "crates/fwgsl_syntax" }
-fwgsl_cst = { path = "crates/fwgsl_cst" }
-fwgsl_ast = { path = "crates/fwgsl_ast" }
-fwgsl_parser = { path = "crates/fwgsl_parser" }
-fwgsl_ast_lowering = { path = "crates/fwgsl_ast_lowering" }
-fwgsl_typechecker = { path = "crates/fwgsl_typechecker" }
-fwgsl_semantic = { path = "crates/fwgsl_semantic" }
-fwgsl_hir = { path = "crates/fwgsl_hir" }
-fwgsl_mir = { path = "crates/fwgsl_mir" }
-fwgsl_wgsl_codegen = { path = "crates/fwgsl_wgsl_codegen" }
-fwgsl_formatter = { path = "crates/fwgsl_formatter" }
-fwgsl_language_server = { path = "crates/fwgsl_language_server" }
+shadml_allocator = { path = "crates/shadml_allocator" }
+shadml_span = { path = "crates/shadml_span" }
+shadml_diagnostics = { path = "crates/shadml_diagnostics" }
+shadml_ide = { path = "crates/shadml_ide" }
+shadml_syntax = { path = "crates/shadml_syntax" }
+shadml_cst = { path = "crates/shadml_cst" }
+shadml_ast = { path = "crates/shadml_ast" }
+shadml_parser = { path = "crates/shadml_parser" }
+shadml_ast_lowering = { path = "crates/shadml_ast_lowering" }
+shadml_typechecker = { path = "crates/shadml_typechecker" }
+shadml_semantic = { path = "crates/shadml_semantic" }
+shadml_hir = { path = "crates/shadml_hir" }
+shadml_mir = { path = "crates/shadml_mir" }
+shadml_wgsl_codegen = { path = "crates/shadml_wgsl_codegen" }
+shadml_formatter = { path = "crates/shadml_formatter" }
+shadml_language_server = { path = "crates/shadml_language_server" }
 
 bumpalo = { version = "3", features = ["collections"] }
 compact_str = "0.8"

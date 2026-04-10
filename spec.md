@@ -1,9 +1,9 @@
-# fwgsl Language Specification
+# shadml Language Specification
 
 **Version:** 0.1.0
 **Status:** Working draft
 
-fwgsl is a purely functional language that compiles to WGSL (WebGPU Shading Language). It provides Haskell-inspired syntax with indentation-sensitive layout, Hindley-Milner type inference, algebraic data types, pattern matching, and traits — all targeting the GPU via WGSL code generation.
+shadml is a purely functional language that compiles to WGSL (WebGPU Shading Language). It provides Haskell-inspired syntax with indentation-sensitive layout, Hindley-Milner type inference, algebraic data types, pattern matching, and traits — all targeting the GPU via WGSL code generation.
 
 ---
 
@@ -122,7 +122,7 @@ String literals are delimited by `"..."` and character literals by `'...'`. Thes
 
 ## 2. Layout Rules
 
-fwgsl uses **Haskell 2010-style indentation-sensitive layout**. The layout resolver inserts virtual tokens into the token stream:
+shadml uses **Haskell 2010-style indentation-sensitive layout**. The layout resolver inserts virtual tokens into the token stream:
 
 - `LayoutBraceOpen` — opens an indentation context
 - `LayoutSemicolon` — separates declarations/bindings at the same indentation level
@@ -150,7 +150,7 @@ Within explicit `{ }` braces (records, bitfield declarations), virtual layout to
 
 ### 3.1 Primitive Types
 
-| fwgsl Type | WGSL Type | Description |
+| shadml Type | WGSL Type | Description |
 |------------|-----------|-------------|
 | `I32` | `i32` | Signed 32-bit integer |
 | `U32` | `u32` | Unsigned 32-bit integer |
@@ -874,11 +874,11 @@ From **lowest** to **highest** binding power:
 
 ### 7.3 Not-Equal Operator
 
-fwgsl uses `/=` (Haskell-style) for not-equal in source code. It compiles to `!=` in WGSL.
+shadml uses `/=` (Haskell-style) for not-equal in source code. It compiles to `!=` in WGSL.
 
 ### 7.4 Bitwise Operators
 
-| fwgsl | WGSL | Description |
+| shadml | WGSL | Description |
 |-------|------|-------------|
 | `x & y` | `x & y` | Bitwise AND |
 | `x ^ y` | `x ^ y` | Bitwise XOR |
@@ -908,7 +908,7 @@ The number of components (2–4) is inferred from the elements. Scalar and vecto
 
 ### 8.1 Hindley-Milner Type Inference
 
-fwgsl uses a constraint-based Hindley-Milner type inference engine:
+shadml uses a constraint-based Hindley-Milner type inference engine:
 
 - **Fresh type variables** are generated for unknown types
 - **Unification** resolves constraints between types
@@ -1065,9 +1065,9 @@ Each file is a module. Directory structure defines namespaces:
 ```
 src/
   Math/
-    Fp64.fwgsl      -- module Math.Fp64
-    Utils.fwgsl      -- module Math.Utils
-  Main.fwgsl         -- module Main
+    Fp64.shadml      -- module Math.Fp64
+    Utils.shadml      -- module Math.Utils
+  Main.shadml         -- module Main
 ```
 
 ### 10.2 Module Header
@@ -1094,7 +1094,7 @@ Everything is **public by default**. There is a planned `private` keyword for mo
 
 ### 10.5 Module Resolution
 
-The module resolver (`fwgsl_parser::module_resolver`) resolves imports to source files:
+The module resolver (`shadml_parser::module_resolver`) resolves imports to source files:
 
 1. Builds a `ModuleGraph` from the root file's imports
 2. Reads imported files via a `SourceReader` trait (supports filesystem or `VirtualFs`)
@@ -1107,7 +1107,7 @@ The module resolver (`fwgsl_parser::module_resolver`) resolves imports to source
 
 ```rust
 let mut vfs = VirtualFs::new();
-vfs.add("Math/Fp64.fwgsl", source_code);
+vfs.add("Math/Fp64.shadml", source_code);
 ```
 
 ### 10.7 Bundle Format
@@ -1131,7 +1131,7 @@ For single-file multi-module embedding, `parse_bundle()` parses section markers:
 Features are enabled via the CLI:
 
 ```
-fwgsl compile file.fwgsl --feature debug --feature aa
+shadml compile file.shadml --feature debug --feature aa
 ```
 
 Features are referenced in source as `cfg.name`.
@@ -1354,7 +1354,7 @@ Compiles to WGSL:
 
 ### 13.5 Resource Operations
 
-| fwgsl | WGSL | Description |
+| shadml | WGSL | Description |
 |-------|------|-------------|
 | `load resource` | `resource` (identity) | Read from uniform/storage |
 | `writeAt resource index value` | `resource[index] = value` | Write to storage buffer |
@@ -1363,7 +1363,7 @@ Compiles to WGSL:
 
 ## 14. Prelude and Builtins
 
-The prelude (`prelude/prelude.fwgsl`) is loaded via `include_str!` and prepended to every compilation. It provides type signatures for built-in operations.
+The prelude (`prelude/prelude.shadml`) is loaded via `include_str!` and prepended to every compilation. It provides type signatures for built-in operations.
 
 ### 14.1 Prelude Data Types
 
@@ -1505,7 +1505,7 @@ All have type `a -> a`.
 
 ### 14.15 Type Cast Builtins
 
-| fwgsl | WGSL | Type |
+| shadml | WGSL | Type |
 |-------|------|------|
 | `toF32 x` | `f32(x)` | `a -> F32` |
 | `toI32 x` | `i32(x)` | `a -> I32` |
@@ -1514,7 +1514,7 @@ All have type `a -> a`.
 
 ### 14.16 Resource Operations
 
-| fwgsl | Behavior |
+| shadml | Behavior |
 |-------|----------|
 | `load x` | Identity (reads resource value) |
 | `writeAt buf idx val` | `buf[idx] = val` |
@@ -1605,7 +1605,7 @@ The codegen emits valid WGSL text:
 
 ### 16.1 Type Mapping
 
-| fwgsl | WGSL |
+| shadml | WGSL |
 |-------|------|
 | `I32` | `i32` |
 | `U32` | `u32` |
@@ -1690,34 +1690,34 @@ loop {
 
 | Crate | Purpose |
 |-------|---------|
-| `fwgsl_syntax` | Token kinds and SyntaxKind enum |
-| `fwgsl_span` | Source span tracking |
-| `fwgsl_diagnostics` | Diagnostic infrastructure (errors, warnings) |
-| `fwgsl_allocator` | Arena allocator |
-| `fwgsl_cst` | Concrete syntax tree (placeholder) |
-| `fwgsl_ast` | Abstract syntax tree (placeholder) |
-| `fwgsl_parser` | Lexer, layout resolver, parser, module resolver, feature eval |
-| `fwgsl_typechecker` | Type representation, unification, inference engine |
-| `fwgsl_semantic` | Semantic analysis (name resolution, type inference) |
-| `fwgsl_ast_lowering` | AST → HIR lowering |
-| `fwgsl_hir` | High-level IR (typed, desugared) |
-| `fwgsl_mir` | Mid-level IR (imperative, WGSL-close) + HIR→MIR lowering |
-| `fwgsl_wgsl_codegen` | MIR → WGSL text emission |
-| `fwgsl_ide` | IDE features (completions, hover, goto-def, references) |
-| `fwgsl_formatter` | Token-stream based code formatter |
-| `fwgsl_language_server` | LSP server (tower-lsp over stdin/stdout) |
-| `fwgsl_wasm` | WASM compilation target (compile, parse, format, diagnostics, IDE) |
-| `fwgsl_cli` | Command-line interface |
-| `fwgsl_integration_tests` | End-to-end compiler tests |
+| `shadml_syntax` | Token kinds and SyntaxKind enum |
+| `shadml_span` | Source span tracking |
+| `shadml_diagnostics` | Diagnostic infrastructure (errors, warnings) |
+| `shadml_allocator` | Arena allocator |
+| `shadml_cst` | Concrete syntax tree (placeholder) |
+| `shadml_ast` | Abstract syntax tree (placeholder) |
+| `shadml_parser` | Lexer, layout resolver, parser, module resolver, feature eval |
+| `shadml_typechecker` | Type representation, unification, inference engine |
+| `shadml_semantic` | Semantic analysis (name resolution, type inference) |
+| `shadml_ast_lowering` | AST → HIR lowering |
+| `shadml_hir` | High-level IR (typed, desugared) |
+| `shadml_mir` | Mid-level IR (imperative, WGSL-close) + HIR→MIR lowering |
+| `shadml_wgsl_codegen` | MIR → WGSL text emission |
+| `shadml_ide` | IDE features (completions, hover, goto-def, references) |
+| `shadml_formatter` | Token-stream based code formatter |
+| `shadml_language_server` | LSP server (tower-lsp over stdin/stdout) |
+| `shadml_wasm` | WASM compilation target (compile, parse, format, diagnostics, IDE) |
+| `shadml_cli` | Command-line interface |
+| `shadml_integration_tests` | End-to-end compiler tests |
 
 ### 17.2 CLI
 
 ```
-fwgsl compile <file>    Compile .fwgsl to .wgsl (stdout)
-fwgsl check <file>      Type-check without emitting
-fwgsl fmt <file>        Format source code
-fwgsl version           Print version
-fwgsl help              Print help
+shadml compile <file>    Compile .shadml to .wgsl (stdout)
+shadml check <file>      Type-check without emitting
+shadml fmt <file>        Format source code
+shadml version           Print version
+shadml help              Print help
 ```
 
 **Options:**
@@ -1730,7 +1730,7 @@ fwgsl help              Print help
 
 ### 17.3 Language Server (LSP)
 
-The `fwgsl-lsp` binary provides a Language Server Protocol server over stdin/stdout (via tower-lsp + tokio).
+The `shadml-lsp` binary provides a Language Server Protocol server over stdin/stdout (via tower-lsp + tokio).
 
 **Supported features:**
 - Diagnostics (parse errors, type errors)
@@ -1743,7 +1743,7 @@ The `fwgsl-lsp` binary provides a Language Server Protocol server over stdin/std
 
 ### 17.4 Formatter
 
-The `fwgsl_formatter` crate provides token-stream based formatting:
+The `shadml_formatter` crate provides token-stream based formatting:
 
 ```rust
 format_default(source: &str) -> String
@@ -1754,7 +1754,7 @@ format(source: &str, config: &FormatConfig) -> String
 
 ### 17.5 WASM Target
 
-The `fwgsl_wasm` crate compiles to `wasm32-unknown-unknown` and exports:
+The `shadml_wasm` crate compiles to `wasm32-unknown-unknown` and exports:
 
 | Function | Description |
 |----------|-------------|
@@ -1771,7 +1771,7 @@ The `fwgsl_wasm` crate compiles to `wasm32-unknown-unknown` and exports:
 
 **VS Code** (`editors/vscode/`)
 - TextMate grammar for syntax highlighting
-- LSP client that spawns `fwgsl-lsp`
+- LSP client that spawns `shadml-lsp`
 
 **Helix** (`editors/helix/`)
 - `languages.toml` configuration
@@ -1781,7 +1781,7 @@ The `fwgsl_wasm` crate compiles to `wasm32-unknown-unknown` and exports:
 - `extension.toml` + `config.toml`
 - Query files for highlights, indents, outline, brackets
 
-**Tree-sitter** (`tree-sitter-fwgsl/`)
+**Tree-sitter** (`tree-sitter-shadml/`)
 - `grammar.js` with query files (highlights, locals, indents, textobjects)
 - Excluded from workspace (separate build)
 - Note: Tree-sitter has limitations with indentation-sensitive multi-line constructs (no external scanner)
@@ -1791,7 +1791,7 @@ The `fwgsl_wasm` crate compiles to `wasm32-unknown-unknown` and exports:
 
 ## Appendix A: Complete Example
 
-```fwgsl
+```shadml
 -- A simple compute shader that scales a buffer of vec4s.
 
 data ComputeInput = ComputeInput {

@@ -1,0 +1,15 @@
+[package]
+name = "shadml_ide"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+shadml_parser = { workspace = true }
+shadml_semantic = { workspace = true }
+shadml_span = { workspace = true }
+shadml_syntax = { workspace = true }
+shadml_typechecker = { workspace = true }
+lsp-types = "0.94"
+
+[dev-dependencies]
+insta = { workspace = true }

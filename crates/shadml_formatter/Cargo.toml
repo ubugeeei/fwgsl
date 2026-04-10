@@ -1,0 +1,11 @@
+[package]
+name = "shadml_formatter"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+shadml_syntax = { workspace = true }
+shadml_parser = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

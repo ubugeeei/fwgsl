@@ -1,0 +1,11 @@
+[package]
+name = "shadml_typechecker"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+shadml_span = { workspace = true }
+shadml_diagnostics = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

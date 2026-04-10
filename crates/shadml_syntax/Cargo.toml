@@ -1,0 +1,4 @@
+[package]
+name = "shadml_syntax"
+edition.workspace = true
+version.workspace = true

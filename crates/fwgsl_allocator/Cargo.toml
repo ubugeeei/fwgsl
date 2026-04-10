@@ -1,7 +1,0 @@
-[package]
-name = "fwgsl_allocator"
-edition.workspace = true
-version.workspace = true
-
-[dependencies]
-bumpalo = { workspace = true }

@@ -1,0 +1,10 @@
+-- Builtin Option / Result constructors and pattern matching.
+-- This file is intended for `shadml check`.
+
+promote value = match value
+  | Some x -> Ok x
+  | None -> Err "missing value"
+
+recover value = match value
+  | Ok x -> x
+  | Err _ -> 0

@@ -1,4 +1,4 @@
-; fwgsl highlight queries for tree-sitter
+; shadml highlight queries for tree-sitter
 
 ; Keywords — control flow
 ["if" "then" "else" "case" "of" "match" "loop"] @keyword.control

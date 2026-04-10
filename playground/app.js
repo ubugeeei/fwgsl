@@ -213,8 +213,8 @@ phong normal lightDir viewDir = ambient + diffuse + specular
 
 const AUTO_COMPILE_DELAY_MS = 250;
 const DEFAULT_EXAMPLE_KEY = 'shadorial-14';
-const PLAYGROUND_URI = 'inmemory://fwgsl/playground.fwgsl';
-const WGSL_OUTPUT_URI = 'inmemory://fwgsl/output.wgsl';
+const PLAYGROUND_URI = 'inmemory://shadml/playground.shadml';
+const WGSL_OUTPUT_URI = 'inmemory://shadml/output.wgsl';
 const FEATURED_PRESETS = [
     { key: 'shadorial-14', shortLabel: 'Water' },
     { key: 'shadorial-15', shortLabel: 'Smoke' },
@@ -223,7 +223,7 @@ const FEATURED_PRESETS = [
     { key: 'compute', shortLabel: 'Compute' },
 ];
 const FEATURED_PRESET_KEY_SET = new Set(FEATURED_PRESETS.map((preset) => preset.key));
-const FWGSL_KEYWORD_SET = new Set([
+const SHADML_KEYWORD_SET = new Set([
     'module', 'where', 'import', 'data', 'alias', 'trait', 'impl',
     'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else',
     'loop', 'const', 'extern', 'exposing', 'bitfield',
@@ -234,7 +234,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'match',
         detail: 'Pattern matching expression',
-        documentation: 'Branch on a value with pattern matching.\n\n```fwgsl\nmatch value\n  | Pattern -> result\n```',
+        documentation: 'Branch on a value with pattern matching.\n\n```shadml\nmatch value\n  | Pattern -> result\n```',
         insertText: 'match ${1:value}\n  | ${2:pattern} -> ${3:result}',
         snippet: true,
         kind: 'Keyword',
@@ -243,7 +243,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'let',
         detail: 'Let binding',
-        documentation: 'Introduce local bindings and evaluate a body expression.\n\n```fwgsl\nlet x = value\nin body\n```',
+        documentation: 'Introduce local bindings and evaluate a body expression.\n\n```shadml\nlet x = value\nin body\n```',
         insertText: 'let ${1:name} = ${2:value}\nin ${3:body}',
         snippet: true,
         kind: 'Keyword',
@@ -252,7 +252,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'if',
         detail: 'Conditional expression',
-        documentation: 'Choose between two expressions based on a boolean condition.\n\n```fwgsl\nif condition\n  then when_true\n  else when_false\n```',
+        documentation: 'Choose between two expressions based on a boolean condition.\n\n```shadml\nif condition\n  then when_true\n  else when_false\n```',
         insertText: 'if ${1:condition}\n  then ${2:when_true}\n  else ${3:when_false}',
         snippet: true,
         kind: 'Keyword',
@@ -261,7 +261,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'where',
         detail: 'Local definitions',
-        documentation: 'Attach helper bindings to a declaration.\n\n```fwgsl\nf x = body\nwhere\n  helper = x + 1\n```',
+        documentation: 'Attach helper bindings to a declaration.\n\n```shadml\nf x = body\nwhere\n  helper = x + 1\n```',
         insertText: 'where\n  ${1:name} = ${2:value}',
         snippet: true,
         kind: 'Keyword',
@@ -270,7 +270,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'data',
         detail: 'Algebraic data type declaration',
-        documentation: 'Declare an algebraic data type and its constructors.\n\n```fwgsl\ndata Option a = Some a | None\n```',
+        documentation: 'Declare an algebraic data type and its constructors.\n\n```shadml\ndata Option a = Some a | None\n```',
         insertText: 'data ${1:Type} ${2:a} = ${3:Constructor}',
         snippet: true,
         kind: 'Keyword',
@@ -279,7 +279,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'alias',
         detail: 'Type alias declaration',
-        documentation: 'Define a named alias for a type expression.\n\n```fwgsl\nalias Vec4f = Vec<4, F32>\n```',
+        documentation: 'Define a named alias for a type expression.\n\n```shadml\nalias Vec4f = Vec<4, F32>\n```',
         insertText: 'alias ${1:Alias} = ${2:Type}',
         snippet: true,
         kind: 'Keyword',
@@ -288,7 +288,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'trait',
         detail: 'Trait declaration',
-        documentation: 'Declare a trait interface.\n\n```fwgsl\ntrait Add a where\n  (+) : a -> a -> a\n```',
+        documentation: 'Declare a trait interface.\n\n```shadml\ntrait Add a where\n  (+) : a -> a -> a\n```',
         insertText: 'trait ${1:Trait} ${2:a} where\n  ${3:method} : ${4:Type}',
         snippet: true,
         kind: 'Keyword',
@@ -297,7 +297,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'impl',
         detail: 'Trait implementation',
-        documentation: 'Implement a trait for a concrete type.\n\n```fwgsl\nimpl Add MyType where\n  (+) a b = ...\n```',
+        documentation: 'Implement a trait for a concrete type.\n\n```shadml\nimpl Add MyType where\n  (+) a b = ...\n```',
         insertText: 'impl ${1:Trait} ${2:Type} where\n  ${3:method} ${4:args} = ${5:body}',
         snippet: true,
         kind: 'Keyword',
@@ -324,7 +324,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'loop',
         detail: 'Named tail-recursive loop',
-        documentation: 'Scheme-style named let for tail-recursive loops.\n\n```fwgsl\nloop go (i = 0) (acc = 0) in\n  if i >= n then acc\n  else go (i + 1) (acc + i)\n```',
+        documentation: 'Scheme-style named let for tail-recursive loops.\n\n```shadml\nloop go (i = 0) (acc = 0) in\n  if i >= n then acc\n  else go (i + 1) (acc + i)\n```',
         insertText: 'loop ${1:go} (${2:i} = ${3:0}) in\n  ${4:body}',
         snippet: true,
         kind: 'Keyword',
@@ -333,7 +333,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'const',
         detail: 'Constant declaration',
-        documentation: 'Declare a compile-time constant.\n\n```fwgsl\nconst PI : F32 = 3.14159\n```',
+        documentation: 'Declare a compile-time constant.\n\n```shadml\nconst PI : F32 = 3.14159\n```',
         insertText: 'const ${1:NAME} : ${2:Type} = ${3:value}',
         snippet: true,
         kind: 'Keyword',
@@ -342,7 +342,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'extern',
         detail: 'External declaration',
-        documentation: 'Declare an external builtin function.\n\n```fwgsl\nextern myBuiltin : F32 -> F32\n```',
+        documentation: 'Declare an external builtin function.\n\n```shadml\nextern myBuiltin : F32 -> F32\n```',
         insertText: 'extern ${1:name} : ${2:Type}',
         snippet: true,
         kind: 'Keyword',
@@ -351,7 +351,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'foldRange',
         detail: 'Fold over integer range',
-        documentation: 'Fold a function over a range of integers. Desugars to a WGSL for-loop.\n\n```fwgsl\nfoldRange 0 n init (\\acc i -> acc + i)\n```',
+        documentation: 'Fold a function over a range of integers. Desugars to a WGSL for-loop.\n\n```shadml\nfoldRange 0 n init (\\acc i -> acc + i)\n```',
         insertText: 'foldRange ${1:0} ${2:n} ${3:init} (\\\\${4:acc} ${5:i} -> ${6:body})',
         snippet: true,
         kind: 'Function',
@@ -360,7 +360,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'bitfield',
         detail: 'Packed bitfield declaration',
-        documentation: 'Declare a bitfield with named fields packed into an integer.\n\n```fwgsl\nbitfield Flags : U32 = {\n  visible : 1,\n  layer   : 4,\n}\n```',
+        documentation: 'Declare a bitfield with named fields packed into an integer.\n\n```shadml\nbitfield Flags : U32 = {\n  visible : 1,\n  layer   : 4,\n}\n```',
         insertText: 'bitfield ${1:Name} : U32 = {\n  ${2:field} : ${3:1},\n}',
         snippet: true,
         kind: 'Keyword',
@@ -405,7 +405,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'Vec',
         detail: 'Vector type',
-        documentation: 'Vector type parameterized by a type-level dimension and scalar.\n\n```fwgsl\nVec 3 F32\n```',
+        documentation: 'Vector type parameterized by a type-level dimension and scalar.\n\n```shadml\nVec 3 F32\n```',
         insertText: 'Vec ${1:3} ${2:F32}',
         snippet: true,
         kind: 'TypeParameter',
@@ -414,7 +414,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'Mat',
         detail: 'Matrix type',
-        documentation: 'Matrix type parameterized by rows, columns, and scalar.\n\n```fwgsl\nMat 4 4 F32\n```',
+        documentation: 'Matrix type parameterized by rows, columns, and scalar.\n\n```shadml\nMat 4 4 F32\n```',
         insertText: 'Mat ${1:4} ${2:4} ${3:F32}',
         snippet: true,
         kind: 'TypeParameter',
@@ -423,7 +423,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'Tensor',
         detail: 'Fixed-size tensor type',
-        documentation: 'Tensor type parameterized by a type-level extent and element type.\n\n```fwgsl\nTensor 16 F32\n```',
+        documentation: 'Tensor type parameterized by a type-level extent and element type.\n\n```shadml\nTensor 16 F32\n```',
         insertText: 'Tensor ${1:16} ${2:F32}',
         snippet: true,
         kind: 'TypeParameter',
@@ -432,7 +432,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'splat3',
         detail: 'Lift a scalar into Vec 3',
-        documentation: 'Construct a 3D vector by repeating one scalar.\n\n```fwgsl\nsplat3 0.5\n```',
+        documentation: 'Construct a 3D vector by repeating one scalar.\n\n```shadml\nsplat3 0.5\n```',
         insertText: 'splat3',
         snippet: false,
         kind: 'Function',
@@ -513,7 +513,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'vertex',
         detail: 'Vertex entry point attribute',
-        documentation: 'Mark a function as a vertex shader entry point.\n\n```fwgsl\n@vertex\nmain = ...\n```',
+        documentation: 'Mark a function as a vertex shader entry point.\n\n```shadml\n@vertex\nmain = ...\n```',
         insertText: 'vertex',
         snippet: false,
         kind: 'Property',
@@ -540,7 +540,7 @@ const STATIC_EDITOR_ITEMS = [
     {
         label: 'workgroup_size',
         detail: 'Workgroup size attribute',
-        documentation: 'Set compute workgroup dimensions.\n\n```fwgsl\n@workgroup_size(64, 1, 1)\n```',
+        documentation: 'Set compute workgroup dimensions.\n\n```shadml\n@workgroup_size(64, 1, 1)\n```',
         insertText: 'workgroup_size(${1:64}, ${2:1}, ${3:1})',
         snippet: true,
         kind: 'Property',
@@ -585,11 +585,11 @@ const STATIC_EDITOR_ITEMS = [
 ];
 
 // ============================================================
-// fwgsl language definition for Monaco
+// shadml language definition for Monaco
 // ============================================================
-const FWGSL_LANGUAGE = {
+const SHADML_LANGUAGE = {
     defaultToken: '',
-    tokenPostfix: '.fwgsl',
+    tokenPostfix: '.shadml',
     keywords: [
         'module', 'where', 'import', 'data', 'alias', 'trait', 'impl',
         'let', 'in', 'case', 'of', 'match', 'if', 'then', 'else',
@@ -688,28 +688,28 @@ const FWGSL_LANGUAGE = {
 };
 
 const SHADORIAL_EXAMPLES = [
-    ['shadorial-01', 'Shadorial 01 · Hello Shader', '../examples/shadorial/01-hello-shader.fwgsl'],
-    ['shadorial-02', 'Shadorial 02 · Uniforms', '../examples/shadorial/02-uniforms.fwgsl'],
-    ['shadorial-03', 'Shadorial 03 · Colors', '../examples/shadorial/03-colors-gradients.fwgsl'],
-    ['shadorial-04', 'Shadorial 04 · Sin Wave', '../examples/shadorial/04-sin-wave.fwgsl'],
-    ['shadorial-05', 'Shadorial 05 · Saw Triangle', '../examples/shadorial/05-saw-triangle-wave.fwgsl'],
-    ['shadorial-06', 'Shadorial 06 · Pulse Wave', '../examples/shadorial/06-pulse-wave.fwgsl'],
-    ['shadorial-07', 'Shadorial 07 · Noise Wave', '../examples/shadorial/07-noise-wave.fwgsl'],
-    ['shadorial-08', 'Shadorial 08 · Composition', '../examples/shadorial/08-wave-composition.fwgsl'],
-    ['shadorial-09', 'Shadorial 09 · Shapes SDF', '../examples/shadorial/09-shapes-sdf.fwgsl'],
-    ['shadorial-10', 'Shadorial 10 · Lighting', '../examples/shadorial/10-light-reflection.fwgsl'],
-    ['shadorial-11', 'Shadorial 11 · Animation', '../examples/shadorial/11-animation.fwgsl'],
-    ['shadorial-12', 'Shadorial 12 · Noise', '../examples/shadorial/12-noise.fwgsl'],
-    ['shadorial-13', 'Shadorial 13 · Particles', '../examples/shadorial/13-particles.fwgsl'],
-    ['shadorial-14', 'Shadorial 14 · Water', '../examples/shadorial/14-fluid-water.fwgsl'],
-    ['shadorial-15', 'Shadorial 15 · Smoke', '../examples/shadorial/15-fluid-smoke.fwgsl'],
-    ['shadorial-16', 'Shadorial 16 · Glitch', '../examples/shadorial/16-glitch.fwgsl'],
-    ['shadorial-17', 'Shadorial 17 · Geometric', '../examples/shadorial/17-geometric.fwgsl'],
-    ['shadorial-18', 'Shadorial 18 · Pixel Art', '../examples/shadorial/18-pixel-art.fwgsl'],
-    ['shadorial-19', 'Shadorial 19 · Surface Shader', '../examples/shadorial/19-three-interactive.fwgsl'],
+    ['shadorial-01', 'Shadorial 01 · Hello Shader', '../examples/shadorial/01-hello-shader.shadml'],
+    ['shadorial-02', 'Shadorial 02 · Uniforms', '../examples/shadorial/02-uniforms.shadml'],
+    ['shadorial-03', 'Shadorial 03 · Colors', '../examples/shadorial/03-colors-gradients.shadml'],
+    ['shadorial-04', 'Shadorial 04 · Sin Wave', '../examples/shadorial/04-sin-wave.shadml'],
+    ['shadorial-05', 'Shadorial 05 · Saw Triangle', '../examples/shadorial/05-saw-triangle-wave.shadml'],
+    ['shadorial-06', 'Shadorial 06 · Pulse Wave', '../examples/shadorial/06-pulse-wave.shadml'],
+    ['shadorial-07', 'Shadorial 07 · Noise Wave', '../examples/shadorial/07-noise-wave.shadml'],
+    ['shadorial-08', 'Shadorial 08 · Composition', '../examples/shadorial/08-wave-composition.shadml'],
+    ['shadorial-09', 'Shadorial 09 · Shapes SDF', '../examples/shadorial/09-shapes-sdf.shadml'],
+    ['shadorial-10', 'Shadorial 10 · Lighting', '../examples/shadorial/10-light-reflection.shadml'],
+    ['shadorial-11', 'Shadorial 11 · Animation', '../examples/shadorial/11-animation.shadml'],
+    ['shadorial-12', 'Shadorial 12 · Noise', '../examples/shadorial/12-noise.shadml'],
+    ['shadorial-13', 'Shadorial 13 · Particles', '../examples/shadorial/13-particles.shadml'],
+    ['shadorial-14', 'Shadorial 14 · Water', '../examples/shadorial/14-fluid-water.shadml'],
+    ['shadorial-15', 'Shadorial 15 · Smoke', '../examples/shadorial/15-fluid-smoke.shadml'],
+    ['shadorial-16', 'Shadorial 16 · Glitch', '../examples/shadorial/16-glitch.shadml'],
+    ['shadorial-17', 'Shadorial 17 · Geometric', '../examples/shadorial/17-geometric.shadml'],
+    ['shadorial-18', 'Shadorial 18 · Pixel Art', '../examples/shadorial/18-pixel-art.shadml'],
+    ['shadorial-19', 'Shadorial 19 · Surface Shader', '../examples/shadorial/19-three-interactive.shadml'],
 ].map(([key, label, path]) => ({ key, label, path }));
 
-const EMBEDDED_EXAMPLES = window.FWGSL_EMBEDDED_EXAMPLES || {};
+const EMBEDDED_EXAMPLES = window.SHADML_EMBEDDED_EXAMPLES || {};
 
 const EXAMPLE_LIBRARY = {
     hello: { label: 'Hello World', source: EXAMPLES.hello },
@@ -752,7 +752,7 @@ const PRESET_GROUPS = [
 // ============================================================
 // Monaco theme
 // ============================================================
-const FWGSL_THEME = {
+const SHADML_THEME = {
     base: 'vs-dark',
     inherit: true,
     rules: [
@@ -835,7 +835,7 @@ const WGSL_THEME_RULES = [
 ];
 
 function registerEditorProviders(monaco) {
-    monaco.languages.registerCompletionItemProvider('fwgsl', {
+    monaco.languages.registerCompletionItemProvider('shadml', {
         triggerCharacters: ['@', '.', ':', ' '],
         async provideCompletionItems(model, position) {
             const wasmSuggestions = await getWasmEditorCompletions(monaco, model, position);
@@ -848,7 +848,7 @@ function registerEditorProviders(monaco) {
         },
     });
 
-    monaco.languages.registerHoverProvider('fwgsl', {
+    monaco.languages.registerHoverProvider('shadml', {
         async provideHover(model, position) {
             const wasmHover = await getWasmEditorHover(monaco, model, position);
             if (wasmHover) {
@@ -886,7 +886,7 @@ function registerEditorProviders(monaco) {
                     range,
                     contents: [
                         {
-                            value: `\`\`\`fwgsl\n${word.word} : ${symbols.signatures.get(word.word)}\n\`\`\`\n\nLocal binding from this document.`,
+                            value: `\`\`\`shadml\n${word.word} : ${symbols.signatures.get(word.word)}\n\`\`\`\n\nLocal binding from this document.`,
                         },
                     ],
                 };
@@ -916,13 +916,13 @@ function registerEditorProviders(monaco) {
         },
     });
 
-    monaco.languages.registerDefinitionProvider('fwgsl', {
+    monaco.languages.registerDefinitionProvider('shadml', {
         async provideDefinition(model, position) {
             return getWasmEditorDefinitions(monaco, model, position);
         },
     });
 
-    monaco.languages.registerReferenceProvider('fwgsl', {
+    monaco.languages.registerReferenceProvider('shadml', {
         async provideReferences(model, position, context) {
             return getWasmEditorReferences(monaco, model, position, context?.includeDeclaration ?? false);
         },
@@ -1169,7 +1169,7 @@ function collectDocumentSymbols(source) {
 
     for (const match of source.matchAll(/\b[A-Za-z_][\w']*\b/g)) {
         const identifier = match[0];
-        if (!FWGSL_KEYWORD_SET.has(identifier)) {
+        if (!SHADML_KEYWORD_SET.has(identifier)) {
             identifiers.add(identifier);
         }
     }
@@ -1207,7 +1207,7 @@ function inferDocumentSymbolDetail(symbols, identifier) {
 
 function inferDocumentSymbolDocumentation(symbols, identifier) {
     if (symbols.signatures.has(identifier)) {
-        return `\`\`\`fwgsl\n${identifier} : ${symbols.signatures.get(identifier)}\n\`\`\`\n\nLocal binding from this document.`;
+        return `\`\`\`shadml\n${identifier} : ${symbols.signatures.get(identifier)}\n\`\`\`\n\nLocal binding from this document.`;
     }
     if (symbols.constructors.has(identifier)) {
         return `**\`${identifier}\`**\n\nConstructor for \`${symbols.constructors.get(identifier)}\`.`;
@@ -1392,24 +1392,24 @@ async function initMonaco() {
         require(['vs/editor/editor.main'], function (monaco) {
             window.monaco = monaco;
 
-            // Register fwgsl language
-            monaco.languages.register({ id: 'fwgsl' });
-            monaco.languages.setMonarchTokensProvider('fwgsl', FWGSL_LANGUAGE);
+            // Register shadml language
+            monaco.languages.register({ id: 'shadml' });
+            monaco.languages.setMonarchTokensProvider('shadml', SHADML_LANGUAGE);
 
             // Register WGSL language
             monaco.languages.register({ id: 'wgsl' });
             monaco.languages.setMonarchTokensProvider('wgsl', WGSL_LANGUAGE);
 
             // Define theme with both language rules
-            monaco.editor.defineTheme('fwgsl-dark', {
-                ...FWGSL_THEME,
-                rules: [...FWGSL_THEME.rules, ...WGSL_THEME_RULES],
+            monaco.editor.defineTheme('shadml-dark', {
+                ...SHADML_THEME,
+                rules: [...SHADML_THEME.rules, ...WGSL_THEME_RULES],
             });
             registerEditorProviders(monaco);
 
             const sourceModel = monaco.editor.createModel(
                 EXAMPLE_LIBRARY[DEFAULT_EXAMPLE_KEY].source || EXAMPLES.hello,
-                'fwgsl',
+                'shadml',
                 monaco.Uri.parse(PLAYGROUND_URI),
             );
 
@@ -1422,7 +1422,7 @@ async function initMonaco() {
             // Create main editor
             editor = monaco.editor.create(document.getElementById('editor-container'), {
                 model: sourceModel,
-                theme: 'fwgsl-dark',
+                theme: 'shadml-dark',
                 fontFamily: "'JetBrains Mono', 'Cascadia Code', monospace",
                 fontSize: 13,
                 lineHeight: 22,
@@ -1464,7 +1464,7 @@ async function initMonaco() {
             // Create WGSL output editor (read-only)
             wgslEditor = monaco.editor.create(document.getElementById('wgsl-output'), {
                 model: wgslModel,
-                theme: 'fwgsl-dark',
+                theme: 'shadml-dark',
                 fontFamily: "'JetBrains Mono', 'Cascadia Code', monospace",
                 fontSize: 12,
                 lineHeight: 20,
@@ -1500,7 +1500,7 @@ async function initMonaco() {
 
 async function initWasm() {
     try {
-        const pkg = await import('./pkg/fwgsl_wasm.js');
+        const pkg = await import('./pkg/shadml_wasm.js');
         await pkg.default();
         wasmModule = pkg;
         document.getElementById('editor-status').textContent = 'wasm ready';
@@ -1521,7 +1521,7 @@ async function initWasm() {
 }
 
 /**
- * Generate mock WGSL output from fwgsl source for development/demo purposes.
+ * Generate mock WGSL output from shadml source for development/demo purposes.
  */
 function generateMockWgsl(source) {
     const lines = source.split('\n');
@@ -1539,8 +1539,8 @@ function generateMockWgsl(source) {
         }
     }
 
-    let output = '// Generated WGSL from fwgsl compiler\n';
-    output += '// fwgsl compiler WASM module not loaded.\n';
+    let output = '// Generated WGSL from shadml compiler\n';
+    output += '// shadml compiler WASM module not loaded.\n';
     output += '// Build with: mise run wasm\n';
     output += `// Source: ${lines.length} lines\n\n`;
 
@@ -1552,11 +1552,11 @@ function generateMockWgsl(source) {
         if (fn === 'main') {
             output += `@compute @workgroup_size(64, 1, 1)\n`;
             output += `fn ${fn}(@builtin(global_invocation_id) gid: vec3<u32>) {\n`;
-            output += `  // compiled from fwgsl\n`;
+            output += `  // compiled from shadml\n`;
             output += `}\n\n`;
         } else {
             output += `fn ${fn}() -> i32 {\n`;
-            output += `  // compiled from fwgsl\n`;
+            output += `  // compiled from shadml\n`;
             output += `  return 0i;\n`;
             output += `}\n\n`;
         }
@@ -2480,10 +2480,10 @@ function updateDiagnostics(diagnostics) {
             endLineNumber: d.endLine || d.line || 1,
             endColumn: d.endCol || (d.col || 1) + 1,
             message: formatDiagnosticMessage(d),
-            source: 'fwgsl',
+            source: 'shadml',
             code: d.code,
         }));
-        monaco.editor.setModelMarkers(model, 'fwgsl', markers);
+        monaco.editor.setModelMarkers(model, 'shadml', markers);
     }
 
     applyDiagnosticDecorations(diagnostics);
@@ -2672,7 +2672,7 @@ function setupEventListeners() {
     document.getElementById('btn-clear-diag').addEventListener('click', () => {
         updateDiagnostics([]);
         if (window.monaco) {
-            monaco.editor.setModelMarkers(editor.getModel(), 'fwgsl', []);
+            monaco.editor.setModelMarkers(editor.getModel(), 'shadml', []);
         }
     });
 

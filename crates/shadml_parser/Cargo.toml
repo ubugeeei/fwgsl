@@ -1,0 +1,14 @@
+[package]
+name = "shadml_parser"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+shadml_syntax = { workspace = true }
+shadml_span = { workspace = true }
+shadml_diagnostics = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+shadml_syntax = { workspace = true }
+shadml_span = { workspace = true }

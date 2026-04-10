@@ -1,0 +1,9 @@
+[package]
+name = "shadml_diagnostics"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+shadml_span = { workspace = true }
+miette = { workspace = true }
+thiserror = { workspace = true }

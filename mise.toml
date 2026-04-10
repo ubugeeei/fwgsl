@@ -28,12 +28,12 @@ run = "cargo build --workspace --release"
 
 [tasks.cli]
 description = "Build and install CLI to PATH"
-run = "cargo install --path crates/fwgsl_cli"
+run = "cargo install --path crates/shadml_cli"
 
 [tasks.wasm]
 description = "Build WASM for playground"
 run = """
-cd crates/fwgsl_wasm
+cd crates/shadml_wasm
 wasm-pack build --target web --out-dir ../../playground/pkg
 """
 

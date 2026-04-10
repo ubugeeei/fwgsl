@@ -1,14 +1,14 @@
-id = "fwgsl"
-name = "fwgsl"
-description = "Language support for fwgsl — pure functional WebGPU shading language"
+id = "shadml"
+name = "shadml"
+description = "Language support for shadml — pure functional WebGPU shading language"
 version = "0.1.0"
 schema_version = 1
-authors = ["fwgsl contributors"]
-repository = "https://github.com/user/fwgsl"
+authors = ["shadml contributors"]
+repository = "https://github.com/user/shadml"
 
-[grammars.fwgsl]
-repository = "https://github.com/user/tree-sitter-fwgsl"
+[grammars.shadml]
+repository = "https://github.com/user/tree-sitter-shadml"
 rev = "main"
 
-[language_servers.fwgsl-lsp]
-language = "fwgsl"
+[language_servers.shadml-lsp]
+language = "shadml"

@@ -1,7 +1,7 @@
 'use strict';
 
-// Generated from examples/shadorial/*.fwgsl
-window.FWGSL_EMBEDDED_EXAMPLES = {
+// Generated from examples/shadorial/*.shadml
+window.SHADML_EMBEDDED_EXAMPLES = {
     "shadorial-01": "-- Shadorial Chapter 01: Hello Shader\n-- UV coordinates mapped to RGB color\n\nshade : Vec 2 F32 -> Vec 2 F32 -> Vec 4 F32\nshade fragCoord resolution = vec4 uv.x uv.y 0.5 1.0\n  where\n    uv = fragCoord / resolution\n",
     "shadorial-02": "-- Shadorial Chapter 02: Uniforms\n-- Time animation, resolution, and mouse interaction\n\nshade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 2 F32 -> Vec 4 F32\nshade fragCoord time resolution mouse = vec4 color.x color.y color.z 1.0\n  where\n    uv     = fragCoord / resolution\n    mouseN = mouse / resolution\n    r      = 0.5 + 0.5 * sin time\n    g      = 0.5 + 0.5 * sin (time + 2.094)\n    b      = 0.5 + 0.5 * sin (time + 4.189)\n    dist   = length (uv - mouseN)\n    circle = smoothstep 0.15 0.14 dist\n    base   = vec3 r g b\n    intensity = 0.3 + circle * 0.7\n    color  = base * splat3 intensity\n",
     "shadorial-03": "-- Shadorial Chapter 03: Colors & Gradients\n-- Animated 3-color gradient with sine wave distortion\n\nshade : Vec 2 F32 -> F32 -> Vec 2 F32 -> Vec 4 F32\nshade fragCoord time resolution = vec4 color'.x color'.y color'.z 1.0\n  where\n    uv     = fragCoord / resolution\n    colorA = vec3 0.2 0.0 0.5\n    colorB = vec3 1.0 0.4 0.0\n    colorC = vec3 0.0 0.8 0.6\n    t      = uv.x + sin (uv.y * 3.0 + time) * 0.2\n    color  = mix colorA colorB (smoothstep 0.0 0.5 t)\n    color' = mix color  colorC (smoothstep 0.5 1.0 t)\n",

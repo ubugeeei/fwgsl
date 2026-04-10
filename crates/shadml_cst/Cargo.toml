@@ -1,0 +1,4 @@
+[package]
+name = "shadml_cst"
+edition.workspace = true
+version.workspace = true

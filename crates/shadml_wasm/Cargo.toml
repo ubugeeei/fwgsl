@@ -1,0 +1,24 @@
+[package]
+name = "shadml_wasm"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shadml_ide = { workspace = true }
+shadml_parser = { workspace = true }
+shadml_typechecker = { workspace = true }
+shadml_semantic = { workspace = true }
+shadml_ast_lowering = { workspace = true }
+shadml_hir = { workspace = true }
+shadml_mir = { workspace = true }
+shadml_wgsl_codegen = { workspace = true }
+shadml_formatter = { workspace = true }
+shadml_diagnostics = { workspace = true }
+shadml_span = { workspace = true }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lsp-types = "0.94"

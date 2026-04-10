@@ -1,0 +1,4049 @@
+//! Recursive descent parser for shadml.
+//!
+//! Produces a simple AST. Expression parsing uses Pratt (precedence climbing).
+
+use shadml_diagnostics::{Diagnostic, DiagnosticSink, Label};
+use shadml_span::Span;
+use shadml_syntax::SyntaxKind;
+
+use crate::layout::resolve_layout;
+use crate::lexer::{lex, Token};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AST types
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A parsed shadml program.
+#[derive(Debug, Clone)]
+pub struct Program {
+    pub decls: Vec<Decl>,
+}
+
+impl Decl {
+    /// Get the leading comments attached to this declaration.
+    pub fn comments(&self) -> &[String] {
+        match self {
+            Decl::TypeSig { comments, .. }
+            | Decl::FunDecl { comments, .. }
+            | Decl::DataDecl { comments, .. }
+            | Decl::EntryPoint { comments, .. }
+            | Decl::TypeAlias { comments, .. }
+            | Decl::BindingDecl { comments, .. }
+            | Decl::BitfieldDecl { comments, .. }
+            | Decl::ConstDecl { comments, .. }
+            | Decl::TraitDecl { comments, .. }
+            | Decl::ImplDecl { comments, .. }
+            | Decl::ExternDecl { comments, .. }
+            | Decl::ModuleDecl { comments, .. }
+            | Decl::ImportDecl { comments, .. } => comments,
+            Decl::CfgDecl { .. } => &[],
+        }
+    }
+
+    /// Get a mutable reference to the leading comments.
+    pub fn comments_mut(&mut self) -> &mut Vec<String> {
+        match self {
+            Decl::TypeSig { comments, .. }
+            | Decl::FunDecl { comments, .. }
+            | Decl::DataDecl { comments, .. }
+            | Decl::EntryPoint { comments, .. }
+            | Decl::TypeAlias { comments, .. }
+            | Decl::BindingDecl { comments, .. }
+            | Decl::BitfieldDecl { comments, .. }
+            | Decl::ConstDecl { comments, .. }
+            | Decl::TraitDecl { comments, .. }
+            | Decl::ImplDecl { comments, .. }
+            | Decl::ExternDecl { comments, .. }
+            | Decl::ModuleDecl { comments, .. }
+            | Decl::ImportDecl { comments, .. } => comments,
+            Decl::CfgDecl { .. } => {
+                // CfgDecl has no comments field; this should not be called on it.
+                // Return a static empty vec to satisfy the borrow checker.
+                // CfgDecl is expanded before downstream processing.
+                panic!("CfgDecl has no comments — it should be expanded before use")
+            }
+        }
+    }
+
+    /// Recursively collect all declarations from a slice, flattening `CfgDecl`
+    /// nodes by including declarations from *both* branches. This is used by
+    /// the semantic analyzer, AST lowering, and IDE so they see all names
+    /// regardless of which feature flags are active.
+    pub fn flatten_cfg_decls(decls: &[Decl]) -> Vec<&Decl> {
+        let mut result = Vec::new();
+        for decl in decls {
+            match decl {
+                Decl::CfgDecl {
+                    then_decls,
+                    else_decls,
+                    ..
+                } => {
+                    result.extend(Decl::flatten_cfg_decls(then_decls));
+                    result.extend(Decl::flatten_cfg_decls(else_decls));
+                }
+                _ => result.push(decl),
+            }
+        }
+        result
+    }
+
+    /// Get the source span of this declaration.
+    pub fn span(&self) -> Span {
+        match self {
+            Decl::TypeSig { span, .. }
+            | Decl::FunDecl { span, .. }
+            | Decl::DataDecl { span, .. }
+            | Decl::EntryPoint { span, .. }
+            | Decl::TypeAlias { span, .. }
+            | Decl::BindingDecl { span, .. }
+            | Decl::BitfieldDecl { span, .. }
+            | Decl::ConstDecl { span, .. }
+            | Decl::TraitDecl { span, .. }
+            | Decl::ImplDecl { span, .. }
+            | Decl::ExternDecl { span, .. }
+            | Decl::ModuleDecl { span, .. }
+            | Decl::ImportDecl { span, .. }
+            | Decl::CfgDecl { span, .. } => *span,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Decl {
+    TypeSig {
+        name: String,
+        ty: Type,
+        span: Span,
+        comments: Vec<String>,
+    },
+    FunDecl {
+        name: String,
+        params: Vec<Pat>,
+        body: Expr,
+        where_binds: Vec<(String, Expr)>,
+        span: Span,
+        comments: Vec<String>,
+    },
+    DataDecl {
+        name: String,
+        type_params: Vec<String>,
+        constructors: Vec<ConDecl>,
+        span: Span,
+        comments: Vec<String>,
+    },
+    EntryPoint {
+        attributes: Vec<Attribute>,
+        name: String,
+        params: Vec<Pat>,
+        body: Expr,
+        span: Span,
+        comments: Vec<String>,
+    },
+    TypeAlias {
+        name: String,
+        params: Vec<String>,
+        ty: Type,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Binding declaration:
+    ///   `@group(N) @binding(N) uniform name : Type`
+    ///   `@group(N) @binding(N) storage name : Type`
+    ///   `@group(N) @binding(N) storage(read) name : Type`
+    BindingDecl {
+        name: String,
+        ty: Type,
+        address_space: BindingAddressSpace,
+        group: u32,
+        binding: u32,
+        span: Span,
+        comments: Vec<String>,
+    },
+    BitfieldDecl {
+        name: String,
+        base_ty: Type,
+        constructor_name: String,
+        fields: Vec<BitfieldField>,
+        span: Span,
+        comments: Vec<String>,
+    },
+    ConstDecl {
+        name: String,
+        ty: Type,
+        value: Expr,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Trait declaration: `trait Num a where (+) : a -> a -> a ...`
+    TraitDecl {
+        name: String,
+        /// Type variable the trait is parameterised over.
+        var: String,
+        methods: Vec<TraitMethod>,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Impl declaration.
+    /// Trait impl: `impl Add Fp64 where (+) a b = ...`
+    /// Standalone impl: `impl Fp64 where collapse v = ...`
+    ImplDecl {
+        /// None for standalone impls.
+        trait_name: Option<String>,
+        /// The concrete type this impl is for.
+        ty: Type,
+        methods: Vec<ImplMethod>,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Extern declaration: `extern sin : a -> a`
+    /// Declares a built-in name with its type signature (no body).
+    ExternDecl {
+        name: String,
+        ty: Type,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Module header (optional): `module Math.Fp64`
+    /// If absent, the module name is derived from the file path.
+    ModuleDecl {
+        name: String,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Import declaration:
+    ///   `import Math.Fp64`            — import all public names
+    ///   `import Math.Fp64 (Fp64, f)`  — import specific names
+    ///   `import Math.Fp64 as Fp`      — qualified access: Fp.f
+    ///   `import Math.*`               — import all sub-modules
+    ///   `import Debug when cfg.debug` — conditional import
+    ImportDecl {
+        module_path: String,
+        kind: ImportKind,
+        condition: Option<CfgPredicate>,
+        span: Span,
+        comments: Vec<String>,
+    },
+    /// Conditional compilation block:
+    ///   `when cfg.debug`           — block form
+    ///     decl1
+    ///     decl2
+    ///   `else`
+    ///     decl3
+    CfgDecl {
+        condition: CfgPredicate,
+        then_decls: Vec<Decl>,
+        else_decls: Vec<Decl>,
+        span: Span,
+    },
+}
+
+/// A compile-time feature predicate for conditional compilation.
+#[derive(Debug, Clone)]
+pub enum CfgPredicate {
+    /// `cfg.name` — true if `--feature name` is set.
+    Feature(String),
+    /// `not pred` — negation.
+    Not(Box<CfgPredicate>),
+    /// `pred && pred` — conjunction.
+    And(Box<CfgPredicate>, Box<CfgPredicate>),
+    /// `pred || pred` — disjunction.
+    Or(Box<CfgPredicate>, Box<CfgPredicate>),
+}
+
+/// How names are imported from a module.
+#[derive(Debug, Clone)]
+pub enum ImportKind {
+    /// `import Foo` — import all public names unqualified.
+    All,
+    /// `import Foo (bar, baz)` — import only listed names.
+    Selective(Vec<String>),
+    /// `import Foo as F` — qualified access only.
+    Qualified(String),
+    /// `import Foo.*` — import all sub-modules under Foo/.
+    Wildcard,
+}
+
+/// Address space for a binding declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingAddressSpace {
+    /// `uniform` — uniform buffer (read-only)
+    Uniform,
+    /// `storage` — storage buffer (default: read)
+    StorageRead,
+    /// `storage(read_write)` — storage buffer (read-write)
+    StorageReadWrite,
+}
+
+/// A method signature inside a `trait` declaration.
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+    /// Doc comments attached to this trait method.
+    pub doc: Option<String>,
+}
+
+/// A method implementation inside an `impl` declaration.
+#[derive(Debug, Clone)]
+pub struct ImplMethod {
+    pub name: String,
+    pub params: Vec<Pat>,
+    pub body: Expr,
+    pub span: Span,
+}
+
+/// The type and bit-width specification for a bitfield field.
+///
+/// Supported forms:
+/// - `name : Type : N` — typed field with explicit bit width
+/// - `name : Bool`     — Bool is always 1 bit (width implicit)
+/// - `name : EnumType` — width inferred from enum variant count
+/// - `name : N`        — bare integer width, accessor returns base type (U32)
+#[derive(Debug, Clone)]
+pub enum BitfieldFieldKind {
+    /// Bare integer width (e.g. `selected : 1`). Accessor returns the base type.
+    Bare(u32),
+    /// Typed field with explicit width (e.g. `capStart : CapStyle : 2` or `roughness : U32 : 5`).
+    Typed { ty: String, width: u32 },
+    /// Bool field — always 1 bit (e.g. `visible : Bool`).
+    Bool,
+    /// Enum-typed field with width inferred from variant count (e.g. `capStart : CapStyle`).
+    EnumInferred(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct BitfieldField {
+    pub name: String,
+    pub kind: BitfieldFieldKind,
+    pub span: Span,
+    /// Doc comments attached to this bitfield field.
+    pub doc: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConDecl {
+    pub name: String,
+    pub fields: ConFields,
+    /// Optional explicit discriminant value (e.g. `NoCap = 0`)
+    pub discriminant: Option<i64>,
+    pub span: Span,
+    /// Doc comments (`-- |`) attached to this constructor.
+    pub doc: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConFields {
+    Positional(Vec<Type>),
+    Record(Vec<RecordField>),
+    Empty,
+}
+
+/// A field in a record type declaration, optionally with attributes.
+#[derive(Debug, Clone)]
+pub struct RecordField {
+    pub name: String,
+    pub ty: Type,
+    pub attributes: Vec<Attribute>,
+    /// Doc comments (`-- |` before or `-- ^` after the field).
+    pub doc: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Attribute {
+    pub name: String,
+    pub args: Vec<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum Expr {
+    Lit(Lit, Span),
+    Var(String, Span),
+    Con(String, Span),
+    App(Box<Expr>, Box<Expr>, Span),
+    Infix(Box<Expr>, String, Box<Expr>, Span),
+    Lambda(Vec<Pat>, Box<Expr>, Span),
+    Let(Vec<(String, Expr)>, Box<Expr>, Span),
+    /// Match expression. Arms are `(pattern, optional_guard, body)`.
+    Case(Box<Expr>, Vec<(Pat, Option<Expr>, Expr)>, Span),
+    If(Box<Expr>, Box<Expr>, Box<Expr>, Span),
+    Paren(Box<Expr>, Span),
+    Tuple(Vec<Expr>, Span),
+    /// Record expression. `Some(name)` for named construction: `Name { f = e, ... }`.
+    /// `None` for anonymous: `{ f = e, ... }`.
+    Record(Option<String>, Vec<(String, Expr)>, Span),
+    FieldAccess(Box<Expr>, String, Span),
+    Index(Box<Expr>, Box<Expr>, Span),
+    OpSection(String, Span),
+    Neg(Box<Expr>, Span),
+    Not(Box<Expr>, Span),
+    BitNot(Box<Expr>, Span),
+    Do(Vec<DoStmt>, Span),
+    /// Vec literal: `[a, b, c]` — desugared to vecN constructor call.
+    VecLit(Vec<Expr>, Span),
+    /// Named loop (tail-recursive): `loop go (i = 0) (acc = 0) in body`
+    /// Fields: (loop_name, bindings[(name, init)], body, span)
+    Loop(String, Vec<(String, Expr)>, Box<Expr>, Span),
+    /// Record/bitfield functional update: `expr { field = val, ... }`
+    RecordUpdate(Box<Expr>, Vec<(String, Expr)>, Span),
+}
+
+#[derive(Debug, Clone)]
+pub enum DoStmt {
+    Bind(String, Expr, Span),
+    Expr(Expr, Span),
+    Let(String, Expr, Span),
+}
+
+#[derive(Debug, Clone)]
+pub enum Lit {
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+    String(String),
+    Char(char),
+}
+
+#[derive(Debug, Clone)]
+pub enum Pat {
+    Wild(Span),
+    Var(String, Span),
+    Con(String, Vec<Pat>, Span),
+    Lit(Lit, Span),
+    Paren(Box<Pat>, Span),
+    Tuple(Vec<Pat>, Span),
+    Record(String, Vec<(String, Option<Pat>)>, Span),
+    As(String, Box<Pat>, Span),
+    /// Or-pattern: `p1 | p2 | p3` — used for multi-value switch cases.
+    Or(Vec<Pat>, Span),
+}
+
+#[derive(Debug, Clone)]
+pub enum Type {
+    Con(String, Span),
+    Var(String, Span),
+    Nat(u64, Span),
+    App(Box<Type>, Box<Type>, Span),
+    Arrow(Box<Type>, Box<Type>, Span),
+    Paren(Box<Type>, Span),
+    Tuple(Vec<Type>, Span),
+    Unit(Span),
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Span accessors for AST nodes
+// ═══════════════════════════════════════════════════════════════════════════
+
+impl Expr {
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::Lit(_, s)
+            | Expr::Var(_, s)
+            | Expr::Con(_, s)
+            | Expr::App(_, _, s)
+            | Expr::Infix(_, _, _, s)
+            | Expr::Lambda(_, _, s)
+            | Expr::Let(_, _, s)
+            | Expr::Case(_, _, s)
+            | Expr::If(_, _, _, s)
+            | Expr::Paren(_, s)
+            | Expr::Tuple(_, s)
+            | Expr::Record(_, _, s)
+            | Expr::FieldAccess(_, _, s)
+            | Expr::Index(_, _, s)
+            | Expr::OpSection(_, s)
+            | Expr::Neg(_, s)
+            | Expr::Not(_, s)
+            | Expr::BitNot(_, s)
+            | Expr::Do(_, s)
+            | Expr::VecLit(_, s)
+            | Expr::Loop(_, _, _, s)
+            | Expr::RecordUpdate(_, _, s) => *s,
+        }
+    }
+}
+
+impl Type {
+    pub fn span(&self) -> Span {
+        match self {
+            Type::Con(_, s)
+            | Type::Var(_, s)
+            | Type::Nat(_, s)
+            | Type::App(_, _, s)
+            | Type::Arrow(_, _, s)
+            | Type::Paren(_, s)
+            | Type::Tuple(_, s)
+            | Type::Unit(s) => *s,
+        }
+    }
+}
+
+impl Pat {
+    pub fn span(&self) -> Span {
+        match self {
+            Pat::Wild(s)
+            | Pat::Var(_, s)
+            | Pat::Con(_, _, s)
+            | Pat::Lit(_, s)
+            | Pat::Paren(_, s)
+            | Pat::Tuple(_, s)
+            | Pat::Record(_, _, s)
+            | Pat::As(_, _, s)
+            | Pat::Or(_, s) => *s,
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Parser
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+    fuel: u32,
+    diagnostics: DiagnosticSink,
+    source: String,
+    /// Buffer for extra declarations produced by group block expansion.
+    pending_decls: Vec<Decl>,
+}
+
+const MAX_FUEL: u32 = 10_000;
+
+impl Parser {
+    /// Create a new parser from source text. Lexes and resolves layout.
+    pub fn new(source: &str) -> Self {
+        let raw_tokens = lex(source);
+        let tokens = resolve_layout(raw_tokens, source);
+        Self {
+            tokens,
+            pos: 0,
+            fuel: MAX_FUEL,
+            diagnostics: DiagnosticSink::new(),
+            source: source.to_owned(),
+            pending_decls: Vec::new(),
+        }
+    }
+
+    /// Return the diagnostics accumulated during parsing.
+    pub fn diagnostics(&self) -> &DiagnosticSink {
+        &self.diagnostics
+    }
+
+    // -- Navigation helpers ------------------------------------------------
+
+    fn current_token(&self) -> &Token {
+        &self.tokens[self.pos.min(self.tokens.len() - 1)]
+    }
+
+    fn peek(&self) -> SyntaxKind {
+        self.current_token().kind
+    }
+
+    fn at(&self, kind: SyntaxKind) -> bool {
+        self.peek() == kind
+    }
+
+    fn at_end(&self) -> bool {
+        self.peek() == SyntaxKind::Eof
+    }
+
+    fn bump(&mut self) -> Token {
+        let tok = self.current_token().clone();
+        if !self.at_end() {
+            self.pos += 1;
+        }
+        tok
+    }
+
+    fn expect(&mut self, kind: SyntaxKind) -> Token {
+        if self.at(kind) {
+            self.bump()
+        } else {
+            let tok = self.current_token().clone();
+            self.diagnostics.push(
+                Diagnostic::error(format!("expected {}, found {}", kind, tok.kind))
+                    .with_label(Label::primary(tok.span, format!("expected {}", kind)))
+                    .with_help("check for missing tokens, unmatched parentheses, or incorrect indentation"),
+            );
+            tok
+        }
+    }
+
+    fn eat(&mut self, kind: SyntaxKind) -> bool {
+        if self.at(kind) {
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn skip_trivia(&mut self) {
+        while self.peek().is_trivia() {
+            self.bump();
+        }
+    }
+
+    /// Peek at the next non-trivia token kind without consuming.
+    fn peek_non_trivia(&self) -> SyntaxKind {
+        let mut i = self.pos;
+        loop {
+            if i >= self.tokens.len() {
+                return SyntaxKind::Eof;
+            }
+            let kind = self.tokens[i].kind;
+            if !kind.is_trivia() {
+                return kind;
+            }
+            i += 1;
+        }
+    }
+
+    /// Lookahead: check if the token stream has `{ ident = ...` starting at
+    /// the current position (for record/bitfield update syntax).
+    fn is_record_update_ahead(&self) -> bool {
+        let mut i = self.pos;
+        // Skip trivia to find `{`
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::LBrace {
+            return false;
+        }
+        i += 1;
+        // Skip trivia to find `ident`
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::Ident {
+            return false;
+        }
+        i += 1;
+        // Skip trivia to find `=`
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::Equals
+    }
+
+    /// Check whether the current token is `Minus` immediately (no whitespace)
+    /// followed by a numeric literal, forming a negative literal like `-0.35`.
+    /// Used in the application loop to treat `-0.35` as an atom argument.
+    ///
+    /// The heuristic: `-` must be glued to the digit (`-0.35`, not `- 0.35`)
+    /// AND there must be whitespace before the `-` (so `x-0.5` stays as subtraction).
+    fn is_negative_literal_ahead(&self) -> bool {
+        if self.peek() != SyntaxKind::Minus {
+            return false;
+        }
+        let minus_tok = self.current_token();
+        let minus_end = minus_tok.span.end;
+        let next = self.pos + 1;
+        if next >= self.tokens.len() {
+            return false;
+        }
+        let next_tok = &self.tokens[next];
+        // The `-` must be immediately adjacent to the digit (no whitespace)
+        if next_tok.span.start != minus_end {
+            return false;
+        }
+        if !matches!(
+            next_tok.kind,
+            SyntaxKind::IntLiteral | SyntaxKind::FloatLiteral
+        ) {
+            return false;
+        }
+        // There must be whitespace before the `-` so it's not glued to the
+        // preceding expression like `x-0.5`. Check the previous non-trivia
+        // token's span end vs the minus span start.
+        if self.pos == 0 {
+            return true;
+        }
+        // Walk backwards to find the previous non-trivia token
+        let mut i = self.pos;
+        while i > 0 {
+            i -= 1;
+            if !self.tokens[i].kind.is_trivia() {
+                // Found previous non-trivia token: must NOT be adjacent to minus
+                return self.tokens[i].span.end != minus_tok.span.start;
+            }
+        }
+        // No non-trivia token before: start of file
+        true
+    }
+
+    /// Compute the 0-based column for a byte offset in the source.
+    fn column_of(&self, offset: u32) -> u32 {
+        let off = offset as usize;
+        // Find the start of the line containing this offset
+        let line_start = self.source[..off].rfind('\n').map_or(0, |i| i + 1);
+        (off - line_start) as u32
+    }
+
+    fn span_from(&self, start: u32) -> Span {
+        let end = if self.pos > 0 {
+            self.tokens[self.pos - 1].span.end
+        } else {
+            start
+        };
+        Span::new(start, end)
+    }
+
+    fn current_span(&self) -> Span {
+        self.current_token().span
+    }
+
+    fn text_of(&self, tok: &Token) -> &str {
+        tok.span.source_text(&self.source)
+    }
+
+    fn consume_fuel(&mut self) -> bool {
+        if self.fuel == 0 {
+            return false;
+        }
+        self.fuel -= 1;
+        true
+    }
+
+    // -- Layout helpers ----------------------------------------------------
+
+    fn eat_layout_semi(&mut self) -> bool {
+        self.skip_trivia();
+        self.eat(SyntaxKind::LayoutSemicolon)
+    }
+
+    fn at_layout_end(&self) -> bool {
+        let k = self.peek_non_trivia();
+        matches!(k, SyntaxKind::LayoutBraceClose | SyntaxKind::Eof)
+    }
+
+    fn eat_layout_close(&mut self) -> bool {
+        self.skip_trivia();
+        self.eat(SyntaxKind::LayoutBraceClose)
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // Top-level: Program
+    // ═════════════════════════════════════════════════════════════════════
+
+    pub fn parse_program(&mut self) -> Program {
+        let mut decls = Vec::new();
+        loop {
+            // Drain any buffered decls from group block expansion first,
+            // before checking for EOF or consuming layout tokens.
+            if !self.pending_decls.is_empty() {
+                decls.push(self.pending_decls.remove(0));
+                continue;
+            }
+
+            self.skip_trivia();
+            // Also consume layout tokens between decls at top level
+            while self.eat(SyntaxKind::LayoutSemicolon)
+                || self.eat(SyntaxKind::LayoutBraceClose)
+                || self.eat(SyntaxKind::LayoutBraceOpen)
+            {
+                self.skip_trivia();
+            }
+
+            if self.at_end() {
+                break;
+            }
+            if !self.consume_fuel() {
+                break;
+            }
+            if let Some(decl) = self.parse_decl() {
+                decls.push(decl);
+            } else {
+                // Error recovery: skip one token
+                self.bump();
+            }
+        }
+
+        // Post-pass: attach leading comments to each declaration by scanning
+        // backwards through the token stream from each decl's span start.
+        self.attach_leading_comments(&mut decls);
+
+        Program { decls }
+    }
+
+    /// For each declaration, scan backwards in the token stream from its span
+    /// start to collect immediately preceding comment tokens.
+    fn attach_leading_comments(&self, decls: &mut [Decl]) {
+        for decl in decls.iter_mut() {
+            // CfgDecl has no comments field — skip it
+            if matches!(decl, Decl::CfgDecl { .. }) {
+                continue;
+            }
+            let decl_start = decl.span().start;
+            // Find the first non-layout token at or after the decl start.
+            // Layout (virtual) tokens can share the same span.start as the
+            // declaration token and appear *before* comments in the stream,
+            // which would cause the backward scan to miss preceding comments.
+            let tok_idx = match self.tokens.iter().position(|t| {
+                t.span.start >= decl_start
+                    && !matches!(
+                        t.kind,
+                        SyntaxKind::LayoutBraceOpen
+                            | SyntaxKind::LayoutSemicolon
+                            | SyntaxKind::LayoutBraceClose
+                    )
+            }) {
+                Some(i) => i,
+                None => continue,
+            };
+            // Walk backwards, collecting comments, skipping whitespace/newlines/layout
+            let mut comments = Vec::new();
+            let mut i = tok_idx;
+            while i > 0 {
+                i -= 1;
+                let kind = self.tokens[i].kind;
+                if kind == SyntaxKind::LineComment
+                    || kind == SyntaxKind::BlockComment
+                    || kind == SyntaxKind::DocComment
+                {
+                    let text = self.text_of(&self.tokens[i]);
+                    let comment = if let Some(stripped) = text.strip_prefix("--") {
+                        stripped.to_string()
+                    } else if text.starts_with("{-") && text.ends_with("-}") {
+                        text[2..text.len() - 2].to_string()
+                    } else {
+                        text.to_string()
+                    };
+                    comments.push(comment);
+                } else if kind == SyntaxKind::Whitespace
+                    || kind == SyntaxKind::Newline
+                    || kind == SyntaxKind::LayoutSemicolon
+                    || kind == SyntaxKind::LayoutBraceOpen
+                    || kind == SyntaxKind::LayoutBraceClose
+                {
+                    continue;
+                } else {
+                    // Hit a real token belonging to the previous decl — stop
+                    break;
+                }
+            }
+            comments.reverse();
+            *decl.comments_mut() = comments;
+        }
+
+        // Second pass: attach doc comments to sub-items inside data/bitfield/trait decls.
+        self.attach_sub_item_docs(decls);
+    }
+
+    /// Extract the doc string from a `-- |` or `-- ^` comment text.
+    /// Returns `Some(text)` with the prefix stripped, or `None` if not a doc comment.
+    fn extract_doc_text(comment: &str) -> Option<String> {
+        // Comment text has already had `--` prefix stripped, so we look for ` | ` or ` ^ `.
+        if let Some(rest) = comment.strip_prefix(" | ") {
+            Some(rest.trim().to_string())
+        } else if comment == " |" {
+            // bare `-- |` with no trailing text
+            Some(String::new())
+        } else {
+            None
+        }
+    }
+
+    /// Scan the token stream to find doc comments (`-- |` forward, `-- ^` backward)
+    /// adjacent to sub-items (constructors, record fields, bitfield fields, trait methods).
+    fn attach_sub_item_docs(&self, decls: &mut [Decl]) {
+        for decl in decls.iter_mut() {
+            match decl {
+                Decl::DataDecl { constructors, .. } => {
+                    for con in constructors.iter_mut() {
+                        // Attach forward doc comment to each constructor
+                        con.doc = self.find_leading_doc(con.span.start);
+                        // Attach doc comments to record fields
+                        if let ConFields::Record(ref mut fields) = con.fields {
+                            for field in fields.iter_mut() {
+                                // Find the field name Ident token within the constructor span
+                                let field_pos = self.find_ident_token(&field.name, con.span);
+                                if let Some(pos) = field_pos {
+                                    field.doc = self
+                                        .find_leading_doc(pos)
+                                        .or_else(|| self.find_trailing_doc(field.ty.span().end));
+                                }
+                            }
+                        }
+                    }
+                }
+                Decl::BitfieldDecl { fields, .. } => {
+                    for field in fields.iter_mut() {
+                        field.doc = self
+                            .find_leading_doc(field.span.start)
+                            .or_else(|| self.find_trailing_doc(field.span.end));
+                    }
+                }
+                Decl::TraitDecl { methods, .. } => {
+                    for method in methods.iter_mut() {
+                        method.doc = self.find_leading_doc(method.span.start);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Scan backwards from `pos` in the token stream to find a `-- |` doc comment.
+    fn find_leading_doc(&self, pos: u32) -> Option<String> {
+        // Find the first non-layout token at or after pos, so that virtual
+        // layout tokens (LayoutBraceOpen, etc.) with the same span.start
+        // don't prevent us from scanning back past them.
+        let tok_idx = self.tokens.iter().position(|t| {
+            t.span.start >= pos
+                && !matches!(
+                    t.kind,
+                    SyntaxKind::LayoutBraceOpen
+                        | SyntaxKind::LayoutSemicolon
+                        | SyntaxKind::LayoutBraceClose
+                )
+        })?;
+        let mut i = tok_idx;
+        let mut doc_lines = Vec::new();
+        while i > 0 {
+            i -= 1;
+            let kind = self.tokens[i].kind;
+            if kind == SyntaxKind::DocComment {
+                let text = self.text_of(&self.tokens[i]);
+                let stripped = text.strip_prefix("--").unwrap_or(text);
+                if let Some(doc) = Self::extract_doc_text(stripped) {
+                    doc_lines.push(doc);
+                } else {
+                    break; // `-- ^` is not a leading doc
+                }
+            } else if kind == SyntaxKind::Whitespace
+                || kind == SyntaxKind::Newline
+                || kind == SyntaxKind::LayoutSemicolon
+                || kind == SyntaxKind::LayoutBraceOpen
+                || kind == SyntaxKind::LayoutBraceClose
+            {
+                continue;
+            } else {
+                break;
+            }
+        }
+        if doc_lines.is_empty() {
+            None
+        } else {
+            doc_lines.reverse();
+            Some(doc_lines.join("\n"))
+        }
+    }
+
+    /// Scan forward from `pos` in the token stream to find a `-- ^` doc comment.
+    fn find_trailing_doc(&self, pos: u32) -> Option<String> {
+        // Find the first token at or after pos
+        let tok_idx = self.tokens.iter().position(|t| t.span.start >= pos)?;
+        let mut i = tok_idx;
+        while i < self.tokens.len() {
+            let kind = self.tokens[i].kind;
+            if kind == SyntaxKind::DocComment {
+                let text = self.text_of(&self.tokens[i]);
+                let stripped = text.strip_prefix("--").unwrap_or(text);
+                if let Some(rest) = stripped.strip_prefix(" ^ ") {
+                    return Some(rest.trim().to_string());
+                } else if stripped == " ^" {
+                    return Some(String::new());
+                }
+                break;
+            } else if kind == SyntaxKind::Whitespace || kind == SyntaxKind::Comma {
+                i += 1;
+                continue;
+            } else {
+                break;
+            }
+        }
+        None
+    }
+
+    /// Find the start position of an Ident token matching `name` within `span`.
+    fn find_ident_token(&self, name: &str, span: Span) -> Option<u32> {
+        for tok in &self.tokens {
+            if tok.span.start < span.start {
+                continue;
+            }
+            if tok.span.start >= span.end {
+                break;
+            }
+            if tok.kind == SyntaxKind::Ident && self.text_of(tok) == name {
+                return Some(tok.span.start);
+            }
+        }
+        None
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // Declarations
+    // ═════════════════════════════════════════════════════════════════════
+
+    fn parse_decl(&mut self) -> Option<Decl> {
+        // Drain any buffered decls from group block expansion first.
+        if !self.pending_decls.is_empty() {
+            return Some(self.pending_decls.remove(0));
+        }
+
+        self.skip_trivia();
+        match self.peek_non_trivia() {
+            SyntaxKind::At => {
+                // Peek ahead to determine if this is a binding declaration
+                // (`@group(N) @binding(N) uniform/storage ...`) or an entry
+                // point (`@vertex`, `@compute`, etc.).
+                let start = self.current_span().start;
+
+                // Check if the first attribute name is "group" — indicates a binding
+                let is_binding = self.is_binding_decl_ahead();
+                if is_binding {
+                    let mut decls = self.parse_binding_decls(start);
+                    if decls.is_empty() {
+                        return None;
+                    }
+                    let first = decls.remove(0);
+                    self.pending_decls = decls;
+                    Some(first)
+                } else {
+                    // Entry point: parse attributes, then annotated function declaration.
+                    let mut attributes = Vec::new();
+                    while self.peek_non_trivia() == SyntaxKind::At {
+                        self.skip_trivia();
+                        attributes.push(self.parse_attribute());
+                        self.skip_trivia();
+                    }
+
+                    // Consume LayoutSemicolon between attributes and the declaration
+                    self.eat_layout_semi();
+                    self.skip_trivia();
+
+                    // Skip optional type signature (e.g. `main : ComputeInput -> ()`)
+                    if self.at(SyntaxKind::Ident) {
+                        let saved = self.pos;
+                        let name_tok = self.bump();
+                        self.skip_trivia();
+                        if self.at(SyntaxKind::Colon) {
+                            let name = self.text_of(&name_tok).to_owned();
+                            let _ty_sig = self.parse_type_sig(name, name_tok.span.start);
+                            self.eat_layout_semi();
+                            self.skip_trivia();
+                        } else {
+                            self.pos = saved;
+                        }
+                    }
+
+                    // Now parse the actual function declaration
+                    self.skip_trivia();
+                    let name_tok = self.expect(SyntaxKind::Ident);
+                    let name = self.text_of(&name_tok).to_owned();
+                    self.skip_trivia();
+
+                    let mut params = Vec::new();
+                    while !self.at(SyntaxKind::Equals) && !self.at_end() && self.consume_fuel() {
+                        if matches!(
+                            self.peek_non_trivia(),
+                            SyntaxKind::LayoutSemicolon | SyntaxKind::LayoutBraceClose
+                        ) {
+                            break;
+                        }
+                        let p = self.parse_pat_atom();
+                        params.push(p);
+                        self.skip_trivia();
+                    }
+
+                    self.expect(SyntaxKind::Equals);
+                    self.skip_trivia();
+                    let body = self.parse_expr();
+
+                    let span = self.span_from(start);
+                    Some(Decl::EntryPoint {
+                        attributes,
+                        name,
+                        params,
+                        body,
+                        span,
+                        comments: vec![],
+                    })
+                }
+            }
+            SyntaxKind::KwModule => Some(self.parse_module_decl()),
+            SyntaxKind::KwImport => Some(self.parse_import_decl()),
+            SyntaxKind::KwData => Some(self.parse_data_decl()),
+            SyntaxKind::KwAlias => Some(self.parse_alias_decl()),
+            SyntaxKind::KwExtern => Some(self.parse_extern_decl()),
+            SyntaxKind::KwUniform | SyntaxKind::KwStorage => {
+                // Bare `uniform`/`storage` without `@group(...)` — parse as binding
+                // with default group(0) binding(0). This supports shorthand usage.
+                let start = self.current_span().start;
+                Some(self.parse_binding_body(start, 0, 0))
+            }
+            SyntaxKind::KwBitfield => Some(self.parse_bitfield_decl()),
+            SyntaxKind::KwConst => Some(self.parse_const_decl()),
+            SyntaxKind::KwTrait => Some(self.parse_trait_decl()),
+            SyntaxKind::KwImpl => Some(self.parse_impl_decl()),
+            SyntaxKind::KwWhen => Some(self.parse_when_decl()),
+            SyntaxKind::Ident => {
+                // Could be a type signature or function declaration.
+                // Look ahead: name then `:` means type sig; otherwise fun decl.
+                self.skip_trivia();
+                let name_tok = self.bump();
+                let name = self.text_of(&name_tok).to_owned();
+                let start = name_tok.span.start;
+
+                self.skip_trivia();
+                if self.at(SyntaxKind::Colon) {
+                    Some(self.parse_type_sig(name, start))
+                } else {
+                    Some(self.parse_fun_decl(name, start))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_type_sig(&mut self, name: String, start: u32) -> Decl {
+        self.expect(SyntaxKind::Colon); // consume `:`
+        self.skip_trivia();
+        let ty = self.parse_type();
+        let span = self.span_from(start);
+        Decl::TypeSig {
+            name,
+            ty,
+            span,
+            comments: vec![],
+        }
+    }
+
+    fn parse_fun_decl(&mut self, name: String, start: u32) -> Decl {
+        // Parse patterns before `=` or `|` (guard)
+        let mut params = Vec::new();
+        self.skip_trivia();
+        while !self.at(SyntaxKind::Equals)
+            && !self.at(SyntaxKind::Pipe)
+            && !self.at_end()
+            && self.consume_fuel()
+        {
+            if matches!(
+                self.peek_non_trivia(),
+                SyntaxKind::LayoutSemicolon | SyntaxKind::LayoutBraceClose
+            ) {
+                break;
+            }
+            let p = self.parse_pat_atom();
+            params.push(p);
+            self.skip_trivia();
+        }
+
+        // Guard clauses: f x | cond1 = body1 | cond2 = body2 | otherwise = bodyN
+        if self.at(SyntaxKind::Pipe) {
+            let body = self.parse_guard_clauses(start);
+
+            // Optional `where` clause
+            let mut where_binds = Vec::new();
+            self.skip_trivia();
+            if self.eat(SyntaxKind::KwWhere) {
+                where_binds = self.parse_where_binds();
+            }
+
+            let span = self.span_from(start);
+            return Decl::FunDecl {
+                name,
+                params,
+                body,
+                where_binds,
+                span,
+                comments: vec![],
+            };
+        }
+
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+        let body = self.parse_expr();
+
+        // Optional `where` clause
+        let mut where_binds = Vec::new();
+        self.skip_trivia();
+        if self.eat(SyntaxKind::KwWhere) {
+            where_binds = self.parse_where_binds();
+        }
+
+        let span = self.span_from(start);
+        Decl::FunDecl {
+            name,
+            params,
+            body,
+            where_binds,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse guard clauses and desugar into nested if-then-else.
+    /// `| cond1 = body1 | cond2 = body2 | otherwise = bodyN`
+    fn parse_guard_clauses(&mut self, start: u32) -> Expr {
+        let mut guards: Vec<(Expr, Expr)> = Vec::new();
+
+        while self.at(SyntaxKind::Pipe) && self.consume_fuel() {
+            self.bump(); // consume `|`
+            self.skip_trivia();
+            let cond = self.parse_expr();
+            self.skip_trivia();
+            self.expect(SyntaxKind::Equals);
+            self.skip_trivia();
+            let body = self.parse_expr();
+            guards.push((cond, body));
+            self.skip_trivia();
+            // Consume layout semicolons between guards
+            self.eat_layout_semi();
+            self.skip_trivia();
+        }
+
+        // Desugar: fold guards right into if-then-else chain.
+        // The last guard is treated as the else branch if its condition is
+        // `otherwise` (i.e. Var("otherwise")) or `True`.
+        if guards.is_empty() {
+            let span = self.span_from(start);
+            return Expr::Var("<error>".to_owned(), span);
+        }
+
+        let mut result = None;
+        for (cond, body) in guards.into_iter().rev() {
+            let span = cond.span().merge(body.span());
+            if let Expr::Var(ref name, _) = cond {
+                if name == "otherwise" {
+                    // `otherwise` guard: becomes the else branch
+                    result = Some(body);
+                    continue;
+                }
+            }
+            let else_branch = result.unwrap_or({
+                // Fallback: return a zero literal if no otherwise clause
+                Expr::Lit(Lit::Int(0), span)
+            });
+            result = Some(Expr::If(
+                Box::new(cond),
+                Box::new(body),
+                Box::new(else_branch),
+                span,
+            ));
+        }
+
+        result.unwrap_or_else(|| {
+            let span = self.span_from(start);
+            Expr::Var("<error>".to_owned(), span)
+        })
+    }
+
+    fn parse_where_binds(&mut self) -> Vec<(String, Expr)> {
+        let mut binds = Vec::new();
+        // Layout should have inserted LayoutBraceOpen
+        self.skip_trivia();
+        // Consume optional layout brace open
+        self.eat(SyntaxKind::LayoutBraceOpen);
+
+        loop {
+            self.skip_trivia();
+            if self.at_layout_end() || self.at_end() {
+                break;
+            }
+            if !self.consume_fuel() {
+                break;
+            }
+
+            if self.at(SyntaxKind::Ident) {
+                let name_tok = self.bump();
+                let name = self.text_of(&name_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::Equals);
+                self.skip_trivia();
+                let expr = self.parse_expr();
+                binds.push((name, expr));
+                self.eat_layout_semi();
+            } else {
+                break;
+            }
+        }
+
+        self.eat_layout_close();
+        binds
+    }
+
+    /// Parse `module Foo.Bar`.
+    fn parse_module_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwModule);
+        self.skip_trivia();
+
+        let name = self.parse_dotted_upper_name();
+
+        let span = self.span_from(start);
+        Decl::ModuleDecl {
+            name,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse import declarations:
+    ///   `import Foo.Bar`            — all public names
+    ///   `import Foo.Bar (x, y)`     — selective
+    ///   `import Foo.Bar as F`       — qualified
+    ///   `import Foo.*`              — wildcard (all sub-modules)
+    fn parse_import_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwImport);
+        self.skip_trivia();
+
+        let module_path = self.parse_dotted_upper_name();
+        self.skip_trivia();
+
+        // Check for wildcard: `import Foo.*`
+        let (module_path, kind) = if self.at(SyntaxKind::Dot) {
+            // Peek ahead for `*`
+            let saved_pos = self.pos;
+            self.bump(); // consume `.`
+            if self.at(SyntaxKind::Star) {
+                self.bump(); // consume `*`
+                self.skip_trivia();
+                (module_path, ImportKind::Wildcard)
+            } else {
+                // Not a wildcard — it's a dotted name continuation, restore
+                self.pos = saved_pos;
+                // Continue parsing the dotted name
+                let mut full_name = module_path;
+                while self.at(SyntaxKind::Dot) {
+                    self.bump();
+                    let part = self.expect(SyntaxKind::UpperIdent);
+                    full_name.push('.');
+                    full_name.push_str(&self.text_of(&part));
+                }
+                self.skip_trivia();
+                let kind = self.parse_import_suffix();
+                (full_name, kind)
+            }
+        } else {
+            let kind = self.parse_import_suffix();
+            (module_path, kind)
+        };
+
+        // Check for optional postfix `when cfg.x`
+        self.skip_trivia();
+        let condition = if self.at(SyntaxKind::KwWhen) {
+            self.bump(); // consume `when`
+            self.skip_trivia();
+            Some(self.parse_cfg_predicate())
+        } else {
+            None
+        };
+
+        let span = self.span_from(start);
+        Decl::ImportDecl {
+            module_path,
+            kind,
+            condition,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse the suffix of an import: `(names)`, `as Alias`, or nothing.
+    fn parse_import_suffix(&mut self) -> ImportKind {
+        if self.at(SyntaxKind::KwAs) {
+            self.bump(); // consume `as`
+            self.skip_trivia();
+            let tok = self.expect(SyntaxKind::UpperIdent);
+            let alias = self.text_of(&tok).to_owned();
+            ImportKind::Qualified(alias)
+        } else if self.at(SyntaxKind::LParen) {
+            ImportKind::Selective(self.parse_name_list())
+        } else {
+            ImportKind::All
+        }
+    }
+
+    /// Parse a dotted uppercase name like `Foo.Bar.Baz`.
+    fn parse_dotted_upper_name(&mut self) -> String {
+        let first = self.expect(SyntaxKind::UpperIdent);
+        let mut name = self.text_of(&first).to_owned();
+        while self.at(SyntaxKind::Dot) {
+            self.bump(); // consume `.`
+            let part = self.expect(SyntaxKind::UpperIdent);
+            name.push('.');
+            name.push_str(&self.text_of(&part));
+        }
+        name
+    }
+
+    /// Parse a parenthesized list of names: `(foo, Bar, (+), ...)`.
+    fn parse_name_list(&mut self) -> Vec<String> {
+        self.expect(SyntaxKind::LParen);
+        self.skip_trivia();
+        let mut names = Vec::new();
+        while !self.at(SyntaxKind::RParen) && !self.at_end() && self.consume_fuel() {
+            let name = if self.at(SyntaxKind::Ident) {
+                let tok = self.bump();
+                self.text_of(&tok).to_owned()
+            } else if self.at(SyntaxKind::UpperIdent) {
+                let tok = self.bump();
+                self.text_of(&tok).to_owned()
+            } else if self.at(SyntaxKind::LParen) {
+                // Operator in parens: (+), (==), etc.
+                self.bump(); // (
+                self.skip_trivia();
+                let mut op = String::new();
+                while !self.at(SyntaxKind::RParen) && !self.at_end() {
+                    let tok = self.bump();
+                    op.push_str(&self.text_of(&tok));
+                }
+                self.expect(SyntaxKind::RParen);
+                format!("({})", op)
+            } else {
+                break;
+            };
+            names.push(name);
+            self.skip_trivia();
+            if self.at(SyntaxKind::Comma) {
+                self.bump();
+                self.skip_trivia();
+            }
+        }
+        self.expect(SyntaxKind::RParen);
+        names
+    }
+
+    /// Parse a `when` block for conditional compilation:
+    /// ```text
+    /// when cfg.debug
+    ///   decl1
+    ///   decl2
+    /// else when cfg.mobile
+    ///   decl3
+    /// else
+    ///   decl4
+    /// ```
+    fn parse_when_decl(&mut self) -> Decl {
+        self.parse_when_decl_with_col(None)
+    }
+
+    fn parse_when_decl_with_col(&mut self, override_col: Option<u32>) -> Decl {
+        let start = self.current_span().start;
+        let when_col = override_col.unwrap_or_else(|| self.column_of(start));
+        self.expect(SyntaxKind::KwWhen);
+        self.skip_trivia();
+
+        let condition = self.parse_cfg_predicate();
+        self.skip_trivia();
+
+        // Parse the then-branch: declarations indented further than `when`
+        let then_decls = self.parse_when_body(when_col);
+
+        // Check for `else` / `else when`
+        self.skip_trivia();
+        let else_decls = if self.at(SyntaxKind::KwElse)
+            && self.column_of(self.current_span().start) == when_col
+        {
+            self.bump(); // consume `else`
+            self.skip_trivia();
+            if self.at(SyntaxKind::KwWhen) {
+                // `else when` — parse recursively, inheriting the outer when_col
+                // so that body indentation is measured against the original `when`
+                vec![self.parse_when_decl_with_col(Some(when_col))]
+            } else {
+                // `else` block
+                self.parse_when_body(when_col)
+            }
+        } else {
+            vec![]
+        };
+
+        let span = self.span_from(start);
+        Decl::CfgDecl {
+            condition,
+            then_decls,
+            else_decls,
+            span,
+        }
+    }
+
+    /// Parse the body of a `when` or `else` block.
+    /// Collects declarations that are indented further than `parent_col`.
+    fn parse_when_body(&mut self, parent_col: u32) -> Vec<Decl> {
+        let mut decls = Vec::new();
+        loop {
+            // Drain any buffered decls from group block expansion.
+            if !self.pending_decls.is_empty() {
+                decls.push(self.pending_decls.remove(0));
+                continue;
+            }
+
+            self.skip_trivia();
+            self.eat_layout_semi();
+            self.skip_trivia();
+
+            if self.at_end() || self.at(SyntaxKind::LayoutBraceClose) {
+                break;
+            }
+
+            // Check if next non-trivia token is indented further than the parent
+            let next_col = self.column_of(self.current_span().start);
+            if next_col <= parent_col {
+                break;
+            }
+
+            if let Some(decl) = self.parse_decl() {
+                decls.push(decl);
+            } else {
+                if !self.at_end() {
+                    self.bump();
+                }
+            }
+        }
+        decls
+    }
+
+    /// Parse a cfg predicate: `cfg.name`, `not cfg.name`, `pred && pred`, `pred || pred`.
+    ///
+    /// Precedence: `not` binds tightest, then `&&`, then `||`.
+    fn parse_cfg_predicate(&mut self) -> CfgPredicate {
+        self.parse_cfg_or()
+    }
+
+    /// Parse `||` (lowest precedence in cfg predicates).
+    fn parse_cfg_or(&mut self) -> CfgPredicate {
+        let mut left = self.parse_cfg_and();
+        while self.at(SyntaxKind::OrOr) {
+            self.bump(); // consume `||`
+            self.skip_trivia();
+            let right = self.parse_cfg_and();
+            left = CfgPredicate::Or(Box::new(left), Box::new(right));
+        }
+        left
+    }
+
+    /// Parse `&&` (middle precedence in cfg predicates).
+    fn parse_cfg_and(&mut self) -> CfgPredicate {
+        let mut left = self.parse_cfg_atom();
+        while self.at(SyntaxKind::AndAnd) {
+            self.bump(); // consume `&&`
+            self.skip_trivia();
+            let right = self.parse_cfg_atom();
+            left = CfgPredicate::And(Box::new(left), Box::new(right));
+        }
+        left
+    }
+
+    /// Parse a cfg atom: `not pred`, `cfg.name`, or `(pred)`.
+    fn parse_cfg_atom(&mut self) -> CfgPredicate {
+        // `not` prefix
+        if self.at(SyntaxKind::Ident)
+            && self.current_token().span.source_text(&self.source) == "not"
+        {
+            self.bump(); // consume `not`
+            self.skip_trivia();
+            let inner = self.parse_cfg_atom();
+            return CfgPredicate::Not(Box::new(inner));
+        }
+
+        // `cfg.name`
+        if self.at(SyntaxKind::KwCfg) {
+            self.bump(); // consume `cfg`
+            self.expect(SyntaxKind::Dot);
+            let name_tok = self.expect(SyntaxKind::Ident);
+            let name = self.text_of(&name_tok).to_owned();
+            self.skip_trivia();
+            return CfgPredicate::Feature(name);
+        }
+
+        // Parenthesized predicate
+        if self.at(SyntaxKind::LParen) {
+            self.bump(); // consume `(`
+            self.skip_trivia();
+            let inner = self.parse_cfg_predicate();
+            self.skip_trivia();
+            self.expect(SyntaxKind::RParen);
+            self.skip_trivia();
+            return inner;
+        }
+
+        // Error recovery: emit diagnostic and return a dummy predicate
+        let span = self.current_span();
+        self.diagnostics.push(
+            Diagnostic::error("expected cfg predicate (e.g. `cfg.name`)")
+                .with_label(Label::primary(span, "expected cfg predicate")),
+        );
+        CfgPredicate::Feature("__error__".to_string())
+    }
+
+    fn parse_data_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwData);
+        self.skip_trivia();
+
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+
+        // Type parameters
+        let mut type_params = Vec::new();
+        self.skip_trivia();
+        while self.at(SyntaxKind::Ident) {
+            let p = self.bump();
+            type_params.push(self.text_of(&p).to_owned());
+            self.skip_trivia();
+        }
+
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+
+        // Parse constructors separated by `|`
+        let mut constructors = Vec::new();
+        constructors.push(self.parse_con_decl());
+        loop {
+            self.skip_trivia();
+            if self.eat(SyntaxKind::Pipe) {
+                self.skip_trivia();
+                constructors.push(self.parse_con_decl());
+            } else {
+                break;
+            }
+        }
+
+        let span = self.span_from(start);
+        Decl::DataDecl {
+            name,
+            type_params,
+            constructors,
+            span,
+            comments: vec![],
+        }
+    }
+
+    fn parse_con_decl(&mut self) -> ConDecl {
+        let start = self.current_span().start;
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+
+        // Optional explicit discriminant: `= <int>`
+        let discriminant = if self.at(SyntaxKind::Equals) {
+            // Peek ahead: if next non-trivia token after `=` is an IntLiteral,
+            // treat as discriminant. Otherwise it could be a different production.
+            let mut i = self.pos + 1;
+            while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+                i += 1;
+            }
+            let next_is_int =
+                i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::IntLiteral;
+            if next_is_int {
+                self.bump(); // consume `=`
+                self.skip_trivia();
+                let int_tok = self.expect(SyntaxKind::IntLiteral);
+                let val = parse_int_literal(self.text_of(&int_tok));
+                self.skip_trivia();
+                Some(val)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Check for record syntax `{`
+        let fields = if self.at(SyntaxKind::LBrace) {
+            self.bump();
+            let mut flds = Vec::new();
+            loop {
+                self.skip_trivia();
+                if self.at(SyntaxKind::RBrace) || self.at_end() {
+                    break;
+                }
+                // Parse optional field attributes
+                let mut field_attrs = Vec::new();
+                while self.at(SyntaxKind::At) {
+                    field_attrs.push(self.parse_attribute());
+                    self.skip_trivia();
+                }
+                let field_name_tok = self.expect(SyntaxKind::Ident);
+                let field_name = self.text_of(&field_name_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::Colon);
+                self.skip_trivia();
+                let ty = self.parse_type();
+                flds.push(RecordField {
+                    name: field_name,
+                    ty,
+                    attributes: field_attrs,
+                    doc: None,
+                });
+                self.skip_trivia();
+                if !self.eat(SyntaxKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(SyntaxKind::RBrace);
+            ConFields::Record(flds)
+        } else {
+            // Positional fields: type atoms until we see `|`, newline-level token, or EOF
+            let mut tys = Vec::new();
+            while !self.at_end() && self.consume_fuel() {
+                let k = self.peek_non_trivia();
+                if matches!(
+                    k,
+                    SyntaxKind::Pipe
+                        | SyntaxKind::Eof
+                        | SyntaxKind::LayoutSemicolon
+                        | SyntaxKind::LayoutBraceClose
+                        | SyntaxKind::KwData
+                        | SyntaxKind::KwWhere
+                        | SyntaxKind::Newline
+                ) {
+                    break;
+                }
+                // Only consume type atoms (Con / Var / Paren)
+                if !matches!(
+                    k,
+                    SyntaxKind::UpperIdent | SyntaxKind::Ident | SyntaxKind::LParen
+                ) {
+                    break;
+                }
+                self.skip_trivia();
+                let ty = self.parse_type_atom();
+                tys.push(ty);
+            }
+            if tys.is_empty() {
+                ConFields::Empty
+            } else {
+                ConFields::Positional(tys)
+            }
+        };
+
+        let span = self.span_from(start);
+        ConDecl {
+            name,
+            fields,
+            discriminant,
+            span,
+            doc: None,
+        }
+    }
+
+    fn parse_alias_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwAlias);
+        self.skip_trivia();
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+        let ty = self.parse_type();
+        let span = self.span_from(start);
+        Decl::TypeAlias {
+            name,
+            params: vec![],
+            ty,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Peek ahead (without consuming tokens) to check if the current `@`
+    /// starts a binding declaration (`@group(N) @binding(N) uniform/storage ...`).
+    fn is_binding_decl_ahead(&self) -> bool {
+        // We're positioned at `@`. Look ahead for `@` + `group`.
+        let mut i = self.pos;
+        // Skip trivia
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        // Expect `@`
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::At {
+            return false;
+        }
+        i += 1;
+        // Skip trivia
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        // Check if the attribute name is `group`
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::Ident {
+            return false;
+        }
+        self.text_of(&self.tokens[i]) == "group"
+    }
+
+    /// Parse binding declaration(s) starting from `@group(N)`.
+    ///
+    /// Flat syntax (single binding):
+    /// ```text
+    /// @group(0) @binding(0) uniform name : Type
+    /// ```
+    ///
+    /// Group block syntax (multiple bindings sharing a group):
+    /// ```text
+    /// @group(0)
+    ///   @binding(0) uniform name1 : Type1
+    ///   @binding(1) storage name2 : Type2
+    /// ```
+    /// Check whether there is a newline (or layout semicolon) between current
+    /// position and the next non-trivia token. Used to distinguish flat
+    /// `@group(N) @binding(N)` from group block syntax.
+    fn has_newline_before_next_token(&self) -> bool {
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            let kind = self.tokens[i].kind;
+            if kind == SyntaxKind::Newline || kind == SyntaxKind::LayoutSemicolon {
+                return true;
+            }
+            if !kind.is_trivia() {
+                return false;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    fn parse_binding_decls(&mut self, start: u32) -> Vec<Decl> {
+        let group_col = self.column_of(self.current_span().start);
+        let group = self.parse_binding_numbered_attr("group");
+
+        // Determine flat vs group block: if there's a newline after @group(N)
+        // before the next token, it's a group block.
+        let is_group_block = self.has_newline_before_next_token();
+        self.skip_trivia();
+
+        if !is_group_block && self.is_binding_attr_ahead() {
+            // Flat: @group(N) @binding(N) uniform/storage name : Type
+            let binding = self.parse_binding_numbered_attr("binding");
+            self.skip_trivia();
+            vec![self.parse_binding_body(start, group, binding)]
+        } else {
+            // Group block: collect indented @binding(...) declarations
+            let mut decls = Vec::new();
+            loop {
+                self.skip_trivia();
+                self.eat_layout_semi();
+                self.skip_trivia();
+
+                if self.at_end() || self.at(SyntaxKind::LayoutBraceClose) {
+                    break;
+                }
+
+                let next_col = self.column_of(self.current_span().start);
+                if next_col <= group_col {
+                    break;
+                }
+
+                if !self.is_binding_attr_ahead() {
+                    break;
+                }
+
+                let binding_start = self.current_span().start;
+                let binding = self.parse_binding_numbered_attr("binding");
+                self.skip_trivia();
+                decls.push(self.parse_binding_body(binding_start, group, binding));
+            }
+            decls
+        }
+    }
+
+    /// Check if the next non-trivia tokens are `@binding` (without consuming).
+    fn is_binding_attr_ahead(&self) -> bool {
+        let mut i = self.pos;
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::At {
+            return false;
+        }
+        i += 1;
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        i < self.tokens.len()
+            && self.tokens[i].kind == SyntaxKind::Ident
+            && self.text_of(&self.tokens[i]) == "binding"
+    }
+
+    /// Parse `extern name : type` or `extern (+) : type`.
+    /// Declares a built-in name with its type signature (no body).
+    fn parse_extern_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwExtern);
+        self.skip_trivia();
+
+        let name = if self.at(SyntaxKind::LParen) {
+            // Operator in parens: `(+)`, `(==)`, etc.
+            self.bump(); // consume `(`
+            self.skip_trivia();
+            let op_tok = self.bump();
+            let op = self.text_of(&op_tok).to_owned();
+            self.skip_trivia();
+            self.expect(SyntaxKind::RParen);
+            op
+        } else {
+            let name_tok = self.expect(SyntaxKind::Ident);
+            self.text_of(&name_tok).to_owned()
+        };
+        self.skip_trivia();
+        self.expect(SyntaxKind::Colon);
+        self.skip_trivia();
+        let ty = self.parse_type();
+        let span = self.span_from(start);
+        Decl::ExternDecl {
+            name,
+            ty,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse a single binding declaration after `@group(N) @binding(N)` have been consumed.
+    /// Expects: `uniform name : Type` or `storage name : Type` or `storage(read_write) name : Type`
+    fn parse_binding_body(&mut self, start: u32, group: u32, binding: u32) -> Decl {
+        let address_space = if self.at(SyntaxKind::KwUniform) {
+            self.bump();
+            BindingAddressSpace::Uniform
+        } else if self.at(SyntaxKind::KwStorage) {
+            self.bump();
+            self.skip_trivia();
+            // Check for optional access mode: `storage(read_write)` or `storage(read)`
+            if self.at(SyntaxKind::LParen) {
+                self.bump();
+                self.skip_trivia();
+                let mode_tok = self.expect(SyntaxKind::Ident);
+                let mode = self.text_of(&mode_tok).to_owned();
+                self.skip_trivia();
+                // Handle `read_write` which may be parsed as `read` `_` `write` or a single ident
+                let space = if mode == "read_write" {
+                    BindingAddressSpace::StorageReadWrite
+                } else if mode == "read" {
+                    // Check for `read_write` as two tokens: `read` then looking at next
+                    self.skip_trivia();
+                    BindingAddressSpace::StorageRead
+                } else {
+                    // Unknown mode, default to read
+                    BindingAddressSpace::StorageRead
+                };
+                self.expect(SyntaxKind::RParen);
+                space
+            } else {
+                // `storage` without parens — default is read (consistent with WGSL)
+                BindingAddressSpace::StorageRead
+            }
+        } else {
+            // Fallback: emit an error and default to uniform
+            let tok = self.bump();
+            self.diagnostics.push(
+                Diagnostic::error(format!(
+                    "expected 'uniform' or 'storage', found '{}'",
+                    self.text_of(&tok)
+                ))
+                .with_label(Label::primary(tok.span, "expected 'uniform' or 'storage'")),
+            );
+            BindingAddressSpace::Uniform
+        };
+        self.skip_trivia();
+
+        let name_tok = self.expect(SyntaxKind::Ident);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Colon);
+        self.skip_trivia();
+        let ty = self.parse_type();
+
+        let span = self.span_from(start);
+        Decl::BindingDecl {
+            name,
+            ty,
+            address_space,
+            group,
+            binding,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse `@name(N)` — a numbered binding attribute like `@group(0)` or `@binding(1)`.
+    /// Consumes `@`, the identifier, `(`, integer literal, `)` and returns the integer value.
+    fn parse_binding_numbered_attr(&mut self, expected: &str) -> u32 {
+        self.expect(SyntaxKind::At);
+        self.skip_trivia();
+        let attr_tok = self.expect(SyntaxKind::Ident);
+        let attr = self.text_of(&attr_tok).to_owned();
+        if attr != expected {
+            self.diagnostics.push(
+                Diagnostic::error(format!("expected '{}', found '{}'", expected, attr))
+                    .with_label(Label::primary(
+                        attr_tok.span,
+                        format!("expected '{}'", expected),
+                    )),
+            );
+        }
+        self.skip_trivia();
+        self.expect(SyntaxKind::LParen);
+        self.skip_trivia();
+        let val_tok = self.expect(SyntaxKind::IntLiteral);
+        let value = parse_int_literal(self.text_of(&val_tok)).max(0) as u32;
+        self.skip_trivia();
+        self.expect(SyntaxKind::RParen);
+        value
+    }
+
+    /// Parse `bitfield Name : U32 = { field1 : width, field2 : width, ... }`
+    fn parse_bitfield_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwBitfield);
+        self.skip_trivia();
+
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+
+        // `: BaseType`
+        self.expect(SyntaxKind::Colon);
+        self.skip_trivia();
+        let base_ty = self.parse_type_atom();
+        self.skip_trivia();
+
+        // `= ConstructorName`
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+        let constructor_tok = self.expect(SyntaxKind::UpperIdent);
+        let constructor_name = self.text_of(&constructor_tok).to_owned();
+        self.skip_trivia();
+
+        // `{ field : kind, ... }`
+        self.expect(SyntaxKind::LBrace);
+        let mut fields = Vec::new();
+        loop {
+            self.skip_trivia();
+            if self.at(SyntaxKind::RBrace) || self.at_end() {
+                break;
+            }
+            let field_start = self.current_span().start;
+            let field_name_tok = self.expect(SyntaxKind::Ident);
+            let field_name = self.text_of(&field_name_tok).to_owned();
+            self.skip_trivia();
+            self.expect(SyntaxKind::Colon);
+            self.skip_trivia();
+
+            // Parse field kind:
+            //   name : N              → Bare(N)
+            //   name : Bool           → Bool
+            //   name : Type : N       → Typed { ty, width }
+            //   name : Type           → EnumInferred(type_name)
+            let kind = if self.at(SyntaxKind::IntLiteral) {
+                // Bare integer width
+                let width_tok = self.bump();
+                BitfieldFieldKind::Bare(
+                    parse_int_literal(self.text_of(&width_tok)).max(0) as u32,
+                )
+            } else if self.at(SyntaxKind::UpperIdent) {
+                let type_tok = self.bump();
+                let type_name = self.text_of(&type_tok).to_owned();
+                self.skip_trivia();
+                if type_name == "Bool" {
+                    // Bool — always 1 bit
+                    BitfieldFieldKind::Bool
+                } else if self.at(SyntaxKind::Colon) {
+                    // Typed field with explicit width: `Type : N`
+                    self.bump(); // consume ':'
+                    self.skip_trivia();
+                    let width_tok = self.expect(SyntaxKind::IntLiteral);
+                    let width =
+                        parse_int_literal(self.text_of(&width_tok)).max(0) as u32;
+                    BitfieldFieldKind::Typed {
+                        ty: type_name,
+                        width,
+                    }
+                } else {
+                    // Enum-inferred width
+                    BitfieldFieldKind::EnumInferred(type_name)
+                }
+            } else {
+                // Fallback: expect an int literal (will error)
+                let width_tok = self.expect(SyntaxKind::IntLiteral);
+                BitfieldFieldKind::Bare(
+                    parse_int_literal(self.text_of(&width_tok)).max(0) as u32,
+                )
+            };
+            let field_span = self.span_from(field_start);
+            fields.push(BitfieldField {
+                name: field_name,
+                kind,
+                span: field_span,
+                doc: None,
+            });
+            self.skip_trivia();
+            if !self.eat(SyntaxKind::Comma) {
+                break;
+            }
+        }
+        self.expect(SyntaxKind::RBrace);
+
+        let span = self.span_from(start);
+        Decl::BitfieldDecl {
+            name,
+            base_ty,
+            constructor_name,
+            fields,
+            span,
+            comments: vec![],
+        }
+    }
+
+    fn parse_const_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwConst);
+        self.skip_trivia();
+        // Const name: could be Ident or UpperIdent (SCREAMING_SNAKE_CASE)
+        let name_tok = if self.at(SyntaxKind::UpperIdent) {
+            self.bump()
+        } else {
+            self.expect(SyntaxKind::Ident)
+        };
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Colon);
+        self.skip_trivia();
+        let ty = self.parse_type();
+        self.skip_trivia();
+        self.expect(SyntaxKind::Equals);
+        self.skip_trivia();
+        let value = self.parse_expr();
+        let span = self.span_from(start);
+        Decl::ConstDecl {
+            name,
+            ty,
+            value,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse `class Name var where method1 : Type ... methodN : Type`
+    fn parse_trait_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwTrait);
+        self.skip_trivia();
+
+        let name_tok = self.expect(SyntaxKind::UpperIdent);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+
+        let var_tok = self.expect(SyntaxKind::Ident);
+        let var = self.text_of(&var_tok).to_owned();
+        self.skip_trivia();
+
+        self.expect(SyntaxKind::KwWhere);
+        self.skip_trivia();
+
+        // Parse method signatures — they follow layout rules (one per line)
+        let mut methods = Vec::new();
+        // Consume optional layout open brace
+        self.eat(SyntaxKind::LayoutBraceOpen);
+        self.skip_trivia();
+
+        while !self.at_layout_end() && !self.at_end() && self.consume_fuel() {
+            self.eat_layout_semi();
+            self.skip_trivia();
+            if self.at_layout_end() || self.at_end() {
+                break;
+            }
+
+            let mstart = self.current_span().start;
+            // Method name: either Ident or operator in parens e.g. (+)
+            let method_name = if self.at(SyntaxKind::LParen) {
+                self.bump(); // (
+                self.skip_trivia();
+                let op_tok = self.bump();
+                let op_name = self.text_of(&op_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::RParen);
+                op_name
+            } else {
+                let tok = self.expect(SyntaxKind::Ident);
+                self.text_of(&tok).to_owned()
+            };
+            self.skip_trivia();
+            self.expect(SyntaxKind::Colon);
+            self.skip_trivia();
+            let ty = self.parse_type();
+            let mspan = self.span_from(mstart);
+            methods.push(TraitMethod {
+                name: method_name,
+                ty,
+                span: mspan,
+                doc: None,
+            });
+            self.eat_layout_semi();
+        }
+        self.eat_layout_close();
+
+        let span = self.span_from(start);
+        Decl::TraitDecl {
+            name,
+            var,
+            methods,
+            span,
+            comments: vec![],
+        }
+    }
+
+    /// Parse `impl TraitName Type where ...` or `impl Type where ...`
+    fn parse_impl_decl(&mut self) -> Decl {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwImpl);
+        self.skip_trivia();
+
+        // Parse the first type — could be trait name or the target type.
+        let first_ty = self.parse_type_atom();
+        self.skip_trivia();
+
+        // If `where` follows immediately, this is a standalone impl (no trait).
+        // Otherwise, the first type was the trait name and we parse a second type.
+        let (trait_name, ty) = if self.at(SyntaxKind::KwWhere) {
+            (None, first_ty)
+        } else {
+            // first_ty should be a simple Con (the trait name)
+            let tname = match &first_ty {
+                Type::Con(name, _) => name.clone(),
+                _ => {
+                    let span = first_ty.span();
+                    self.diagnostics.push(
+                        Diagnostic::error("expected trait name".to_string())
+                            .with_label(Label::primary(span, "expected uppercase identifier")),
+                    );
+                    "_unknown_".to_string()
+                }
+            };
+            let second_ty = self.parse_type_atom();
+            self.skip_trivia();
+            (Some(tname), second_ty)
+        };
+
+        self.expect(SyntaxKind::KwWhere);
+        self.skip_trivia();
+
+        // Parse method implementations
+        let mut methods = Vec::new();
+        self.eat(SyntaxKind::LayoutBraceOpen);
+        self.skip_trivia();
+
+        while !self.at_layout_end() && !self.at_end() && self.consume_fuel() {
+            self.eat_layout_semi();
+            self.skip_trivia();
+            if self.at_layout_end() || self.at_end() {
+                break;
+            }
+
+            let mstart = self.current_span().start;
+            // Method name: either Ident or operator in parens
+            let method_name = if self.at(SyntaxKind::LParen) {
+                self.bump();
+                self.skip_trivia();
+                let op_tok = self.bump();
+                let op_name = self.text_of(&op_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::RParen);
+                op_name
+            } else {
+                let tok = self.expect(SyntaxKind::Ident);
+                self.text_of(&tok).to_owned()
+            };
+            self.skip_trivia();
+
+            // Parse params before `=`
+            let mut params = Vec::new();
+            while !self.at(SyntaxKind::Equals) && !self.at_end() && self.consume_fuel() {
+                if matches!(
+                    self.peek_non_trivia(),
+                    SyntaxKind::LayoutSemicolon | SyntaxKind::LayoutBraceClose
+                ) {
+                    break;
+                }
+                params.push(self.parse_pat_atom());
+                self.skip_trivia();
+            }
+
+            self.expect(SyntaxKind::Equals);
+            self.skip_trivia();
+            let body = self.parse_expr();
+            let mspan = self.span_from(mstart);
+            methods.push(ImplMethod {
+                name: method_name,
+                params,
+                body,
+                span: mspan,
+            });
+            self.eat_layout_semi();
+        }
+        self.eat_layout_close();
+
+        let span = self.span_from(start);
+        Decl::ImplDecl {
+            trait_name,
+            ty,
+            methods,
+            span,
+            comments: vec![],
+        }
+    }
+
+    fn parse_attribute(&mut self) -> Attribute {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::At);
+        self.skip_trivia();
+
+        // Attribute name: could be Ident or UpperIdent
+        let name_tok = if self.at(SyntaxKind::Ident) {
+            self.bump()
+        } else {
+            self.expect(SyntaxKind::UpperIdent)
+        };
+        let name = self.text_of(&name_tok).to_owned();
+
+        // Optional arguments: either parenthesized `@name(a, b)` or
+        // bare integer literals `@name 64 1 1`.
+        let mut args = Vec::new();
+        self.skip_trivia();
+        if self.at(SyntaxKind::LParen) {
+            self.bump();
+            loop {
+                self.skip_trivia();
+                if self.at(SyntaxKind::RParen) || self.at_end() {
+                    break;
+                }
+                let arg_tok = self.bump();
+                args.push(self.text_of(&arg_tok).to_owned());
+                self.skip_trivia();
+                if !self.eat(SyntaxKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(SyntaxKind::RParen);
+        } else {
+            // Bare integer/float literal arguments (e.g. `@workgroup_size 64 1 1`)
+            while matches!(
+                self.peek_non_trivia(),
+                SyntaxKind::IntLiteral | SyntaxKind::FloatLiteral
+            ) {
+                self.skip_trivia();
+                let arg_tok = self.bump();
+                args.push(self.text_of(&arg_tok).to_owned());
+            }
+        }
+
+        let span = self.span_from(start);
+        Attribute { name, args, span }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // Expressions (Pratt / precedence climbing)
+    // ═════════════════════════════════════════════════════════════════════
+
+    pub fn parse_expr(&mut self) -> Expr {
+        self.parse_expr_bp(0)
+    }
+
+    fn parse_expr_bp(&mut self, min_bp: u8) -> Expr {
+        self.skip_trivia();
+
+        // -- Prefix / atoms ------------------------------------------------
+        let mut lhs = match self.peek_non_trivia() {
+            SyntaxKind::Minus => {
+                // Negation prefix
+                self.skip_trivia();
+                let start = self.current_span().start;
+                self.bump();
+                self.skip_trivia();
+                let rhs = self.parse_expr_bp(21); // high precedence for neg
+                let span = self.span_from(start);
+                Expr::Neg(Box::new(rhs), span)
+            }
+            SyntaxKind::Bang => {
+                // Boolean not prefix
+                self.skip_trivia();
+                let start = self.current_span().start;
+                self.bump();
+                self.skip_trivia();
+                let rhs = self.parse_expr_bp(21); // high precedence for not
+                let span = self.span_from(start);
+                Expr::Not(Box::new(rhs), span)
+            }
+            SyntaxKind::Tilde => {
+                // Bitwise not prefix
+                self.skip_trivia();
+                let start = self.current_span().start;
+                self.bump();
+                self.skip_trivia();
+                let rhs = self.parse_expr_bp(21); // high precedence for bitwise not
+                let span = self.span_from(start);
+                Expr::BitNot(Box::new(rhs), span)
+            }
+            SyntaxKind::Backslash => self.parse_lambda(),
+            SyntaxKind::KwIf => self.parse_if(),
+            SyntaxKind::KwMatch => self.parse_match(),
+            SyntaxKind::KwLet => self.parse_let(),
+            SyntaxKind::KwDo => self.parse_do(),
+            SyntaxKind::KwLoop => self.parse_loop(),
+            _ => self.parse_atom(),
+        };
+
+        // -- Infix / postfix loop ------------------------------------------
+        loop {
+            if !self.consume_fuel() {
+                break;
+            }
+            self.skip_trivia();
+            let op_kind = self.peek_non_trivia();
+
+            // Dot for field access
+            if op_kind == SyntaxKind::Dot && min_bp <= 21 {
+                self.skip_trivia();
+                self.bump(); // consume `.`
+                self.skip_trivia();
+                if self.at(SyntaxKind::Ident) {
+                    let field_tok = self.bump();
+                    let field = self.text_of(&field_tok).to_owned();
+                    let span = lhs.span().merge(field_tok.span);
+                    lhs = Expr::FieldAccess(Box::new(lhs), field, span);
+                    continue;
+                } else {
+                    // Error: expected field name after `.`
+                    let tok = self.current_token().clone();
+                    self.diagnostics.push(
+                        Diagnostic::error("expected field name after '.'")
+                            .with_label(Label::primary(tok.span, "expected identifier"))
+                            .with_help("write a field access like `value.field`"),
+                    );
+                    break;
+                }
+            }
+
+            // Index access: expr[expr]
+            if op_kind == SyntaxKind::LBracket && min_bp <= 21 {
+                self.skip_trivia();
+                self.bump();
+                self.skip_trivia();
+                let index_expr = self.parse_expr();
+                self.skip_trivia();
+                self.expect(SyntaxKind::RBracket);
+                let span = lhs.span().merge(index_expr.span());
+                lhs = Expr::Index(Box::new(lhs), Box::new(index_expr), span);
+                continue;
+            }
+
+            // Function application (juxtaposition): if the next token could
+            // start an atom and we have enough binding power.
+            // Also treat `-<digit>` (whitespace before, no space after) as a
+            // negative literal atom so `vec2 -0.35 0.5` works without parens.
+            if (is_atom_start(op_kind) || self.is_negative_literal_ahead()) && min_bp <= 19 {
+                self.skip_trivia();
+                let arg = self.parse_atom();
+                let span = lhs.span().merge(arg.span());
+                lhs = Expr::App(Box::new(lhs), Box::new(arg), span);
+                continue;
+            }
+
+            // Shift-right `>>`: two adjacent Greater tokens with no whitespace.
+            // Must be checked BEFORE normal binary operators, since `>` is also
+            // a comparison operator. We don't lex `>>` as a single token because
+            // it conflicts with nested generic type closers like `Vec<4, Vec<3, F32>>`.
+            if op_kind == SyntaxKind::Greater {
+                let cur_pos = {
+                    let mut p = self.pos;
+                    while p < self.tokens.len() && self.tokens[p].kind.is_trivia() {
+                        p += 1;
+                    }
+                    p
+                };
+                let next_idx = cur_pos + 1;
+                let is_shift_right = next_idx < self.tokens.len()
+                    && self.tokens[next_idx].kind == SyntaxKind::Greater
+                    && self.tokens[cur_pos].span.end == self.tokens[next_idx].span.start;
+                if is_shift_right {
+                    let (l_bp, r_bp) = (11, 12); // same as LessLess
+                    if l_bp >= min_bp {
+                        self.skip_trivia();
+                        self.bump(); // first >
+                        self.bump(); // second >
+                        self.skip_trivia();
+                        let rhs = self.parse_expr_bp(r_bp);
+                        let span = lhs.span().merge(rhs.span());
+                        lhs = Expr::Infix(Box::new(lhs), ">>".to_string(), Box::new(rhs), span);
+                        continue;
+                    }
+                }
+            }
+
+            // Binary operators
+            if let Some((l_bp, r_bp)) = infix_binding_power(op_kind) {
+                if l_bp < min_bp {
+                    break;
+                }
+                self.skip_trivia();
+                let op_tok = self.bump();
+                let op_text = self.text_of(&op_tok).to_owned();
+                self.skip_trivia();
+                let rhs = self.parse_expr_bp(r_bp);
+                let span = lhs.span().merge(rhs.span());
+                lhs = Expr::Infix(Box::new(lhs), op_text, Box::new(rhs), span);
+                continue;
+            }
+
+            // Backtick infix: expr `func` expr
+            if op_kind == SyntaxKind::Backtick && min_bp <= 3 {
+                self.skip_trivia();
+                self.bump(); // consume opening backtick
+                self.skip_trivia();
+                let func_tok = self.bump();
+                let func = self.text_of(&func_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::Backtick); // closing backtick
+                self.skip_trivia();
+                let rhs = self.parse_expr_bp(4);
+                let span = lhs.span().merge(rhs.span());
+                lhs = Expr::Infix(Box::new(lhs), func, Box::new(rhs), span);
+                continue;
+            }
+
+            // Pipeline operator: x |> f  desugars to  f x
+            if op_kind == SyntaxKind::PipeForward && min_bp <= 1 {
+                self.skip_trivia();
+                self.bump(); // consume `|>`
+                self.skip_trivia();
+                let func = self.parse_expr_bp(2);
+                let span = lhs.span().merge(func.span());
+                lhs = insert_pipeline_arg(func, lhs, span);
+                continue;
+            }
+
+            break;
+        }
+
+        lhs
+    }
+
+    /// Parse an atom followed by any postfix `.field` or `[index]` operators.
+    /// This ensures that `tint.a` is parsed as a single unit in application
+    /// contexts like `f x tint.a`.
+    fn parse_atom(&mut self) -> Expr {
+        let mut expr = self.parse_atom_core();
+
+        // Consume postfix field access and indexing
+        loop {
+            self.skip_trivia();
+            match self.peek_non_trivia() {
+                SyntaxKind::Dot => {
+                    self.skip_trivia();
+                    self.bump(); // consume `.`
+                    self.skip_trivia();
+                    if self.at(SyntaxKind::Ident) {
+                        let field_tok = self.bump();
+                        let field = self.text_of(&field_tok).to_owned();
+                        let span = expr.span().merge(field_tok.span);
+                        expr = Expr::FieldAccess(Box::new(expr), field, span);
+                    } else {
+                        break;
+                    }
+                }
+                SyntaxKind::LBracket => {
+                    self.skip_trivia();
+                    self.bump(); // consume `[`
+                    self.skip_trivia();
+                    let index = self.parse_expr();
+                    self.skip_trivia();
+                    self.expect(SyntaxKind::RBracket);
+                    let span = expr.span().merge(self.span_from(expr.span().start));
+                    expr = Expr::Index(Box::new(expr), Box::new(index), span);
+                }
+                SyntaxKind::LBrace if self.is_record_update_ahead() => {
+                    self.skip_trivia();
+                    let start = expr.span().start;
+                    self.bump(); // consume `{`
+                    let mut fields = Vec::new();
+                    loop {
+                        self.skip_trivia();
+                        if self.at(SyntaxKind::RBrace) || self.at_end() {
+                            break;
+                        }
+                        let field_tok = self.expect(SyntaxKind::Ident);
+                        let field_name = self.text_of(&field_tok).to_owned();
+                        self.skip_trivia();
+                        self.expect(SyntaxKind::Equals);
+                        self.skip_trivia();
+                        let value = self.parse_expr();
+                        fields.push((field_name, value));
+                        self.skip_trivia();
+                        if !self.eat(SyntaxKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(SyntaxKind::RBrace);
+                    let span = self.span_from(start);
+                    expr = Expr::RecordUpdate(Box::new(expr), fields, span);
+                }
+                _ => break,
+            }
+        }
+
+        expr
+    }
+
+    fn parse_atom_core(&mut self) -> Expr {
+        self.skip_trivia();
+
+        match self.peek() {
+            SyntaxKind::IntLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                match parse_int_literal_typed(text) {
+                    ParsedInt::Unsigned(v) => Expr::Lit(Lit::UInt(v), tok.span),
+                    ParsedInt::Signed(v) => Expr::Lit(Lit::Int(v), tok.span),
+                }
+            }
+            SyntaxKind::FloatLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                let val: f64 = text.parse().unwrap_or(0.0);
+                Expr::Lit(Lit::Float(val), tok.span)
+            }
+            SyntaxKind::StringLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                // Strip quotes
+                let inner = &text[1..text.len() - 1];
+                Expr::Lit(Lit::String(unescape_string(inner)), tok.span)
+            }
+            SyntaxKind::CharLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                let inner = &text[1..text.len() - 1];
+                let ch = unescape_char(inner);
+                Expr::Lit(Lit::Char(ch), tok.span)
+            }
+            SyntaxKind::Ident => {
+                let tok = self.bump();
+                let name = self.text_of(&tok).to_owned();
+                Expr::Var(name, tok.span)
+            }
+            SyntaxKind::UpperIdent => {
+                let tok = self.bump();
+                let name = self.text_of(&tok).to_owned();
+                // Named record/bitfield construction: Name { field = expr, ... }
+                self.skip_trivia();
+                if self.at(SyntaxKind::LBrace) {
+                    return self.parse_named_record(name, tok.span.start);
+                }
+                Expr::Con(name, tok.span)
+            }
+            // Negative literal atom: `-0.35`, `-42` (no space between `-` and digit)
+            SyntaxKind::Minus if self.is_negative_literal_ahead() => {
+                let start = self.current_span().start;
+                self.bump(); // consume `-`
+                let tok = self.bump(); // consume adjacent numeric literal
+                let text = self.text_of(&tok);
+                let span = self.span_from(start);
+                match tok.kind {
+                    SyntaxKind::FloatLiteral => {
+                        let val: f64 = text.parse().unwrap_or(0.0);
+                        Expr::Lit(Lit::Float(-val), span)
+                    }
+                    SyntaxKind::IntLiteral => {
+                        match parse_int_literal_typed(text) {
+                            ParsedInt::Unsigned(v) => {
+                                // -42u → treat as Neg(UInt(42)) since unsigned can't be negative
+                                Expr::Neg(Box::new(Expr::Lit(Lit::UInt(v), tok.span)), span)
+                            }
+                            ParsedInt::Signed(v) => Expr::Lit(Lit::Int(-v), span),
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            SyntaxKind::LParen => self.parse_paren_expr(),
+            SyntaxKind::LBracket => self.parse_vec_lit(),
+            SyntaxKind::KwIf => self.parse_if(),
+            SyntaxKind::KwMatch => self.parse_match(),
+            SyntaxKind::KwLet => self.parse_let(),
+            SyntaxKind::KwDo => self.parse_do(),
+            SyntaxKind::KwLoop => self.parse_loop(),
+            SyntaxKind::Backslash => self.parse_lambda(),
+            _ => {
+                let tok = self.current_token().clone();
+                self.diagnostics.push(
+                    Diagnostic::error(format!("unexpected token: {}", tok.kind))
+                        .with_label(Label::primary(tok.span, "unexpected"))
+                        .with_help("expressions start with a variable, literal, `let`, `if`, `match`, `loop`, or `(`"),
+                );
+                let span = tok.span;
+                self.bump();
+                // Return an error expression as a variable named `<error>`
+                Expr::Var("<error>".to_owned(), span)
+            }
+        }
+    }
+
+    /// Parse a named record/bitfield construction: `Name { field = expr, ... }`
+    /// The `Name` has already been consumed; we're positioned at `{`.
+    fn parse_named_record(&mut self, name: String, start: u32) -> Expr {
+        self.expect(SyntaxKind::LBrace);
+        let mut fields = Vec::new();
+        loop {
+            self.skip_trivia();
+            if self.at(SyntaxKind::RBrace) || self.at_end() {
+                break;
+            }
+            let field_tok = self.expect(SyntaxKind::Ident);
+            let field_name = self.text_of(&field_tok).to_owned();
+            self.skip_trivia();
+            self.expect(SyntaxKind::Equals);
+            self.skip_trivia();
+            let value = self.parse_expr();
+            fields.push((field_name, value));
+            self.skip_trivia();
+            if !self.eat(SyntaxKind::Comma) {
+                break;
+            }
+        }
+        self.expect(SyntaxKind::RBrace);
+        let span = self.span_from(start);
+        Expr::Record(Some(name), fields, span)
+    }
+
+    fn parse_paren_expr(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::LParen);
+        self.skip_trivia();
+
+        // Unit `()`
+        if self.at(SyntaxKind::RParen) {
+            self.bump();
+            let span = self.span_from(start);
+            return Expr::Tuple(Vec::new(), span);
+        }
+
+        // Operator section `(+)`, `(-)`, etc.
+        // Special case: `(-expr)` is negation in parens, not an operator section.
+        if is_operator_token(self.peek()) {
+            let is_prefix_unary = self.peek() == SyntaxKind::Minus
+                || self.peek() == SyntaxKind::Bang
+                || self.peek() == SyntaxKind::Tilde;
+            // Peek ahead past operator + trivia to see if it's `(op)`
+            let next_non_trivia = {
+                let mut i = self.pos + 1;
+                while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+                    i += 1;
+                }
+                if i < self.tokens.len() {
+                    self.tokens[i].kind
+                } else {
+                    SyntaxKind::Eof
+                }
+            };
+            if is_prefix_unary && next_non_trivia != SyntaxKind::RParen {
+                // `(-expr)` or `(!expr)` — fall through to parse as normal expression
+                // (the prefix operator will be handled by parse_expr)
+            } else if next_non_trivia == SyntaxKind::RParen {
+                // `(op)` — operator section
+                let op_tok = self.bump();
+                self.skip_trivia();
+                self.bump(); // consume `)`
+                let op = self.text_of(&op_tok).to_owned();
+                let span = self.span_from(start);
+                return Expr::OpSection(op, span);
+            } else {
+                // `(op expr)` — not a simple section, treat as error
+                let op_tok = self.bump();
+                let op = self.text_of(&op_tok).to_owned();
+                while !self.at(SyntaxKind::RParen) && !self.at_end() && self.consume_fuel() {
+                    self.bump();
+                }
+                self.eat(SyntaxKind::RParen);
+                let span = self.span_from(start);
+                return Expr::OpSection(op, span);
+            }
+        }
+
+        // Parse first expression
+        let first = self.parse_expr();
+        self.skip_trivia();
+
+        // Tuple `(a, b, ...)`
+        if self.at(SyntaxKind::Comma) {
+            let mut elems = vec![first];
+            while self.eat(SyntaxKind::Comma) {
+                self.skip_trivia();
+                elems.push(self.parse_expr());
+                self.skip_trivia();
+            }
+            self.expect(SyntaxKind::RParen);
+            let span = self.span_from(start);
+            return Expr::Tuple(elems, span);
+        }
+
+        // Simple parenthesized expression
+        self.expect(SyntaxKind::RParen);
+        let span = self.span_from(start);
+        Expr::Paren(Box::new(first), span)
+    }
+
+    fn parse_vec_lit(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::LBracket);
+        self.skip_trivia();
+
+        let mut elems = Vec::new();
+
+        // Empty vec literal `[]` is not valid for WGSL, but parse it anyway
+        if !self.at(SyntaxKind::RBracket) && !self.at_end() {
+            elems.push(self.parse_expr());
+            self.skip_trivia();
+
+            while self.eat(SyntaxKind::Comma) {
+                self.skip_trivia();
+                if self.at(SyntaxKind::RBracket) {
+                    break; // trailing comma
+                }
+                elems.push(self.parse_expr());
+                self.skip_trivia();
+            }
+        }
+
+        self.expect(SyntaxKind::RBracket);
+        let span = self.span_from(start);
+        Expr::VecLit(elems, span)
+    }
+
+    fn parse_if(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwIf);
+        self.skip_trivia();
+        let cond = self.parse_expr();
+        self.skip_trivia();
+        self.expect(SyntaxKind::KwThen);
+        self.skip_trivia();
+        let then_expr = self.parse_expr();
+        self.skip_trivia();
+        self.expect(SyntaxKind::KwElse);
+        self.skip_trivia();
+        let else_expr = self.parse_expr();
+        let span = self.span_from(start);
+        Expr::If(
+            Box::new(cond),
+            Box::new(then_expr),
+            Box::new(else_expr),
+            span,
+        )
+    }
+
+    fn parse_match(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwMatch);
+        self.skip_trivia();
+
+        // Parse the scrutinee -- only parse atoms and applications,
+        // stop before `|` (pipe) token. We use a limited expression parser.
+        let scrutinee = self.parse_match_scrutinee();
+        self.skip_trivia();
+
+        // Parse arms: each starts with |
+        let mut arms = Vec::new();
+        loop {
+            self.skip_trivia();
+            if self.at_end() {
+                break;
+            }
+            if !self.consume_fuel() {
+                break;
+            }
+            if !self.at(SyntaxKind::Pipe) {
+                break;
+            }
+            self.bump(); // consume |
+            self.skip_trivia();
+
+            let pat_start = self.current_span().start;
+            let first_pat = self.parse_pat();
+            self.skip_trivia();
+
+            // Check for or-pattern: | pat1 | pat2 | pat3 -> body
+            // After parsing first pattern, if we see `|` instead of `->`,
+            // the `|` is an or-separator within the same arm.
+            let pat = if self.at(SyntaxKind::Pipe) {
+                let mut alternatives = vec![first_pat];
+                while self.at(SyntaxKind::Pipe) {
+                    self.bump(); // consume |
+                    self.skip_trivia();
+                    alternatives.push(self.parse_pat());
+                    self.skip_trivia();
+                }
+                let span = self.span_from(pat_start);
+                Pat::Or(alternatives, span)
+            } else {
+                first_pat
+            };
+
+            // Optional when-guard: `| pat when guard -> body`
+            let guard = if self.at(SyntaxKind::KwWhen) {
+                self.bump(); // consume `when`
+                self.skip_trivia();
+                Some(self.parse_expr())
+            } else {
+                None
+            };
+
+            self.expect(SyntaxKind::Arrow);
+            self.skip_trivia();
+            let body = self.parse_expr();
+            arms.push((pat, guard, body));
+        }
+
+        let span = self.span_from(start);
+        Expr::Case(Box::new(scrutinee), arms, span)
+    }
+
+    /// Parse the scrutinee of a match expression. Stops at `|` (Pipe) token or layout tokens.
+    fn parse_match_scrutinee(&mut self) -> Expr {
+        self.skip_trivia();
+        let mut expr = self.parse_match_scrutinee_atom();
+
+        // Allow function application in scrutinee
+        loop {
+            self.skip_trivia();
+            let k = self.peek_non_trivia();
+            if k == SyntaxKind::Pipe
+                || k == SyntaxKind::Eof
+                || k == SyntaxKind::LayoutBraceOpen
+                || k == SyntaxKind::LayoutSemicolon
+                || k == SyntaxKind::LayoutBraceClose
+            {
+                break;
+            }
+            if !is_atom_start(k) {
+                break;
+            }
+            if !self.consume_fuel() {
+                break;
+            }
+            self.skip_trivia();
+            let arg = self.parse_match_scrutinee_atom();
+            let span = expr.span().merge(arg.span());
+            expr = Expr::App(Box::new(expr), Box::new(arg), span);
+        }
+
+        expr
+    }
+
+    fn parse_match_scrutinee_atom(&mut self) -> Expr {
+        self.skip_trivia();
+        match self.peek() {
+            SyntaxKind::Ident => {
+                let tok = self.bump();
+                let name = self.text_of(&tok).to_owned();
+                Expr::Var(name, tok.span)
+            }
+            SyntaxKind::UpperIdent => {
+                let tok = self.bump();
+                let name = self.text_of(&tok).to_owned();
+                Expr::Con(name, tok.span)
+            }
+            SyntaxKind::IntLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                match parse_int_literal_typed(text) {
+                    ParsedInt::Unsigned(v) => Expr::Lit(Lit::UInt(v), tok.span),
+                    ParsedInt::Signed(v) => Expr::Lit(Lit::Int(v), tok.span),
+                }
+            }
+            SyntaxKind::LParen => self.parse_paren_expr(),
+            _ => {
+                let tok = self.current_token().clone();
+                let span = tok.span;
+                Expr::Var("<error>".to_owned(), span)
+            }
+        }
+    }
+
+    fn parse_let(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwLet);
+        self.skip_trivia();
+
+        // Layout brace open
+        self.eat(SyntaxKind::LayoutBraceOpen);
+
+        let mut binds = Vec::new();
+        loop {
+            self.skip_trivia();
+            if self.at(SyntaxKind::KwIn) || self.at_layout_end() || self.at_end() {
+                break;
+            }
+            if !self.consume_fuel() {
+                break;
+            }
+
+            if self.at(SyntaxKind::Ident) {
+                let name_tok = self.bump();
+                let name = self.text_of(&name_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::Equals);
+                self.skip_trivia();
+                let expr = self.parse_expr();
+                binds.push((name, expr));
+                self.eat_layout_semi();
+            } else {
+                break;
+            }
+        }
+
+        self.eat_layout_close();
+        self.skip_trivia();
+        self.expect(SyntaxKind::KwIn);
+        self.skip_trivia();
+        let body = self.parse_expr();
+        let span = self.span_from(start);
+        Expr::Let(binds, Box::new(body), span)
+    }
+
+    fn parse_do(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwDo);
+        self.skip_trivia();
+
+        // Layout brace open
+        self.eat(SyntaxKind::LayoutBraceOpen);
+
+        let mut stmts = Vec::new();
+        loop {
+            self.skip_trivia();
+            if self.at_layout_end() || self.at_end() {
+                break;
+            }
+            if !self.consume_fuel() {
+                break;
+            }
+
+            let stmt_start = self.current_span().start;
+
+            // `let x = expr`
+            if self.at(SyntaxKind::KwLet) {
+                self.bump();
+                self.skip_trivia();
+                // Consume possible LayoutBraceOpen from let in do
+                self.eat(SyntaxKind::LayoutBraceOpen);
+                self.skip_trivia();
+                let name_tok = self.expect(SyntaxKind::Ident);
+                let name = self.text_of(&name_tok).to_owned();
+                self.skip_trivia();
+                self.expect(SyntaxKind::Equals);
+                self.skip_trivia();
+                let expr = self.parse_expr();
+                let span = self.span_from(stmt_start);
+                stmts.push(DoStmt::Let(name, expr, span));
+                self.eat_layout_semi();
+                self.eat_layout_close();
+                continue;
+            }
+
+            // Try to detect `x <- expr` pattern:
+            // peek: Ident, then LeftArrow
+            if self.at(SyntaxKind::Ident) {
+                // Lookahead for `<-`
+                let saved_pos = self.pos;
+                let name_tok = self.bump();
+                self.skip_trivia();
+                if self.at(SyntaxKind::LeftArrow) {
+                    self.bump(); // consume `<-`
+                    self.skip_trivia();
+                    let name = self.text_of(&name_tok).to_owned();
+                    let expr = self.parse_expr();
+                    let span = self.span_from(stmt_start);
+                    stmts.push(DoStmt::Bind(name, expr, span));
+                    self.eat_layout_semi();
+                    continue;
+                } else {
+                    // Backtrack -- it's a plain expression
+                    self.pos = saved_pos;
+                }
+            }
+
+            // Plain expression statement
+            let expr = self.parse_expr();
+            let span = self.span_from(stmt_start);
+            stmts.push(DoStmt::Expr(expr, span));
+            self.eat_layout_semi();
+        }
+
+        self.eat_layout_close();
+
+        let span = self.span_from(start);
+        Expr::Do(stmts, span)
+    }
+
+    /// Parse `loop go (i = 0) (acc = 0) in body`.
+    ///
+    /// Named tail-recursive loop. Each binding is parenthesised: `(name = init)`.
+    /// The body may call `go arg1 arg2` to recurse (continue the loop).
+    fn parse_loop(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::KwLoop);
+        self.skip_trivia();
+
+        // Parse loop name (e.g. `go`)
+        let name_tok = self.expect(SyntaxKind::Ident);
+        let name = self.text_of(&name_tok).to_owned();
+        self.skip_trivia();
+
+        // Parse bindings: `(name = init)` repeated
+        let mut bindings = Vec::new();
+        while self.at(SyntaxKind::LParen) && self.consume_fuel() {
+            self.expect(SyntaxKind::LParen);
+            self.skip_trivia();
+            let bind_tok = self.expect(SyntaxKind::Ident);
+            let bind_name = self.text_of(&bind_tok).to_owned();
+            self.skip_trivia();
+            self.expect(SyntaxKind::Equals);
+            self.skip_trivia();
+            let init = self.parse_expr();
+            self.skip_trivia();
+            self.expect(SyntaxKind::RParen);
+            self.skip_trivia();
+            bindings.push((bind_name, init));
+        }
+
+        // `in` keyword
+        self.expect(SyntaxKind::KwIn);
+        self.skip_trivia();
+
+        // Body expression
+        let body = self.parse_expr();
+        let span = self.span_from(start);
+        Expr::Loop(name, bindings, Box::new(body), span)
+    }
+
+    fn parse_lambda(&mut self) -> Expr {
+        let start = self.current_span().start;
+        self.expect(SyntaxKind::Backslash);
+        self.skip_trivia();
+
+        let mut params = Vec::new();
+        while !self.at(SyntaxKind::Arrow) && !self.at_end() && self.consume_fuel() {
+            let p = self.parse_pat_atom();
+            params.push(p);
+            self.skip_trivia();
+        }
+
+        self.expect(SyntaxKind::Arrow);
+        self.skip_trivia();
+        let body = self.parse_expr();
+        let span = self.span_from(start);
+        Expr::Lambda(params, Box::new(body), span)
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // Patterns
+    // ═════════════════════════════════════════════════════════════════════
+
+    fn parse_pat(&mut self) -> Pat {
+        self.skip_trivia();
+        let start = self.current_span().start;
+
+        match self.peek() {
+            SyntaxKind::UpperIdent => {
+                // Constructor pattern, possibly with sub-patterns
+                let name_tok = self.bump();
+                let name = self.text_of(&name_tok).to_owned();
+                self.skip_trivia();
+
+                // Check for record pattern Con { ... }
+                if self.at(SyntaxKind::LBrace) {
+                    return self.parse_record_pat(name, start);
+                }
+
+                // Collect sub-patterns (atoms only)
+                let mut sub_pats = Vec::new();
+                while is_pat_atom_start(self.peek_non_trivia()) && self.consume_fuel() {
+                    self.skip_trivia();
+                    sub_pats.push(self.parse_pat_atom());
+                }
+                let span = self.span_from(start);
+                Pat::Con(name, sub_pats, span)
+            }
+            _ => self.parse_pat_atom(),
+        }
+    }
+
+    fn parse_pat_atom(&mut self) -> Pat {
+        self.skip_trivia();
+        let start = self.current_span().start;
+
+        match self.peek() {
+            SyntaxKind::Underscore => {
+                let tok = self.bump();
+                Pat::Wild(tok.span)
+            }
+            SyntaxKind::Ident => {
+                let tok = self.bump();
+                let name = self.text_of(&tok).to_owned();
+                // Check for as-pattern: name@pat
+                if self.at(SyntaxKind::At) {
+                    self.bump();
+                    self.skip_trivia();
+                    let inner = self.parse_pat_atom();
+                    let span = self.span_from(start);
+                    Pat::As(name, Box::new(inner), span)
+                } else {
+                    Pat::Var(name, tok.span)
+                }
+            }
+            SyntaxKind::UpperIdent => {
+                let tok = self.bump();
+                let name = self.text_of(&tok).to_owned();
+                Pat::Con(name, Vec::new(), tok.span)
+            }
+            SyntaxKind::IntLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                match parse_int_literal_typed(text) {
+                    ParsedInt::Unsigned(v) => Pat::Lit(Lit::UInt(v), tok.span),
+                    ParsedInt::Signed(v) => Pat::Lit(Lit::Int(v), tok.span),
+                }
+            }
+            SyntaxKind::FloatLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                let val: f64 = text.parse().unwrap_or(0.0);
+                Pat::Lit(Lit::Float(val), tok.span)
+            }
+            SyntaxKind::StringLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                let inner = &text[1..text.len() - 1];
+                Pat::Lit(Lit::String(unescape_string(inner)), tok.span)
+            }
+            SyntaxKind::CharLiteral => {
+                let tok = self.bump();
+                let text = self.text_of(&tok);
+                let inner = &text[1..text.len() - 1];
+                Pat::Lit(Lit::Char(unescape_char(inner)), tok.span)
+            }
+            SyntaxKind::LParen => {
+                self.bump();
+                self.skip_trivia();
+                // Unit `()`
+                if self.at(SyntaxKind::RParen) {
+                    self.bump();
+                    let span = self.span_from(start);
+                    return Pat::Tuple(Vec::new(), span);
+                }
+                let first = self.parse_pat();
+                self.skip_trivia();
+                if self.at(SyntaxKind::Comma) {
+                    // Tuple pattern
+                    let mut elems = vec![first];
+                    while self.eat(SyntaxKind::Comma) {
+                        self.skip_trivia();
+                        elems.push(self.parse_pat());
+                        self.skip_trivia();
+                    }
+                    self.expect(SyntaxKind::RParen);
+                    let span = self.span_from(start);
+                    Pat::Tuple(elems, span)
+                } else {
+                    self.expect(SyntaxKind::RParen);
+                    let span = self.span_from(start);
+                    Pat::Paren(Box::new(first), span)
+                }
+            }
+            _ => {
+                let tok = self.current_token().clone();
+                self.diagnostics.push(
+                    Diagnostic::error(format!("unexpected token in pattern: {}", tok.kind))
+                        .with_label(Label::primary(tok.span, "unexpected"))
+                        .with_help("patterns can be: variables, constructors, literals, wildcards (_), or tuples"),
+                );
+                let span = tok.span;
+                self.bump();
+                Pat::Wild(span)
+            }
+        }
+    }
+
+    fn parse_record_pat(&mut self, con_name: String, start: u32) -> Pat {
+        self.expect(SyntaxKind::LBrace);
+        let mut fields = Vec::new();
+        loop {
+            self.skip_trivia();
+            if self.at(SyntaxKind::RBrace) || self.at_end() {
+                break;
+            }
+
+            let field_tok = self.expect(SyntaxKind::Ident);
+            let field_name = self.text_of(&field_tok).to_owned();
+            self.skip_trivia();
+
+            if self.at(SyntaxKind::Equals) {
+                self.bump();
+                self.skip_trivia();
+                let pat = self.parse_pat();
+                fields.push((field_name, Some(pat)));
+            } else {
+                // Punned field: `field` means `field = field`
+                fields.push((field_name, None));
+            }
+
+            self.skip_trivia();
+            if !self.eat(SyntaxKind::Comma) {
+                break;
+            }
+        }
+        self.expect(SyntaxKind::RBrace);
+        let span = self.span_from(start);
+        Pat::Record(con_name, fields, span)
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // Types
+    // ═════════════════════════════════════════════════════════════════════
+
+    pub fn parse_type(&mut self) -> Type {
+        self.skip_trivia();
+        let lhs = self.parse_type_app();
+        self.skip_trivia();
+
+        // Arrow types are right-associative
+        if self.at(SyntaxKind::Arrow) {
+            self.bump();
+            self.skip_trivia();
+            let rhs = self.parse_type(); // right-recursive for right-assoc
+            let span = lhs.span().merge(rhs.span());
+            Type::Arrow(Box::new(lhs), Box::new(rhs), span)
+        } else {
+            lhs
+        }
+    }
+
+    fn parse_type_app(&mut self) -> Type {
+        self.skip_trivia();
+        let start_col = self.column_of(self.current_span().start);
+        let mut ty = self.parse_type_atom();
+
+        loop {
+            self.skip_trivia();
+            // Stop at layout boundaries — a LayoutSemicolon means we're on a
+            // new declaration line and should not consume further type args.
+            if matches!(
+                self.peek(),
+                SyntaxKind::LayoutSemicolon | SyntaxKind::LayoutBraceClose
+            ) {
+                break;
+            }
+            let next = self.peek_non_trivia();
+            // Also stop if the next token is on a new line at the same or
+            // lesser column — this handles `when` blocks where the layout
+            // resolver doesn't insert LayoutSemicolon tokens.
+            let next_col = self.column_of(self.current_span().start);
+            if next_col <= start_col && self.current_span().start > ty.span().end {
+                break;
+            }
+            if matches!(
+                next,
+                SyntaxKind::UpperIdent
+                    | SyntaxKind::Ident
+                    | SyntaxKind::IntLiteral
+                    | SyntaxKind::LParen
+            ) {
+                let arg = self.parse_type_atom();
+                let span = ty.span().merge(arg.span());
+                ty = Type::App(Box::new(ty), Box::new(arg), span);
+            } else {
+                break;
+            }
+        }
+
+        ty
+    }
+
+    fn parse_type_atom(&mut self) -> Type {
+        self.skip_trivia();
+        let start = self.current_span().start;
+
+        match self.peek() {
+            SyntaxKind::UpperIdent => {
+                let tok = self.bump();
+                let name = self.text_of(&tok).to_owned();
+                self.parse_angle_type_args(Type::Con(name, tok.span))
+            }
+            SyntaxKind::Ident => {
+                let tok = self.bump();
+                let name = self.text_of(&tok).to_owned();
+                Type::Var(name, tok.span)
+            }
+            SyntaxKind::IntLiteral => {
+                let tok = self.bump();
+                let value = parse_int_literal(self.text_of(&tok)).max(0) as u64;
+                Type::Nat(value, tok.span)
+            }
+            SyntaxKind::LParen => {
+                self.bump();
+                self.skip_trivia();
+
+                // Unit type `()`
+                if self.at(SyntaxKind::RParen) {
+                    self.bump();
+                    let span = self.span_from(start);
+                    return Type::Unit(span);
+                }
+
+                let first = self.parse_type();
+                self.skip_trivia();
+
+                if self.at(SyntaxKind::Comma) {
+                    // Tuple type
+                    let mut elems = vec![first];
+                    while self.eat(SyntaxKind::Comma) {
+                        self.skip_trivia();
+                        elems.push(self.parse_type());
+                        self.skip_trivia();
+                    }
+                    self.expect(SyntaxKind::RParen);
+                    let span = self.span_from(start);
+                    Type::Tuple(elems, span)
+                } else {
+                    self.expect(SyntaxKind::RParen);
+                    let span = self.span_from(start);
+                    Type::Paren(Box::new(first), span)
+                }
+            }
+            _ => {
+                let tok = self.current_token().clone();
+                self.diagnostics.push(
+                    Diagnostic::error(format!("unexpected token in type: {}", tok.kind))
+                        .with_label(Label::primary(tok.span, "unexpected"))
+                        .with_help("check the type expression syntax around this token"),
+                );
+                let span = tok.span;
+                self.bump();
+                Type::Con("<error>".to_owned(), span)
+            }
+        }
+    }
+
+    fn parse_angle_type_args(&mut self, mut base: Type) -> Type {
+        self.skip_trivia();
+        if !self.at(SyntaxKind::Less) {
+            return base;
+        }
+        self.bump(); // <
+        self.skip_trivia();
+
+        loop {
+            let arg = self.parse_type();
+            let span = base.span().merge(arg.span());
+            base = Type::App(Box::new(base), Box::new(arg), span);
+            self.skip_trivia();
+            if self.eat(SyntaxKind::Comma) {
+                self.skip_trivia();
+                continue;
+            }
+            break;
+        }
+
+        self.expect(SyntaxKind::Greater);
+        base
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Infix operator binding powers: returns `(left_bp, right_bp)`.
+///
+/// Left-associative:  `l_bp < r_bp`
+/// Right-associative: `l_bp > r_bp`
+fn infix_binding_power(kind: SyntaxKind) -> Option<(u8, u8)> {
+    match kind {
+        SyntaxKind::Dollar => Some((1, 0)), // right-assoc (l > r)
+        SyntaxKind::OrOr => Some((1, 2)),   // ||
+        SyntaxKind::AndAnd => Some((3, 4)), // &&
+        // Note: `|` (Pipe) is NOT an infix operator here — it's used for
+        // guard clauses, match arms, data constructors, and or-patterns.
+        // Bitwise OR is available via the `bor` builtin function.
+        SyntaxKind::Caret => Some((5, 6)),     // ^ (bitwise xor)
+        SyntaxKind::Ampersand => Some((7, 8)), // & (bitwise and)
+        SyntaxKind::EqualEqual
+        | SyntaxKind::NotEqual
+        | SyntaxKind::Less
+        | SyntaxKind::Greater
+        | SyntaxKind::LessEqual
+        | SyntaxKind::GreaterEqual => Some((9, 10)), // comparisons
+        SyntaxKind::LessLess => Some((11, 12)), // <<
+        // >> is handled specially in the parser loop (two Greater tokens)
+        SyntaxKind::Plus | SyntaxKind::Minus => Some((13, 14)), // + -
+        SyntaxKind::Star | SyntaxKind::Slash | SyntaxKind::Percent => Some((15, 16)), // * / %
+        _ => None,
+    }
+}
+
+/// Whether a token kind can begin an atom expression.
+fn is_atom_start(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::IntLiteral
+            | SyntaxKind::FloatLiteral
+            | SyntaxKind::StringLiteral
+            | SyntaxKind::CharLiteral
+            | SyntaxKind::Ident
+            | SyntaxKind::UpperIdent
+            | SyntaxKind::LParen
+            | SyntaxKind::LBracket
+            | SyntaxKind::Backslash
+    )
+}
+
+fn flatten_app(expr: Expr) -> (Expr, Vec<Expr>) {
+    let mut args = Vec::new();
+    let mut head = expr;
+    while let Expr::App(f, a, _) = head {
+        args.push(*a);
+        head = *f;
+    }
+    args.reverse();
+    (head, args)
+}
+
+fn fold_app(mut head: Expr, args: Vec<Expr>) -> Expr {
+    for arg in args {
+        let span = head.span().merge(arg.span());
+        head = Expr::App(Box::new(head), Box::new(arg), span);
+    }
+    head
+}
+
+fn insert_pipeline_arg(rhs: Expr, lhs: Expr, span: Span) -> Expr {
+    match rhs {
+        Expr::App(_, _, _) => {
+            let (head, mut args) = flatten_app(rhs);
+            let mut with_lhs = Vec::with_capacity(args.len() + 1);
+            with_lhs.push(lhs);
+            with_lhs.append(&mut args);
+            let mut applied = fold_app(head, with_lhs);
+            // Ensure outer span preserves full pipe expression.
+            match &mut applied {
+                Expr::App(_, _, s)
+                | Expr::Infix(_, _, _, s)
+                | Expr::Paren(_, s)
+                | Expr::FieldAccess(_, _, s)
+                | Expr::Index(_, _, s)
+                | Expr::Neg(_, s)
+                | Expr::Not(_, s)
+                | Expr::BitNot(_, s)
+                | Expr::Do(_, s)
+                | Expr::VecLit(_, s)
+                | Expr::Lit(_, s)
+                | Expr::Var(_, s)
+                | Expr::Con(_, s)
+                | Expr::Lambda(_, _, s)
+                | Expr::Let(_, _, s)
+                | Expr::Case(_, _, s)
+                | Expr::If(_, _, _, s)
+                | Expr::Tuple(_, s)
+                | Expr::Record(_, _, s)
+                | Expr::OpSection(_, s)
+                | Expr::Loop(_, _, _, s)
+                | Expr::RecordUpdate(_, _, s) => *s = span,
+            }
+            applied
+        }
+        other => Expr::App(Box::new(other), Box::new(lhs), span),
+    }
+}
+
+/// Whether a token kind can begin a pattern atom.
+fn is_pat_atom_start(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::Underscore
+            | SyntaxKind::Ident
+            | SyntaxKind::UpperIdent
+            | SyntaxKind::IntLiteral
+            | SyntaxKind::FloatLiteral
+            | SyntaxKind::StringLiteral
+            | SyntaxKind::CharLiteral
+            | SyntaxKind::LParen
+    )
+}
+
+fn is_operator_token(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::Plus
+            | SyntaxKind::Minus
+            | SyntaxKind::Star
+            | SyntaxKind::Slash
+            | SyntaxKind::Percent
+            | SyntaxKind::Less
+            | SyntaxKind::Greater
+            | SyntaxKind::LessEqual
+            | SyntaxKind::GreaterEqual
+            | SyntaxKind::EqualEqual
+            | SyntaxKind::NotEqual
+            | SyntaxKind::AndAnd
+            | SyntaxKind::OrOr
+            | SyntaxKind::Ampersand
+            | SyntaxKind::Caret
+            | SyntaxKind::Tilde
+            | SyntaxKind::LessLess
+            | SyntaxKind::GreaterGreater
+            | SyntaxKind::Dollar
+            | SyntaxKind::Bang
+            | SyntaxKind::Dot
+    )
+}
+
+/// Result of parsing an integer literal — either signed (i64) or unsigned (u64).
+enum ParsedInt {
+    Signed(i64),
+    Unsigned(u64),
+}
+
+fn parse_int_literal_typed(text: &str) -> ParsedInt {
+    // Strip optional suffix
+    let (digits, is_unsigned) = if text.ends_with('u') {
+        (&text[..text.len() - 1], true)
+    } else if text.ends_with('i') {
+        (&text[..text.len() - 1], false)
+    } else {
+        (text, false)
+    };
+
+    let value = if digits.starts_with("0x") || digits.starts_with("0X") {
+        u64::from_str_radix(&digits[2..], 16).unwrap_or(0)
+    } else if digits.starts_with("0o") || digits.starts_with("0O") {
+        u64::from_str_radix(&digits[2..], 8).unwrap_or(0)
+    } else if digits.starts_with("0b") || digits.starts_with("0B") {
+        u64::from_str_radix(&digits[2..], 2).unwrap_or(0)
+    } else {
+        digits.parse::<u64>().unwrap_or(0)
+    };
+
+    if is_unsigned {
+        ParsedInt::Unsigned(value)
+    } else {
+        ParsedInt::Signed(value as i64)
+    }
+}
+
+fn parse_int_literal(text: &str) -> i64 {
+    match parse_int_literal_typed(text) {
+        ParsedInt::Signed(v) => v,
+        ParsedInt::Unsigned(v) => v as i64,
+    }
+}
+
+fn unescape_string(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some('0') => out.push('\0'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn unescape_char(s: &str) -> char {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some('\\') => match chars.next() {
+            Some('n') => '\n',
+            Some('t') => '\t',
+            Some('r') => '\r',
+            Some('\\') => '\\',
+            Some('\'') => '\'',
+            Some('0') => '\0',
+            Some(c) => c,
+            None => '\\',
+        },
+        Some(c) => c,
+        None => '\0',
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(source: &str) -> Program {
+        let mut parser = Parser::new(source);
+        parser.parse_program()
+    }
+
+    #[test]
+    fn parse_type_sig() {
+        let prog = parse("add : I32 -> I32 -> I32");
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::TypeSig { name, .. } => assert_eq!(name, "add"),
+            other => panic!("expected TypeSig, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_dependent_array_type_sig() {
+        let prog = parse("grid : Array 2 (Array 4 F32)");
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::TypeSig { ty, .. } => match ty {
+                Type::App(outer, inner, _) => {
+                    assert!(matches!(outer.as_ref(), Type::App(_, _, _)));
+                    assert!(matches!(inner.as_ref(), Type::Paren(_, _)));
+                }
+                other => panic!("expected applied array type, got {:?}", other),
+            },
+            other => panic!("expected TypeSig, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_fun_decl() {
+        let prog = parse("add x y = x + y");
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::FunDecl { name, params, .. } => {
+                assert_eq!(name, "add");
+                assert_eq!(params.len(), 2);
+            }
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_data_decl() {
+        let prog = parse("data Color = Red | Green | Blue");
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::DataDecl {
+                name, constructors, ..
+            } => {
+                assert_eq!(name, "Color");
+                assert_eq!(constructors.len(), 3);
+                assert_eq!(constructors[0].name, "Red");
+                assert_eq!(constructors[1].name, "Green");
+                assert_eq!(constructors[2].name, "Blue");
+            }
+            other => panic!("expected DataDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_case_expr() {
+        let source = "f c = match c\n  | Red -> 0\n  | Green -> 1\n  | Blue -> 2";
+        let prog = parse(source);
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => match body {
+                Expr::Case(_, arms, _) => {
+                    assert_eq!(arms.len(), 3);
+                }
+                other => panic!("expected Case, got {:?}", other),
+            },
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_let_expr() {
+        let source = "f x = let y = x + 1 in y";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => match body {
+                Expr::Let(binds, _, _) => {
+                    assert_eq!(binds.len(), 1);
+                    assert_eq!(binds[0].0, "y");
+                }
+                other => panic!("expected Let, got {:?}", other),
+            },
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_where_clause() {
+        let source = "f x = y + 1 where y = x";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl {
+                body, where_binds, ..
+            } => {
+                assert!(matches!(body, Expr::Infix(..)));
+                assert_eq!(where_binds.len(), 1);
+                assert_eq!(where_binds[0].0, "y");
+            }
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_lambda() {
+        let source = "f = \\x y -> x + y";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => match body {
+                Expr::Lambda(params, _, _) => {
+                    assert_eq!(params.len(), 2);
+                }
+                other => panic!("expected Lambda, got {:?}", other),
+            },
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_if_expr() {
+        let source = "f x = if x == 0 then 1 else 2";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => {
+                assert!(matches!(body, Expr::If(..)));
+            }
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_full_program() {
+        let source = "\
+data Color = Red | Green | Blue
+
+show : Color -> I32
+show c = match c
+  | Red   -> 0
+  | Green -> 1
+  | Blue  -> 2
+
+add : I32 -> I32 -> I32
+add x y = x + y
+
+main : I32 -> I32
+main x =
+  let y = add x 1
+  in show Red
+";
+        let prog = parse(source);
+        // We expect: DataDecl, TypeSig, FunDecl, TypeSig, FunDecl, TypeSig, FunDecl
+        assert!(
+            prog.decls.len() >= 4,
+            "expected at least 4 decls, got {}: {:#?}",
+            prog.decls.len(),
+            prog.decls
+        );
+    }
+
+    #[test]
+    fn parse_entry_point() {
+        let source = "@vertex\nmain x = x + 1";
+        let prog = parse(source);
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::EntryPoint {
+                attributes, name, ..
+            } => {
+                assert_eq!(attributes.len(), 1);
+                assert_eq!(attributes[0].name, "vertex");
+                assert_eq!(name, "main");
+            }
+            other => panic!("expected EntryPoint, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_operator_section() {
+        let source = "f = (+)";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => {
+                assert!(matches!(body, Expr::OpSection(..)));
+            }
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_tuple() {
+        let source = "f = (1, 2, 3)";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => match body {
+                Expr::Tuple(elems, _) => {
+                    assert_eq!(elems.len(), 3);
+                }
+                other => panic!("expected Tuple, got {:?}", other),
+            },
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_unit() {
+        let source = "f = ()";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => {
+                assert!(matches!(body, Expr::Tuple(elems, _) if elems.is_empty()));
+            }
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_precedence() {
+        // 1 + 2 * 3 should parse as 1 + (2 * 3)
+        let source = "f = 1 + 2 * 3";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => match body {
+                Expr::Infix(_, op, rhs, _) => {
+                    assert_eq!(op, "+");
+                    assert!(matches!(rhs.as_ref(), Expr::Infix(_, op2, _, _) if op2 == "*"));
+                }
+                other => panic!("expected Infix(+), got {:?}", other),
+            },
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_dollar_right_assoc() {
+        // f $ g $ x should parse as f $ (g $ x)
+        let source = "r = f $ g $ x";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => match body {
+                Expr::Infix(_lhs, op, rhs, _) => {
+                    assert_eq!(op, "$");
+                    // rhs should be another `$` application
+                    assert!(matches!(rhs.as_ref(), Expr::Infix(_, op2, _, _) if op2 == "$"));
+                }
+                other => panic!("expected Infix($), got {:?}", other),
+            },
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_function_application() {
+        let source = "f = add x y";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::FunDecl { body, .. } => {
+                // add x y  =  (add x) y  =  App(App(Var(add), Var(x)), Var(y))
+                match body {
+                    Expr::App(lhs, rhs, _) => {
+                        assert!(matches!(rhs.as_ref(), Expr::Var(name, _) if name == "y"));
+                        assert!(matches!(lhs.as_ref(), Expr::App(..)));
+                    }
+                    other => panic!("expected App, got {:?}", other),
+                }
+            }
+            other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn doc_comment_on_decl() {
+        let source = "-- | Adds two numbers.\nadd x y = x + y";
+        let prog = parse(source);
+        assert_eq!(prog.decls.len(), 1);
+        // Doc comment should appear in the comments list with its ` | ` prefix
+        let comments = prog.decls[0].comments();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0], " | Adds two numbers.");
+    }
+
+    #[test]
+    fn doc_comment_on_constructor() {
+        let source = "data Shape =\n  -- | A circle with radius.\n  Circle F32\n  | -- | A rectangle.\n  Rect F32 F32";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::DataDecl { constructors, .. } => {
+                assert_eq!(
+                    constructors[0].doc.as_deref(),
+                    Some("A circle with radius.")
+                );
+                assert_eq!(constructors[1].doc.as_deref(), Some("A rectangle."));
+            }
+            other => panic!("expected DataDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn doc_comment_on_record_field() {
+        let source = "data Point = Point {\n  -- | X coordinate.\n  x : F32,\n  -- | Y coordinate.\n  y : F32\n}";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::DataDecl { constructors, .. } => {
+                if let ConFields::Record(fields) = &constructors[0].fields {
+                    assert_eq!(fields[0].doc.as_deref(), Some("X coordinate."));
+                    assert_eq!(fields[1].doc.as_deref(), Some("Y coordinate."));
+                } else {
+                    panic!("expected record fields");
+                }
+            }
+            other => panic!("expected DataDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn trailing_doc_comment_on_field() {
+        let source =
+            "data Point = Point {\n  x : F32, -- ^ X coordinate.\n  y : F32  -- ^ Y coordinate.\n}";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::DataDecl { constructors, .. } => {
+                if let ConFields::Record(fields) = &constructors[0].fields {
+                    assert_eq!(fields[0].doc.as_deref(), Some("X coordinate."));
+                    assert_eq!(fields[1].doc.as_deref(), Some("Y coordinate."));
+                } else {
+                    panic!("expected record fields");
+                }
+            }
+            other => panic!("expected DataDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn doc_comment_on_trait_method() {
+        let source = "trait HasArea a where\n  -- | Compute the area.\n  area : a -> F32";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::TraitDecl { methods, .. } => {
+                assert_eq!(
+                    methods[0].doc.as_deref(),
+                    Some("Compute the area."),
+                    "trait method doc should be attached"
+                );
+            }
+            other => panic!("expected TraitDecl, got {:?}", other),
+        }
+    }
+}

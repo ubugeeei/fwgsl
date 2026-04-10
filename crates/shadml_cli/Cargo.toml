@@ -1,0 +1,21 @@
+[package]
+name = "shadml_cli"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "shadml"
+path = "src/main.rs"
+
+[dependencies]
+shadml_parser = { workspace = true }
+shadml_typechecker = { workspace = true }
+shadml_semantic = { workspace = true }
+shadml_ast_lowering = { workspace = true }
+shadml_hir = { workspace = true }
+shadml_mir = { workspace = true }
+shadml_wgsl_codegen = { workspace = true }
+shadml_formatter = { workspace = true }
+shadml_diagnostics = { workspace = true }
+shadml_span = { workspace = true }
+miette = { workspace = true }

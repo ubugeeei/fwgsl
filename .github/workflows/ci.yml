@@ -48,7 +48,7 @@ jobs:
 
       - name: Build WASM
         run: |
-          cd crates/fwgsl_wasm
+          cd crates/shadml_wasm
           wasm-pack build --target web --out-dir ../../playground/pkg
         continue-on-error: true
 

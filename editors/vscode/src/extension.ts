@@ -8,8 +8,8 @@ import {
 let client: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const config = vscode.workspace.getConfiguration("fwgsl");
-  const serverPath = config.get<string>("server.path", "fwgsl-lsp");
+  const config = vscode.workspace.getConfiguration("shadml");
+  const serverPath = config.get<string>("server.path", "shadml-lsp");
 
   const serverOptions: ServerOptions = {
     command: serverPath,
@@ -17,12 +17,12 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "fwgsl" }],
+    documentSelector: [{ scheme: "file", language: "shadml" }],
   };
 
   client = new LanguageClient(
-    "fwgsl",
-    "fwgsl Language Server",
+    "shadml",
+    "shadml Language Server",
     serverOptions,
     clientOptions,
   );

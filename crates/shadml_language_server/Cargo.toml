@@ -1,0 +1,26 @@
+[package]
+name = "shadml_language_server"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "shadml-lsp"
+path = "src/main.rs"
+
+[dependencies]
+shadml_ide = { workspace = true }
+shadml_parser = { workspace = true }
+shadml_typechecker = { workspace = true }
+shadml_semantic = { workspace = true }
+shadml_diagnostics = { workspace = true }
+shadml_span = { workspace = true }
+shadml_syntax = { workspace = true }
+shadml_formatter = { workspace = true }
+
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+dashmap = "6"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

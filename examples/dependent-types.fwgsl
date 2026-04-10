@@ -1,6 +1,0 @@
--- Type-level naturals for dimension-carrying types.
--- This file is intended for `fwgsl check`.
-
-grid : Tensor 2 (Tensor 4 F32)
-velocity : Vec 3 F32
-transform : Mat 4 4 F32
