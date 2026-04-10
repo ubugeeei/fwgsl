@@ -38,10 +38,15 @@ if [ ! -f "$LSP_BIN" ]; then
   echo "Warning: fwgsl-lsp binary not found at $LSP_BIN"
 fi
 
-# -- Launch Helix -------------------------------------------------------------
+# -- Build tree-sitter grammar ------------------------------------------------
 
 export XDG_CONFIG_HOME="$HX_DIR"
 export PATH="$REPO_ROOT/target/release:$PATH"
+
+echo "Building fwgsl tree-sitter grammar..."
+hx --grammar build 2>&1 | grep -E "(fwgsl|error)" || true
+
+# -- Launch Helix -------------------------------------------------------------
 
 echo "Config:  $CONFIG_DIR/languages.toml"
 echo "Runtime: $RUNTIME_DIR"

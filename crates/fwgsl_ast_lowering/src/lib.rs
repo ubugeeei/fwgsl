@@ -1127,10 +1127,36 @@ impl AstLowering {
                 }
 
                 // 3. Regular field access (struct fields, bitfield fields)
-                // Try to resolve the field type from the constructor info
-                let result_ty = self
-                    .resolve_record_field_type(&expr_ty_final, field)
-                    .unwrap_or_else(|| self.engine.fresh_var());
+                let result_ty = if let Some(ty) = self.resolve_record_field_type(&expr_ty_final, field) {
+                    ty
+                } else if let Ty::Con(ref type_name) = expr_ty_final {
+                    // Check if it's a valid bitfield field
+                    let bf_valid = self.bitfield_fields.get(type_name.as_str())
+                        .is_some_and(|fields| fields.iter().any(|(n, _)| n == field));
+                    if bf_valid {
+                        // Bitfield field access — type inferred from context
+                        self.engine.fresh_var()
+                    } else {
+                        // Check if the type is a known struct or bitfield with no matching field
+                        let is_known_record = self.constructors.get(type_name.as_str())
+                            .is_some_and(|c| matches!(&c.fields, ConstructorFields::Record(_)));
+                        let is_known_bitfield = self.bitfield_fields.contains_key(type_name.as_str());
+                        if is_known_record || is_known_bitfield {
+                            self.engine.diagnostics.push(
+                                fwgsl_diagnostics::Diagnostic::error(format!(
+                                    "no field `{}` on type `{}`",
+                                    field, type_name
+                                ))
+                                .with_label(
+                                    fwgsl_diagnostics::Label::primary(*span, "unknown field"),
+                                ),
+                            );
+                        }
+                        self.engine.fresh_var()
+                    }
+                } else {
+                    self.engine.fresh_var()
+                };
                 (
                     HirExpr::FieldAccess(
                         Box::new(hir_expr),

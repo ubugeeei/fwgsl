@@ -47,7 +47,7 @@ data DrawParams = DrawParams {
 -- Impl methods on bitfield types — dispatched via method-call syntax.
 -- Compiles to a standalone function with mangled name (isShiny_MaterialFlags).
 impl MaterialFlags where
-  isShiny flags = flags.metallic && flags.rugness < 10u
+  isShiny flags = flags.metallic && flags.roughness < 10u
 
 -- Decode IOR from 8-bit integer encoding: stored as (ior - 1.0) * 100
 decodeIor : U32 -> F32

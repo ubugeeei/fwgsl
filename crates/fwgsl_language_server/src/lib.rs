@@ -1268,7 +1268,12 @@ fn build_document_symbols(source: &str) -> Vec<DocumentSymbol> {
                     .iter()
                     .map(|f| DocumentSymbol {
                         name: f.name.clone(),
-                        detail: Some(format!("{:?}", f.kind)),
+                        detail: Some(match &f.kind {
+                            fwgsl_parser::parser::BitfieldFieldKind::Bare(w) => format!("{} bits", w),
+                            fwgsl_parser::parser::BitfieldFieldKind::Typed { ty, width } => format!("{} : {}", ty, width),
+                            fwgsl_parser::parser::BitfieldFieldKind::Bool => "Bool".to_owned(),
+                            fwgsl_parser::parser::BitfieldFieldKind::EnumInferred(ty) => ty.clone(),
+                        }),
                         kind: SymbolKind::FIELD,
                         tags: None,
                         deprecated: None,

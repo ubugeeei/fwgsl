@@ -110,8 +110,8 @@ module.exports = grammar({
 
     binding_declaration: ($) =>
       seq(
-        $.attribute,   // @group(N)
-        $.attribute,   // @binding(N)
+        "@", "group", "(", $.expression, ")",
+        "@", "binding", "(", $.expression, ")",
         field("space", choice("uniform", seq("storage", optional(seq("(", $.identifier, ")"))))),
         field("name", $.identifier),
         ":",

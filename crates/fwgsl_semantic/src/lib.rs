@@ -45,6 +45,8 @@ pub struct SemanticAnalyzer {
     pub traits: HashMap<String, TraitInfo>,
     /// Trait impls.
     pub impls: Vec<ImplInfo>,
+    /// Bitfield field names: bitfield_type_name → list of field names.
+    pub bitfield_field_names: HashMap<String, Vec<String>>,
 }
 
 /// Information about a data type collected during semantic analysis.
@@ -65,6 +67,7 @@ impl SemanticAnalyzer {
             type_aliases: HashMap::new(),
             traits: HashMap::new(),
             impls: Vec::new(),
+            bitfield_field_names: HashMap::new(),
         }
     }
 
@@ -98,8 +101,16 @@ impl SemanticAnalyzer {
                 // Register the alias name as a type constructor
                 self.env.insert(name.clone(), alias_ty);
             }
-            if let Decl::BitfieldDecl { base_ty, .. } = decl {
+            if let Decl::BitfieldDecl {
+                name,
+                base_ty,
+                fields,
+                ..
+            } = decl
+            {
                 let _base = self.convert_syntax_type(base_ty);
+                let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+                self.bitfield_field_names.insert(name.clone(), field_names);
             }
         }
 
@@ -770,7 +781,53 @@ impl SemanticAnalyzer {
                     return ret_ty;
                 }
 
-                // Fallback: fresh var (record field access)
+                // Validate field exists on known types
+                if let Ty::Con(ref type_name) = base_ty {
+                    let is_known_record = self
+                        .constructors
+                        .get(type_name.as_str())
+                        .is_some_and(|c| {
+                            matches!(&c.fields, ConstructorFields::Record(_))
+                        });
+                    let is_known_bitfield =
+                        self.bitfield_field_names.contains_key(type_name.as_str());
+
+                    if is_known_record {
+                        if let Some(c) = self.constructors.get(type_name.as_str()) {
+                            if let ConstructorFields::Record(fields) = &c.fields {
+                                if fields.iter().any(|(n, _)| n == field) {
+                                    return fields
+                                        .iter()
+                                        .find(|(n, _)| n == field)
+                                        .map(|(_, ty)| ty.clone())
+                                        .unwrap();
+                                }
+                            }
+                        }
+                        self.engine.diagnostics.push(
+                            Diagnostic::error(format!(
+                                "no field `{}` on type `{}`",
+                                field, type_name
+                            ))
+                            .with_label(Label::primary(*span, "unknown field")),
+                        );
+                    } else if is_known_bitfield {
+                        let bf_fields = self
+                            .bitfield_field_names
+                            .get(type_name.as_str())
+                            .unwrap();
+                        if !bf_fields.iter().any(|n| n == field) {
+                            self.engine.diagnostics.push(
+                                Diagnostic::error(format!(
+                                    "no field `{}` on type `{}`",
+                                    field, type_name
+                                ))
+                                .with_label(Label::primary(*span, "unknown field")),
+                            );
+                        }
+                    }
+                }
+
                 self.engine.fresh_var()
             }
 

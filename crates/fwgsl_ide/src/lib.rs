@@ -559,8 +559,31 @@ impl<'a> IndexBuilder<'a> {
             Decl::BindingDecl { ty, .. } => {
                 self.walk_type(ty, frames);
             }
-            Decl::BitfieldDecl { base_ty, .. } => {
+            Decl::BitfieldDecl {
+                name,
+                base_ty,
+                fields,
+                span,
+                ..
+            } => {
                 self.walk_type(base_ty, frames);
+                // Register each bitfield field as a symbol for hover/goto-def
+                for f in fields {
+                    let field_span = self
+                        .first_name_span(&f.name, *span)
+                        .unwrap_or(f.span);
+                    let fid = self.index.push_symbol(NewSymbol {
+                        name: f.name.clone(),
+                        namespace: Namespace::Value,
+                        kind: SymbolKind::RecordField,
+                        span: field_span,
+                        scope_span: *span,
+                        scope_depth: frames.len(),
+                        visible_from: span.start,
+                        container: Some(name.clone()),
+                    });
+                    self.field_symbols.insert(f.name.clone(), fid);
+                }
             }
             Decl::ConstDecl { ty, value, .. } => {
                 self.walk_type(ty, frames);
@@ -1298,6 +1321,19 @@ fn extract_field_types(program: &Program, source: &str) -> HashMap<String, Strin
                         types.insert(field.name.clone(), ty_str);
                     }
                 }
+            }
+        }
+        if let Decl::BitfieldDecl { fields, .. } = decl {
+            for field in fields {
+                let ty_str = match &field.kind {
+                    fwgsl_parser::parser::BitfieldFieldKind::Bare(w) => format!("{} bits", w),
+                    fwgsl_parser::parser::BitfieldFieldKind::Typed { ty, width } => {
+                        format!("{} : {} bits", ty, width)
+                    }
+                    fwgsl_parser::parser::BitfieldFieldKind::Bool => "Bool".to_owned(),
+                    fwgsl_parser::parser::BitfieldFieldKind::EnumInferred(ty) => ty.clone(),
+                };
+                types.insert(field.name.clone(), ty_str);
             }
         }
     }

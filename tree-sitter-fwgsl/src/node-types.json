@@ -107,6 +107,96 @@
     }
   },
   {
+    "type": "binding_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "space": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "(",
+            "named": false
+          },
+          {
+            "type": ")",
+            "named": false
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "storage",
+            "named": false
+          },
+          {
+            "type": "uniform",
+            "named": false
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "forall_type",
+            "named": true
+          },
+          {
+            "type": "function_type",
+            "named": true
+          },
+          {
+            "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "tuple_type",
+            "named": true
+          },
+          {
+            "type": "type_application",
+            "named": true
+          },
+          {
+            "type": "type_constructor",
+            "named": true
+          },
+          {
+            "type": "type_variable",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "bitfield_declaration",
     "named": true,
     "fields": {
@@ -148,6 +238,16 @@
           }
         ]
       },
+      "constructor": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "upper_identifier",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -176,7 +276,7 @@
     "fields": {
       "bits": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "integer_literal",
@@ -190,6 +290,16 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "upper_identifier",
             "named": true
           }
         ]
@@ -262,6 +372,10 @@
       "multiple": true,
       "required": true,
       "types": [
+        {
+          "type": "binding_declaration",
+          "named": true
+        },
         {
           "type": "bitfield_declaration",
           "named": true
@@ -768,9 +882,17 @@
     "named": true,
     "fields": {
       "name": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
+          {
+            "type": "(",
+            "named": false
+          },
+          {
+            "type": ")",
+            "named": false
+          },
           {
             "type": "identifier",
             "named": true
@@ -815,16 +937,6 @@
           }
         ]
       }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "attribute",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -1890,6 +2002,10 @@
       "required": false,
       "types": [
         {
+          "type": "binding_declaration",
+          "named": true
+        },
+        {
           "type": "bitfield_declaration",
           "named": true
         },
@@ -2389,6 +2505,10 @@
     "named": false
   },
   {
+    "type": "binding",
+    "named": false
+  },
+  {
     "type": "bitfield",
     "named": false
   },
@@ -2449,6 +2569,10 @@
     "named": false
   },
   {
+    "type": "group",
+    "named": false
+  },
+  {
     "type": "identifier",
     "named": true
   },
@@ -2501,7 +2625,7 @@
     "named": false
   },
   {
-    "type": "resource",
+    "type": "storage",
     "named": false
   },
   {
@@ -2514,6 +2638,10 @@
   },
   {
     "type": "true",
+    "named": false
+  },
+  {
+    "type": "uniform",
     "named": false
   },
   {
