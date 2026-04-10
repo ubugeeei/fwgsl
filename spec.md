@@ -49,7 +49,7 @@ fwgsl is a purely functional language that compiles to WGSL (WebGPU Shading Lang
 ### 1.3 Keywords
 
 ```
-module  where   import  data    alias   extern  resource
+module  where   import  data    alias   extern  uniform  storage
 trait   impl    let     in      case    of      match
 if      then    else    do      forall  infixl  infixr
 infix   deriving  bitfield  const  loop  as  when  cfg

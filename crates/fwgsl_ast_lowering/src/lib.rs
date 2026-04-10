@@ -138,7 +138,7 @@ impl AstLowering {
         let mut functions = Vec::new();
         let mut data_types = Vec::new();
         let mut entry_points = Vec::new();
-        let mut resources = Vec::new();
+        let mut bindings = Vec::new();
         let mut bitfields = Vec::new();
         let mut constants = Vec::new();
 
@@ -201,7 +201,7 @@ impl AstLowering {
                     ..
                 } => {
                     let scheme = self.convert_syntax_type_scheme(ty);
-                    resources.push(fwgsl_hir::HirResource {
+                    bindings.push(fwgsl_hir::HirBinding {
                         name: name.clone(),
                         ty: scheme.ty,
                         address_space: match address_space {
@@ -415,7 +415,7 @@ impl AstLowering {
             functions,
             data_types,
             entry_points,
-            resources,
+            bindings,
             bitfields,
             constants,
         }

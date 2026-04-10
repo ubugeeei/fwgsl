@@ -10,7 +10,7 @@
 
 ; Keywords — other
 ["module" "import" "where" "trait" "impl" "bitfield"
- "do" "forall" "deriving" "as" "private" "when" "cfg" "not"] @keyword
+ "do" "forall" "deriving" "as" "when" "cfg" "not"] @keyword
 
 ; Booleans
 (boolean) @boolean
@@ -26,6 +26,11 @@
 ; Function definitions
 (function_declaration name: (identifier) @function)
 (type_signature name: (identifier) @function)
+
+; Binding declarations (GPU resources)
+(binding_declaration name: (identifier) @variable)
+(binding_declaration "group" @attribute)
+(binding_declaration "binding" @attribute)
 
 ; Builtin functions ($prefixed)
 (builtin_identifier) @function.builtin

@@ -53,12 +53,12 @@ palette x tint =
   in vec4 ((vecX base) * tint.r) ((vecY base) * tint.g) ((vecZ base) * tint.b) tint.a
 
 -- Demonstrates:
--- - resource load
+-- - uniform/storage load
 -- - record field access
 -- - swizzle access
 -- - matrix indexing
 -- - pipeline operator
--- - writeAt to storage resource
+-- - writeAt to storage binding
 data ComputeInput = ComputeInput {
   @builtin(global_invocation_id) gid : Vec<3, U32>
 }

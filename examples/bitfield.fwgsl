@@ -1,7 +1,7 @@
 -- Bitfield example: GPU-side material and render state packed into u32 words.
 --
 -- Demonstrates bitfields alongside enums, record types, helper functions,
--- resources, pattern matching, impl methods on bitfields, method-call
+-- GPU bindings, pattern matching, impl methods on bitfields, method-call
 -- syntax (mat.isShiny), bitfield functional update, and the compute
 -- entry-point convention.
 

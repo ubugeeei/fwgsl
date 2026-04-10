@@ -13,7 +13,7 @@ pub struct HirProgram {
     pub functions: Vec<HirFunction>,
     pub data_types: Vec<HirDataType>,
     pub entry_points: Vec<HirEntryPoint>,
-    pub resources: Vec<HirResource>,
+    pub bindings: Vec<HirBinding>,
     pub bitfields: Vec<HirBitfield>,
     pub constants: Vec<HirConst>,
 }
@@ -46,9 +46,9 @@ pub struct HirBitfieldField {
     pub field_type: Option<String>,
 }
 
-/// A resource binding declaration (uniform / storage).
+/// A GPU binding declaration (uniform / storage).
 #[derive(Debug)]
-pub struct HirResource {
+pub struct HirBinding {
     pub name: String,
     pub ty: Ty,
     pub address_space: String,
@@ -333,7 +333,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
         };
         assert_eq!(program.functions.len(), 1);
         assert_eq!(program.functions[0].name, "add");

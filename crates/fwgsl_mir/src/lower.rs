@@ -564,9 +564,9 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
         }
     }
 
-    // Lower resource declarations to global bindings
-    for res in &hir.resources {
-        if let Some(global) = lower_hir_resource(res, &ctx) {
+    // Lower binding declarations to global bindings
+    for b in &hir.bindings {
+        if let Some(global) = lower_hir_binding(b, &ctx) {
             globals.push(global);
         }
     }
@@ -1960,10 +1960,10 @@ fn lower_hir_lit(lit: &HirLit, ty: &Ty) -> MirLit {
     }
 }
 
-/// Lower a HIR resource declaration to a MIR global binding.
+/// Lower a HIR binding declaration to a MIR global binding.
 /// The HIR type is already the inner type (no Uniform/Storage wrappers).
 /// The address space is determined from the `address_space` hint string.
-fn lower_hir_resource(res: &HirResource, ctx: &LowerCtx) -> Option<MirGlobal> {
+fn lower_hir_binding(res: &HirBinding, ctx: &LowerCtx) -> Option<MirGlobal> {
     let mir_ty = ty_to_mir_type_with_ctx(&res.ty, Some(ctx)).ok()?;
     let address_space = match res.address_space.as_str() {
         "Uniform" => AddressSpace::Uniform,
@@ -2088,7 +2088,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };
@@ -2127,7 +2127,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };
@@ -2209,7 +2209,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };
@@ -2235,7 +2235,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };
@@ -2272,7 +2272,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };
@@ -2312,7 +2312,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };
@@ -2340,7 +2340,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };
@@ -2372,7 +2372,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };
@@ -2401,7 +2401,7 @@ mod tests {
             }],
             data_types: vec![],
             entry_points: vec![],
-            resources: vec![],
+            bindings: vec![],
             bitfields: vec![],
             constants: vec![],
         };

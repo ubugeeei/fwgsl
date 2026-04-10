@@ -31,6 +31,7 @@ pub fn format(source: &str, config: &FormatConfig) -> String {
     let tokens = lex(source);
     let mut engine = FormatEngine::new(source, &tokens, config);
     engine.run();
+    collapse_binding_group_blocks(&mut engine.output, config);
     align_record_fields(&mut engine.output);
     engine.output
 }
@@ -345,7 +346,7 @@ impl<'a> FormatEngine<'a> {
                     // `=` alignment only preserved on indented lines (let/where bindings,
                     // record construction fields) — not top-level function defs.
                     SyntaxKind::Equals => self.line_is_indented(),
-                    // `:`, `->`, `@` alignment preserved everywhere (const, extern, match arms).
+                    // `:`, `->`, `@` alignment preserved everywhere (const, binding, match arms).
                     SyntaxKind::Colon | SyntaxKind::Arrow | SyntaxKind::At => true,
                     // Ident after `)` — preserve attribute-to-field-name padding in records
                     SyntaxKind::Ident | SyntaxKind::UpperIdent
@@ -632,6 +633,168 @@ fn parse_field_line(line: &str) -> Option<(usize, usize)> {
     Some((indent, name_end))
 }
 
+// ---------------------------------------------------------------------------
+// Post-processing: collapse flat bindings into group blocks
+// ---------------------------------------------------------------------------
+
+/// Detect consecutive binding declaration lines that share the same `@group(N)` and
+/// collapse them into the group block sugar:
+///
+/// ```text
+/// @group(0)
+///   @binding(0) uniform frame  : FrameData
+///   @binding(1) uniform params : Params
+/// ```
+///
+/// Lines that are the only binding in their group are left as flat declarations.
+/// Already-indented binding lines (inside `when` blocks) are handled by checking
+/// the leading indentation of the original `@group` line.
+fn collapse_binding_group_blocks(output: &mut String, config: &FormatConfig) {
+    let lines: Vec<&str> = output.split('\n').collect();
+    let mut result: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+
+    while i < lines.len() {
+        if let Some((indent, group_val, binding_rest)) = parse_binding_line(lines[i]) {
+            // Start of a potential group: collect consecutive lines with same indent+group
+            let mut group = vec![(indent, group_val, binding_rest, i)];
+            let mut j = i + 1;
+            while j < lines.len() {
+                if let Some((ind2, gv2, br2)) = parse_binding_line(lines[j]) {
+                    if ind2 == indent && gv2 == group_val {
+                        group.push((ind2, gv2, br2, j));
+                        j += 1;
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            if group.len() > 1 {
+                // Emit group block header
+                let indent_str = &lines[group[0].3][..indent];
+                result.push(format!("{}@group({})", indent_str, group_val));
+
+                // Find the max position of the name field for alignment.
+                // Each binding_rest looks like: `@binding(N) uniform/storage(...) name : Type`
+                // We want to align the `name : Type` part.
+                let child_indent = format!("{}{}", indent_str, " ".repeat(config.indent_width));
+
+                // Align the binding lines: find the longest prefix before ` name : `
+                // by locating the address space keyword end position.
+                let mut binding_parts: Vec<(&str, &str, &str)> = Vec::new(); // (before_name, name, after_name)
+                for &(_, _, rest, _) in &group {
+                    if let Some((before, name, after)) = split_binding_at_name(rest) {
+                        binding_parts.push((before, name, after));
+                    } else {
+                        binding_parts.push((rest, "", ""));
+                    }
+                }
+
+                // Find max length of prefix (before name) and name for alignment
+                let max_prefix = binding_parts.iter().map(|(b, _, _)| b.len()).max().unwrap_or(0);
+                let max_name = binding_parts.iter().map(|(_, n, _)| n.len()).max().unwrap_or(0);
+
+                for (before, name, after) in &binding_parts {
+                    if name.is_empty() {
+                        // Couldn't parse — emit as-is
+                        result.push(format!("{}{}", child_indent, before));
+                    } else {
+                        let prefix_pad = max_prefix - before.len();
+                        let name_pad = max_name - name.len();
+                        result.push(format!(
+                            "{}{}{}{}{}{}",
+                            child_indent,
+                            before,
+                            " ".repeat(prefix_pad),
+                            name,
+                            " ".repeat(name_pad),
+                            after
+                        ));
+                    }
+                }
+
+                i = j;
+            } else {
+                // Single binding in group — leave as flat
+                result.push(lines[i].to_string());
+                i += 1;
+            }
+        } else {
+            result.push(lines[i].to_string());
+            i += 1;
+        }
+    }
+
+    *output = result.join("\n");
+}
+
+/// Try to parse a line as a flat binding declaration.
+/// Returns `(indent_len, group_value_str, rest_after_group)`.
+/// Matches: `<indent>@group(N) @binding(N) uniform/storage ...`
+fn parse_binding_line(line: &str) -> Option<(usize, &str, &str)> {
+    let bytes = line.as_bytes();
+    let indent = bytes.iter().take_while(|&&b| b == b' ' || b == b'\t').count();
+    let trimmed = &line[indent..];
+
+    // Must start with @group(
+    if !trimmed.starts_with("@group(") {
+        return None;
+    }
+    let after_group_open = &trimmed[7..]; // after "@group("
+    let close = after_group_open.find(')')?;
+    let group_val = &after_group_open[..close];
+    let after_group = &after_group_open[close + 1..]; // after ")"
+
+    // Must be followed by whitespace then @binding
+    let after_ws = after_group.trim_start();
+    if !after_ws.starts_with("@binding(") {
+        return None;
+    }
+    // Verify it's actually a binding decl (has uniform or storage after @binding(...))
+    let after_binding_open = &after_ws[9..]; // after "@binding("
+    let bclose = after_binding_open.find(')')?;
+    let after_binding = &after_binding_open[bclose + 1..].trim_start();
+    if after_binding.starts_with("uniform") || after_binding.starts_with("storage") {
+        Some((indent, group_val, after_ws))
+    } else {
+        None
+    }
+}
+
+/// Split a binding rest string (`@binding(N) uniform name : Type`) at the name boundary.
+/// Returns `(prefix_with_space_kw, name, colon_and_type)`.
+fn split_binding_at_name(rest: &str) -> Option<(&str, &str, &str)> {
+    // Find "uniform " or "storage" keyword, then the name after it
+    let kw_end;
+    if let Some(pos) = rest.find("uniform ") {
+        kw_end = pos + "uniform ".len();
+    } else if let Some(pos) = rest.find("storage(") {
+        // storage(read_write) or similar
+        let paren_close = rest[pos..].find(')').map(|p| pos + p + 1)?;
+        // Skip whitespace after )
+        let after = &rest[paren_close..];
+        let ws = after.len() - after.trim_start().len();
+        kw_end = paren_close + ws;
+    } else if let Some(pos) = rest.find("storage ") {
+        kw_end = pos + "storage ".len();
+    } else {
+        return None;
+    }
+
+    let prefix = &rest[..kw_end];
+    let name_and_rest = &rest[kw_end..];
+
+    // Find where the name ends (at whitespace or `:`)
+    let name_end = name_and_rest
+        .find(|c: char| c == ' ' || c == ':' || c == '\t')
+        .unwrap_or(name_and_rest.len());
+    let name = &name_and_rest[..name_end];
+    let after = &name_and_rest[name_end..];
+
+    Some((prefix, name, after))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -896,10 +1059,48 @@ mod tests {
     }
 
     #[test]
-    fn format_preserves_binding_decl_alignment() {
-        let source = "@group(0) @binding(0) uniform frame      : FrameData\n@group(0) @binding(1) uniform capFlags   : CapFlags\n@group(1) @binding(0) storage prims      : Array<Prim>\n";
+    fn format_collapses_binding_group_block() {
+        let source = "@group(0) @binding(0) uniform frame : FrameData\n@group(0) @binding(1) uniform capFlags : CapFlags\n";
         let result = format_default(source);
-        assert_eq!(result, "@group(0) @binding(0) uniform frame      : FrameData\n@group(0) @binding(1) uniform capFlags   : CapFlags\n@group(1) @binding(0) storage prims      : Array<Prim>\n");
+        assert_eq!(
+            result,
+            "@group(0)\n  @binding(0) uniform frame    : FrameData\n  @binding(1) uniform capFlags : CapFlags\n"
+        );
+    }
+
+    #[test]
+    fn format_single_binding_stays_flat() {
+        let source = "@group(2) @binding(0) uniform params : Params\n";
+        let result = format_default(source);
+        assert_eq!(result, "@group(2) @binding(0) uniform params : Params\n");
+    }
+
+    #[test]
+    fn format_mixed_groups_collapsed_separately() {
+        let source = "@group(0) @binding(0) uniform frame : FrameData\n@group(0) @binding(1) uniform capFlags : CapFlags\n\n@group(1) @binding(0) storage prims : Array<Prim>\n";
+        let result = format_default(source);
+        assert_eq!(
+            result,
+            "@group(0)\n  @binding(0) uniform frame    : FrameData\n  @binding(1) uniform capFlags : CapFlags\n\n@group(1) @binding(0) storage prims : Array<Prim>\n"
+        );
+    }
+
+    #[test]
+    fn format_group_block_idempotent() {
+        let source = "@group(0)\n  @binding(0) uniform frame    : FrameData\n  @binding(1) uniform capFlags : CapFlags\n";
+        let result = format_default(source);
+        let result2 = format_default(&result);
+        assert_eq!(result, result2, "group block formatting is not idempotent");
+    }
+
+    #[test]
+    fn format_preserves_group_block_storage_rw() {
+        let source = "@group(0) @binding(0) uniform frame : FrameData\n@group(0) @binding(1) storage(read_write) output : Array<F32, 64>\n";
+        let result = format_default(source);
+        assert_eq!(
+            result,
+            "@group(0)\n  @binding(0) uniform             frame  : FrameData\n  @binding(1) storage(read_write) output : Array<F32, 64>\n"
+        );
     }
 
     #[test]

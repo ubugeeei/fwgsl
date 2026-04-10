@@ -516,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn struct_used_via_global_resource_is_kept() {
+    fn struct_used_via_global_binding_is_kept() {
         let program = MirProgram {
             structs: vec![MirStruct {
                 name: "Particle".to_string(),

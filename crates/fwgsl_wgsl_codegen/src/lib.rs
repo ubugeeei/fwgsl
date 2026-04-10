@@ -169,7 +169,7 @@ impl WgslEmitter {
             self.newline();
         }
 
-        // Emit global bindings (resources)
+        // Emit global bindings
         for g in &program.globals {
             self.emit_global(g);
             self.newline();
@@ -253,7 +253,7 @@ impl WgslEmitter {
     }
 
     // -----------------------------------------------------------------------
-    // Global variable emission (resource bindings)
+    // Global variable emission (GPU bindings)
     // -----------------------------------------------------------------------
 
     fn emit_global(&mut self, g: &MirGlobal) {

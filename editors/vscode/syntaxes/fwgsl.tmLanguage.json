@@ -86,7 +86,7 @@
     },
     "keyword": {
       "name": "keyword.other.fwgsl",
-      "match": "\\b(data|alias|extern|uniform|storage|trait|impl|let|in|case|of|if|then|else|where|bitfield|const|loop|do|forall|match|module|import|when|cfg|as|private|deriving)\\b"
+      "match": "\\b(data|alias|extern|uniform|storage|trait|impl|let|in|case|of|if|then|else|where|bitfield|const|loop|do|forall|match|module|import|when|cfg|as|deriving)\\b"
     },
     "operator": {
       "name": "keyword.operator.fwgsl",

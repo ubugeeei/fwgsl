@@ -31,7 +31,7 @@ pub struct MirConst {
     pub value: MirExpr,
 }
 
-/// A module-scope variable declaration (resource binding).
+/// A module-scope variable declaration (GPU binding).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MirGlobal {
     pub name: String,

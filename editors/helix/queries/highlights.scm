@@ -28,6 +28,11 @@
 (function_declaration name: (identifier) @function)
 (type_signature name: (identifier) @function)
 
+; Binding declarations (GPU resources)
+(binding_declaration name: (identifier) @variable)
+(binding_declaration "group" @attribute)
+(binding_declaration "binding" @attribute)
+
 ; Builtin function calls ($prefixed)
 (builtin_identifier) @function.builtin
 
