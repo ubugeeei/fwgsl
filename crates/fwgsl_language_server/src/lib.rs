@@ -1440,7 +1440,7 @@ pub fn classify_tokens(tokens: &[Token], _source: &str) -> Vec<ClassifiedToken> 
             SyntaxKind::StringLiteral | SyntaxKind::CharLiteral => Some(TOK_STRING),
 
             // Comments
-            SyntaxKind::LineComment | SyntaxKind::BlockComment => Some(TOK_COMMENT),
+            SyntaxKind::LineComment | SyntaxKind::BlockComment | SyntaxKind::DocComment => Some(TOK_COMMENT),
 
             // Upper identifiers -> type
             SyntaxKind::UpperIdent => Some(TOK_TYPE),

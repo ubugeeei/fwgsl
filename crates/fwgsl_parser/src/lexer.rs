@@ -362,10 +362,20 @@ impl<'a> Lexer<'a> {
         // Skip `--`
         self.advance();
         self.advance();
+        // Check for doc comment: `-- |` or `-- ^`
+        // Requires at least one space after `--` then `|` or `^`.
+        let is_doc = {
+            let rest = &self.source[self.pos..];
+            rest.starts_with(b" |") || rest.starts_with(b" ^")
+        };
         while !self.at_end() && self.peek() != b'\n' && self.peek() != b'\r' {
             self.advance();
         }
-        self.emit(SyntaxKind::LineComment, start);
+        if is_doc {
+            self.emit(SyntaxKind::DocComment, start);
+        } else {
+            self.emit(SyntaxKind::LineComment, start);
+        }
     }
 
     fn lex_block_comment(&mut self, start: usize) {

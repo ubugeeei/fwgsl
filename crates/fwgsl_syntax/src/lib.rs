@@ -14,6 +14,9 @@ pub enum SyntaxKind {
     Newline,
     /// A line comment starting with `--`.
     LineComment,
+    /// A doc comment starting with `-- |` (documents the following item)
+    /// or `-- ^` (documents the preceding item).
+    DocComment,
     /// A block comment delimited by `{-` ... `-}`.
     BlockComment,
 
@@ -264,6 +267,7 @@ impl SyntaxKind {
             SyntaxKind::Whitespace
                 | SyntaxKind::Newline
                 | SyntaxKind::LineComment
+                | SyntaxKind::DocComment
                 | SyntaxKind::BlockComment
         )
     }
@@ -376,6 +380,7 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::Whitespace => "whitespace",
             SyntaxKind::Newline => "newline",
             SyntaxKind::LineComment => "line comment",
+            SyntaxKind::DocComment => "doc comment",
             SyntaxKind::BlockComment => "block comment",
 
             // Layout

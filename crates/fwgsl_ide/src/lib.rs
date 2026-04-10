@@ -7,7 +7,7 @@ pub use catalog::{
     CompletionContext, CompletionSpec,
 };
 use fwgsl_parser::lexer::Token;
-use fwgsl_parser::parser::{Attribute, Decl, DoStmt, Expr, Pat, Program, Type};
+use fwgsl_parser::parser::{Attribute, ConFields, Decl, DoStmt, Expr, Pat, Program, Type};
 use fwgsl_parser::{lex, Parser};
 use fwgsl_semantic::SemanticAnalyzer;
 use fwgsl_span::Span;
@@ -85,6 +85,8 @@ struct IdeState<'a> {
     source: &'a str,
     analyzer: SemanticAnalyzer,
     index: DocumentIndex,
+    /// Doc comments extracted from declarations, keyed by symbol name.
+    doc_comments: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -1147,11 +1149,104 @@ fn build_ide_state(source: &str) -> IdeState<'_> {
     // don't correspond to positions in the user's source and would cause
     // symbol_at_offset to return wrong results.
     let index = IndexBuilder::new(source).build(&user_program);
+    let doc_comments = extract_doc_comments(&user_program);
 
     IdeState {
         source,
         analyzer,
         index,
+        doc_comments,
+    }
+}
+
+/// Extract `-- |` doc comments from declaration comments and sub-items.
+/// Returns a map from name to doc string.
+fn extract_doc_comments(program: &Program) -> HashMap<String, String> {
+    let mut docs = HashMap::new();
+
+    for decl in &program.decls {
+        // Extract doc from the leading comments of the declaration
+        if let Some(doc) = extract_doc_from_comments(decl.comments()) {
+            let name = match decl {
+                Decl::TypeSig { name, .. }
+                | Decl::FunDecl { name, .. }
+                | Decl::DataDecl { name, .. }
+                | Decl::EntryPoint { name, .. }
+                | Decl::TypeAlias { name, .. }
+                | Decl::ResourceDecl { name, .. }
+                | Decl::BitfieldDecl { name, .. }
+                | Decl::ConstDecl { name, .. }
+                | Decl::TraitDecl { name, .. }
+                | Decl::ExternDecl { name, .. }
+                | Decl::ModuleDecl { name, .. } => name.clone(),
+                Decl::ImplDecl { trait_name, .. } => {
+                    trait_name.clone().unwrap_or_default()
+                }
+                Decl::ImportDecl { module_path, .. } => module_path.clone(),
+                Decl::CfgDecl { .. } => continue,
+            };
+            if !name.is_empty() {
+                docs.insert(name, doc);
+            }
+        }
+
+        // Extract docs from sub-items
+        match decl {
+            Decl::DataDecl { constructors, .. } => {
+                for con in constructors {
+                    if let Some(doc) = &con.doc {
+                        docs.insert(con.name.clone(), doc.clone());
+                    }
+                    if let ConFields::Record(fields) = &con.fields {
+                        for field in fields {
+                            if let Some(doc) = &field.doc {
+                                docs.insert(field.name.clone(), doc.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            Decl::BitfieldDecl { fields, .. } => {
+                for field in fields {
+                    if let Some(doc) = &field.doc {
+                        docs.insert(field.name.clone(), doc.clone());
+                    }
+                }
+            }
+            Decl::TraitDecl { methods, .. } => {
+                for method in methods {
+                    if let Some(doc) = &method.doc {
+                        docs.insert(method.name.clone(), doc.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    docs
+}
+
+/// Extract doc text from a list of comment strings.
+/// Doc comments start with ` | ` (after `--` prefix has been stripped).
+fn extract_doc_from_comments(comments: &[String]) -> Option<String> {
+    let doc_lines: Vec<&str> = comments
+        .iter()
+        .filter_map(|c| {
+            if let Some(rest) = c.strip_prefix(" | ") {
+                Some(rest.trim())
+            } else if c.trim() == "|" {
+                Some("")
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if doc_lines.is_empty() {
+        None
+    } else {
+        Some(doc_lines.join("\n"))
     }
 }
 
@@ -1330,7 +1425,12 @@ fn symbol_markdown(state: &IdeState<'_>, symbol: &Symbol) -> String {
         sections.push(format!("**`{}`**", symbol.name));
     }
 
-    sections.push(symbol_summary(state, symbol));
+    // Include doc comment if available
+    if let Some(doc) = state.doc_comments.get(&symbol.name) {
+        sections.push(doc.clone());
+    } else {
+        sections.push(symbol_summary(state, symbol));
+    }
 
     let references = state
         .index
@@ -1628,6 +1728,23 @@ step dt dx p =
                 assert!(locs.iter().any(|l| l.range.start.line == 0), "should include data decl line");
             }
             other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hover_shows_doc_comment() {
+        let source = "-- | Adds two numbers together.\nadd : I32 -> I32 -> I32\nadd x y = x + y";
+        // Hover on "add" in the function body (line 2, col 0)
+        let hover = build_hover(source, Position::new(2, 0));
+        assert!(hover.is_some(), "hover should return a result");
+        if let Some(Hover { contents: HoverContents::Markup(markup), .. }) = hover {
+            assert!(
+                markup.value.contains("Adds two numbers together."),
+                "hover should contain doc comment, got: {}",
+                markup.value
+            );
+        } else {
+            panic!("expected Markup hover contents");
         }
     }
 }

@@ -16,6 +16,7 @@ Program {
                         start: 13,
                         end: 17,
                     },
+                    doc: None,
                 },
                 ConDecl {
                     name: "Green",
@@ -25,6 +26,7 @@ Program {
                         start: 19,
                         end: 25,
                     },
+                    doc: None,
                 },
                 ConDecl {
                     name: "Blue",
@@ -34,6 +36,7 @@ Program {
                         start: 27,
                         end: 33,
                     },
+                    doc: None,
                 },
             ],
             span: Span {

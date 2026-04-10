@@ -1,0 +1,47 @@
+-- Doc comments example.
+--
+-- Demonstrates Haddock-style documentation comments:
+--   `-- |` attaches docs to the next declaration (forward)
+--   `-- ^` attaches docs to the preceding item (backward/trailing)
+
+-- | A 2D point with floating-point coordinates.
+data Point = Point {
+  x : F32, -- ^ The x coordinate.
+  y : F32, -- ^ The y coordinate.
+}
+
+-- | A color represented as RGBA channels.
+data Color
+  = Red -- ^ Pure red (1, 0, 0, 1)
+  | Green -- ^ Pure green (0, 1, 0, 1)
+  | Blue -- ^ Pure blue (0, 0, 1, 1)
+  | Custom Vec<4, F32> -- ^ Arbitrary RGBA color
+
+-- | Compute the squared distance from the origin to a point.
+distSq : Point -> F32
+distSq p = p.x * p.x + p.y * p.y
+
+-- | Translate a point by an offset.
+translate : F32 -> F32 -> Point -> Point
+translate dx dy p = p { x = p.x + dx, y = p.y + dy }
+
+-- | Scale a point by a uniform factor.
+scale : F32 -> Point -> Point
+scale factor p = Point { x = p.x * factor, y = p.y * factor }
+
+-- | Map a Color to its RGBA representation as a Vec4.
+colorToVec4 : Color -> Vec<4, F32>
+colorToVec4 c = match c
+  | Red -> vec4 1.0 0.0 0.0 1.0
+  | Green -> vec4 0.0 1.0 0.0 1.0
+  | Blue -> vec4 0.0 0.0 1.0 1.0
+  | Custom rgba -> rgba
+
+-- | A trait for things that have an area.
+trait HasArea a where
+  -- | Compute the area.
+  area : a -> F32
+
+-- | Circle has area = pi * r^2.
+impl HasArea F32 where
+  area r = 3.14159 * r * r

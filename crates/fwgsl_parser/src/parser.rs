@@ -259,6 +259,8 @@ pub struct TraitMethod {
     pub name: String,
     pub ty: Type,
     pub span: Span,
+    /// Doc comments attached to this trait method.
+    pub doc: Option<String>,
 }
 
 /// A method implementation inside an `impl` declaration.
@@ -283,6 +285,8 @@ pub struct BitfieldField {
     pub name: String,
     pub width: BitfieldWidth,
     pub span: Span,
+    /// Doc comments attached to this bitfield field.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -292,6 +296,8 @@ pub struct ConDecl {
     /// Optional explicit discriminant value (e.g. `NoCap = 0`)
     pub discriminant: Option<i64>,
     pub span: Span,
+    /// Doc comments (`-- |`) attached to this constructor.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -307,6 +313,8 @@ pub struct RecordField {
     pub name: String,
     pub ty: Type,
     pub attributes: Vec<Attribute>,
+    /// Doc comments (`-- |` before or `-- ^` after the field).
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -713,8 +721,19 @@ impl Parser {
                 continue;
             }
             let decl_start = decl.span().start;
-            // Find the first token at or after the decl start
-            let tok_idx = match self.tokens.iter().position(|t| t.span.start >= decl_start) {
+            // Find the first non-layout token at or after the decl start.
+            // Layout (virtual) tokens can share the same span.start as the
+            // declaration token and appear *before* comments in the stream,
+            // which would cause the backward scan to miss preceding comments.
+            let tok_idx = match self.tokens.iter().position(|t| {
+                t.span.start >= decl_start
+                    && !matches!(
+                        t.kind,
+                        SyntaxKind::LayoutBraceOpen
+                            | SyntaxKind::LayoutSemicolon
+                            | SyntaxKind::LayoutBraceClose
+                    )
+            }) {
                 Some(i) => i,
                 None => continue,
             };
@@ -724,7 +743,10 @@ impl Parser {
             while i > 0 {
                 i -= 1;
                 let kind = self.tokens[i].kind;
-                if kind == SyntaxKind::LineComment || kind == SyntaxKind::BlockComment {
+                if kind == SyntaxKind::LineComment
+                    || kind == SyntaxKind::BlockComment
+                    || kind == SyntaxKind::DocComment
+                {
                     let text = self.text_of(&self.tokens[i]);
                     let comment = if let Some(stripped) = text.strip_prefix("--") {
                         stripped.to_string()
@@ -749,6 +771,140 @@ impl Parser {
             comments.reverse();
             *decl.comments_mut() = comments;
         }
+
+        // Second pass: attach doc comments to sub-items inside data/bitfield/trait decls.
+        self.attach_sub_item_docs(decls);
+    }
+
+    /// Extract the doc string from a `-- |` or `-- ^` comment text.
+    /// Returns `Some(text)` with the prefix stripped, or `None` if not a doc comment.
+    fn extract_doc_text(comment: &str) -> Option<String> {
+        // Comment text has already had `--` prefix stripped, so we look for ` | ` or ` ^ `.
+        if let Some(rest) = comment.strip_prefix(" | ") {
+            Some(rest.trim().to_string())
+        } else if comment == " |" {
+            // bare `-- |` with no trailing text
+            Some(String::new())
+        } else {
+            None
+        }
+    }
+
+    /// Scan the token stream to find doc comments (`-- |` forward, `-- ^` backward)
+    /// adjacent to sub-items (constructors, record fields, bitfield fields, trait methods).
+    fn attach_sub_item_docs(&self, decls: &mut [Decl]) {
+        for decl in decls.iter_mut() {
+            match decl {
+                Decl::DataDecl { constructors, .. } => {
+                    for con in constructors.iter_mut() {
+                        // Attach forward doc comment to each constructor
+                        con.doc = self.find_leading_doc(con.span.start);
+                        // Attach doc comments to record fields
+                        if let ConFields::Record(ref mut fields) = con.fields {
+                            for field in fields.iter_mut() {
+                                // Find the field name Ident token within the constructor span
+                                let field_pos = self.find_ident_token(&field.name, con.span);
+                                if let Some(pos) = field_pos {
+                                    field.doc = self
+                                        .find_leading_doc(pos)
+                                        .or_else(|| self.find_trailing_doc(field.ty.span().end));
+                                }
+                            }
+                        }
+                    }
+                }
+                Decl::BitfieldDecl { fields, .. } => {
+                    for field in fields.iter_mut() {
+                        field.doc = self
+                            .find_leading_doc(field.span.start)
+                            .or_else(|| self.find_trailing_doc(field.span.end));
+                    }
+                }
+                Decl::TraitDecl { methods, .. } => {
+                    for method in methods.iter_mut() {
+                        method.doc = self.find_leading_doc(method.span.start);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Scan backwards from `pos` in the token stream to find a `-- |` doc comment.
+    fn find_leading_doc(&self, pos: u32) -> Option<String> {
+        let tok_idx = self.tokens.iter().position(|t| t.span.start >= pos)?;
+        let mut i = tok_idx;
+        let mut doc_lines = Vec::new();
+        while i > 0 {
+            i -= 1;
+            let kind = self.tokens[i].kind;
+            if kind == SyntaxKind::DocComment {
+                let text = self.text_of(&self.tokens[i]);
+                let stripped = text.strip_prefix("--").unwrap_or(text);
+                if let Some(doc) = Self::extract_doc_text(stripped) {
+                    doc_lines.push(doc);
+                } else {
+                    break; // `-- ^` is not a leading doc
+                }
+            } else if kind == SyntaxKind::Whitespace
+                || kind == SyntaxKind::Newline
+                || kind == SyntaxKind::LayoutSemicolon
+                || kind == SyntaxKind::LayoutBraceOpen
+                || kind == SyntaxKind::LayoutBraceClose
+            {
+                continue;
+            } else {
+                break;
+            }
+        }
+        if doc_lines.is_empty() {
+            None
+        } else {
+            doc_lines.reverse();
+            Some(doc_lines.join("\n"))
+        }
+    }
+
+    /// Scan forward from `pos` in the token stream to find a `-- ^` doc comment.
+    fn find_trailing_doc(&self, pos: u32) -> Option<String> {
+        // Find the first token at or after pos
+        let tok_idx = self.tokens.iter().position(|t| t.span.start >= pos)?;
+        let mut i = tok_idx;
+        while i < self.tokens.len() {
+            let kind = self.tokens[i].kind;
+            if kind == SyntaxKind::DocComment {
+                let text = self.text_of(&self.tokens[i]);
+                let stripped = text.strip_prefix("--").unwrap_or(text);
+                if let Some(rest) = stripped.strip_prefix(" ^ ") {
+                    return Some(rest.trim().to_string());
+                } else if stripped == " ^" {
+                    return Some(String::new());
+                }
+                break;
+            } else if kind == SyntaxKind::Whitespace || kind == SyntaxKind::Comma {
+                i += 1;
+                continue;
+            } else {
+                break;
+            }
+        }
+        None
+    }
+
+    /// Find the start position of an Ident token matching `name` within `span`.
+    fn find_ident_token(&self, name: &str, span: Span) -> Option<u32> {
+        for tok in &self.tokens {
+            if tok.span.start < span.start {
+                continue;
+            }
+            if tok.span.start >= span.end {
+                break;
+            }
+            if tok.kind == SyntaxKind::Ident && self.text_of(tok) == name {
+                return Some(tok.span.start);
+            }
+        }
+        None
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -1406,7 +1562,7 @@ impl Parser {
                 self.expect(SyntaxKind::Colon);
                 self.skip_trivia();
                 let ty = self.parse_type();
-                flds.push(RecordField { name: field_name, ty, attributes: field_attrs });
+                flds.push(RecordField { name: field_name, ty, attributes: field_attrs, doc: None });
                 self.skip_trivia();
                 if !self.eat(SyntaxKind::Comma) {
                     break;
@@ -1450,7 +1606,7 @@ impl Parser {
         };
 
         let span = self.span_from(start);
-        ConDecl { name, fields, discriminant, span }
+        ConDecl { name, fields, discriminant, span, doc: None }
     }
 
     fn parse_alias_decl(&mut self) -> Decl {
@@ -1613,6 +1769,7 @@ impl Parser {
                 name: field_name,
                 width,
                 span: field_span,
+                doc: None,
             });
             self.skip_trivia();
             if !self.eat(SyntaxKind::Comma) {
@@ -1713,6 +1870,7 @@ impl Parser {
                 name: method_name,
                 ty,
                 span: mspan,
+                doc: None,
             });
             self.eat_layout_semi();
         }
@@ -3494,6 +3652,64 @@ main x =
                 }
             }
             other => panic!("expected FunDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn doc_comment_on_decl() {
+        let source = "-- | Adds two numbers.\nadd x y = x + y";
+        let prog = parse(source);
+        assert_eq!(prog.decls.len(), 1);
+        // Doc comment should appear in the comments list with its ` | ` prefix
+        let comments = prog.decls[0].comments();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0], " | Adds two numbers.");
+    }
+
+    #[test]
+    fn doc_comment_on_constructor() {
+        let source = "data Shape =\n  -- | A circle with radius.\n  Circle F32\n  | -- | A rectangle.\n  Rect F32 F32";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::DataDecl { constructors, .. } => {
+                assert_eq!(constructors[0].doc.as_deref(), Some("A circle with radius."));
+                assert_eq!(constructors[1].doc.as_deref(), Some("A rectangle."));
+            }
+            other => panic!("expected DataDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn doc_comment_on_record_field() {
+        let source = "data Point = Point {\n  -- | X coordinate.\n  x : F32,\n  -- | Y coordinate.\n  y : F32\n}";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::DataDecl { constructors, .. } => {
+                if let ConFields::Record(fields) = &constructors[0].fields {
+                    assert_eq!(fields[0].doc.as_deref(), Some("X coordinate."));
+                    assert_eq!(fields[1].doc.as_deref(), Some("Y coordinate."));
+                } else {
+                    panic!("expected record fields");
+                }
+            }
+            other => panic!("expected DataDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn trailing_doc_comment_on_field() {
+        let source = "data Point = Point {\n  x : F32, -- ^ X coordinate.\n  y : F32  -- ^ Y coordinate.\n}";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::DataDecl { constructors, .. } => {
+                if let ConFields::Record(fields) = &constructors[0].fields {
+                    assert_eq!(fields[0].doc.as_deref(), Some("X coordinate."));
+                    assert_eq!(fields[1].doc.as_deref(), Some("Y coordinate."));
+                } else {
+                    panic!("expected record fields");
+                }
+            }
+            other => panic!("expected DataDecl, got {:?}", other),
         }
     }
 }
