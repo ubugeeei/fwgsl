@@ -41,6 +41,7 @@ enum SymbolKind {
     TypeAlias,
     Constructor,
     TypeParameter,
+    RecordField,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +88,8 @@ struct IdeState<'a> {
     index: DocumentIndex,
     /// Doc comments extracted from declarations, keyed by symbol name.
     doc_comments: HashMap<String, String>,
+    /// Record field types, keyed by field name (for hover display).
+    field_types: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -182,6 +185,8 @@ struct IndexBuilder<'a> {
     index: DocumentIndex,
     top_level_values: HashMap<String, usize>,
     top_level_types: HashMap<String, usize>,
+    /// Record field name → symbol ID, for resolving field access and field init.
+    field_symbols: HashMap<String, usize>,
 }
 
 impl<'a> IndexBuilder<'a> {
@@ -192,6 +197,7 @@ impl<'a> IndexBuilder<'a> {
             index: DocumentIndex::default(),
             top_level_values: HashMap::new(),
             top_level_types: HashMap::new(),
+            field_symbols: HashMap::new(),
         }
     }
 
@@ -376,7 +382,12 @@ impl<'a> IndexBuilder<'a> {
                     });
                     self.index.add_definition_span(symbol_id, name_span);
                 }
-                Decl::TraitDecl { name, span, methods, .. } => {
+                Decl::TraitDecl {
+                    name,
+                    span,
+                    methods,
+                    ..
+                } => {
                     let name_span = self.first_name_span(name, *span).unwrap_or(*span);
                     let symbol_id = self.index.push_symbol(NewSymbol {
                         name: name.clone(),
@@ -494,6 +505,21 @@ impl<'a> IndexBuilder<'a> {
                         fwgsl_parser::parser::ConFields::Record(fields) => {
                             for f in fields {
                                 self.walk_type(&f.ty, frames);
+                                // Register field name as a symbol for hover
+                                let field_span = self
+                                    .first_name_span(&f.name, constructor.span)
+                                    .unwrap_or(constructor.span);
+                                let fid = self.index.push_symbol(NewSymbol {
+                                    name: f.name.clone(),
+                                    namespace: Namespace::Value,
+                                    kind: SymbolKind::RecordField,
+                                    span: field_span,
+                                    scope_span: *span,
+                                    scope_depth: frames.len(),
+                                    visible_from: span.start,
+                                    container: Some(name.clone()),
+                                });
+                                self.field_symbols.insert(f.name.clone(), fid);
                             }
                         }
                         fwgsl_parser::parser::ConFields::Empty => {}
@@ -680,7 +706,10 @@ impl<'a> IndexBuilder<'a> {
                 self.walk_expr(then_branch, frames);
                 self.walk_expr(else_branch, frames);
             }
-            Expr::Paren(inner, _) | Expr::Neg(inner, _) | Expr::Not(inner, _) | Expr::BitNot(inner, _) => {
+            Expr::Paren(inner, _)
+            | Expr::Neg(inner, _)
+            | Expr::Not(inner, _)
+            | Expr::BitNot(inner, _) => {
                 self.walk_expr(inner, frames);
             }
             Expr::Tuple(items, _) | Expr::VecLit(items, _) => {
@@ -688,13 +717,32 @@ impl<'a> IndexBuilder<'a> {
                     self.walk_expr(item, frames);
                 }
             }
-            Expr::Record(_, fields, _) => {
-                for (_, value) in fields {
+            Expr::Record(_, fields, span) => {
+                for (field_name, value) in fields {
+                    // Register field name as a reference to the record field symbol
+                    if let Some(&symbol_id) = self.field_symbols.get(field_name) {
+                        if let Some(name_span) = self.first_name_span(field_name, *span) {
+                            self.index.push_occurrence(
+                                symbol_id,
+                                name_span,
+                                OccurrenceRole::Reference,
+                            );
+                        }
+                    }
                     self.walk_expr(value, frames);
                 }
             }
-            Expr::FieldAccess(base, _, _) => {
+            Expr::FieldAccess(base, field_name, span) => {
                 self.walk_expr(base, frames);
+                // Register field name as a reference to the record field symbol
+                if let Some(&symbol_id) = self.field_symbols.get(field_name) {
+                    // Find the field name token after the `.` within the expression span
+                    if let Some(name_span) = self.last_name_span_before(field_name, *span, span.end)
+                    {
+                        self.index
+                            .push_occurrence(symbol_id, name_span, OccurrenceRole::Reference);
+                    }
+                }
             }
             Expr::Index(base, index, _) => {
                 self.walk_expr(base, frames);
@@ -761,14 +809,25 @@ impl<'a> IndexBuilder<'a> {
                         visible_from: span.start,
                         container: frames[depth].container.clone(),
                     });
-                    frames[depth].value_defs.insert(bind_name.clone(), symbol_id);
+                    frames[depth]
+                        .value_defs
+                        .insert(bind_name.clone(), symbol_id);
                 }
                 self.walk_expr(body, frames);
                 frames.pop();
             }
-            Expr::RecordUpdate(base, fields, _) => {
+            Expr::RecordUpdate(base, fields, span) => {
                 self.walk_expr(base, frames);
-                for (_, value) in fields {
+                for (field_name, value) in fields {
+                    if let Some(&symbol_id) = self.field_symbols.get(field_name) {
+                        if let Some(name_span) = self.first_name_span(field_name, *span) {
+                            self.index.push_occurrence(
+                                symbol_id,
+                                name_span,
+                                OccurrenceRole::Reference,
+                            );
+                        }
+                    }
                     self.walk_expr(value, frames);
                 }
             }
@@ -1150,12 +1209,14 @@ fn build_ide_state(source: &str) -> IdeState<'_> {
     // symbol_at_offset to return wrong results.
     let index = IndexBuilder::new(source).build(&user_program);
     let doc_comments = extract_doc_comments(&user_program);
+    let field_types = extract_field_types(&user_program, source);
 
     IdeState {
         source,
         analyzer,
         index,
         doc_comments,
+        field_types,
     }
 }
 
@@ -1179,9 +1240,7 @@ fn extract_doc_comments(program: &Program) -> HashMap<String, String> {
                 | Decl::TraitDecl { name, .. }
                 | Decl::ExternDecl { name, .. }
                 | Decl::ModuleDecl { name, .. } => name.clone(),
-                Decl::ImplDecl { trait_name, .. } => {
-                    trait_name.clone().unwrap_or_default()
-                }
+                Decl::ImplDecl { trait_name, .. } => trait_name.clone().unwrap_or_default(),
                 Decl::ImportDecl { module_path, .. } => module_path.clone(),
                 Decl::CfgDecl { .. } => continue,
             };
@@ -1225,6 +1284,24 @@ fn extract_doc_comments(program: &Program) -> HashMap<String, String> {
     }
 
     docs
+}
+
+/// Extract record field type annotations from source text, keyed by field name.
+fn extract_field_types(program: &Program, source: &str) -> HashMap<String, String> {
+    let mut types = HashMap::new();
+    for decl in &program.decls {
+        if let Decl::DataDecl { constructors, .. } = decl {
+            for con in constructors {
+                if let ConFields::Record(fields) = &con.fields {
+                    for field in fields {
+                        let ty_str = field.ty.span().source_text(source).to_string();
+                        types.insert(field.name.clone(), ty_str);
+                    }
+                }
+            }
+        }
+    }
+    types
 }
 
 /// Extract doc text from a list of comment strings.
@@ -1321,6 +1398,7 @@ fn completion_kind_for_symbol(symbol: &Symbol) -> CompletionItemKind {
         SymbolKind::DataType | SymbolKind::TypeAlias | SymbolKind::TypeParameter => {
             CompletionItemKind::TYPE_PARAMETER
         }
+        SymbolKind::RecordField => CompletionItemKind::FIELD,
     }
 }
 
@@ -1411,6 +1489,7 @@ fn symbol_detail(state: &IdeState<'_>, symbol: &Symbol) -> String {
         SymbolKind::DataType => "data type".to_owned(),
         SymbolKind::TypeAlias => "type alias".to_owned(),
         SymbolKind::TypeParameter => "type parameter".to_owned(),
+        SymbolKind::RecordField => "record field".to_owned(),
     }
 }
 
@@ -1450,6 +1529,7 @@ fn symbol_markdown(state: &IdeState<'_>, symbol: &Symbol) -> String {
 fn symbol_signature(state: &IdeState<'_>, symbol: &Symbol) -> Option<String> {
     match symbol.kind {
         SymbolKind::DataType | SymbolKind::TypeAlias | SymbolKind::TypeParameter => None,
+        SymbolKind::RecordField => state.field_types.get(&symbol.name).cloned(),
         _ => state
             .analyzer
             .env
@@ -1498,6 +1578,10 @@ fn symbol_summary(state: &IdeState<'_>, symbol: &Symbol) -> String {
         SymbolKind::TypeParameter => match &symbol.container {
             Some(container) => format!("Type parameter scoped to `{}`.", container),
             None => "Type parameter.".to_owned(),
+        },
+        SymbolKind::RecordField => match &symbol.container {
+            Some(container) => format!("Field of `{}`.", container),
+            None => "Record field.".to_owned(),
         },
     }
 }
@@ -1696,11 +1780,20 @@ step dt dx p =
         let uri = Url::parse("file:///test.fwgsl").unwrap();
         // line 15 (0-indexed): "  let p2 = applyVelocity dt p"
         let result = build_goto_definition(&uri, source, Position::new(15, 12));
-        assert!(result.is_some(), "goto-def for applyVelocity should return a result");
+        assert!(
+            result.is_some(),
+            "goto-def for applyVelocity should return a result"
+        );
         match result.unwrap() {
             GotoDefinitionResponse::Array(locs) => {
-                assert!(locs.iter().any(|l| l.range.start.line == 7), "should include type sig line");
-                assert!(locs.iter().any(|l| l.range.start.line == 8), "should include fun decl line");
+                assert!(
+                    locs.iter().any(|l| l.range.start.line == 7),
+                    "should include type sig line"
+                );
+                assert!(
+                    locs.iter().any(|l| l.range.start.line == 8),
+                    "should include fun decl line"
+                );
             }
             GotoDefinitionResponse::Scalar(loc) => {
                 assert!(
@@ -1719,13 +1812,22 @@ step dt dx p =
         let uri = Url::parse("file:///test.fwgsl").unwrap();
         // line 5 (0-indexed): "    | Red -> 1", cursor on "Red" at col 6
         let result = build_goto_definition(&uri, source, Position::new(5, 6));
-        assert!(result.is_some(), "goto-def for Red constructor in match should return a result");
+        assert!(
+            result.is_some(),
+            "goto-def for Red constructor in match should return a result"
+        );
         match result.unwrap() {
             GotoDefinitionResponse::Scalar(loc) => {
-                assert_eq!(loc.range.start.line, 0, "Red should point to data decl line");
+                assert_eq!(
+                    loc.range.start.line, 0,
+                    "Red should point to data decl line"
+                );
             }
             GotoDefinitionResponse::Array(locs) => {
-                assert!(locs.iter().any(|l| l.range.start.line == 0), "should include data decl line");
+                assert!(
+                    locs.iter().any(|l| l.range.start.line == 0),
+                    "should include data decl line"
+                );
             }
             other => panic!("unexpected response: {other:?}"),
         }
@@ -1737,10 +1839,92 @@ step dt dx p =
         // Hover on "add" in the function body (line 2, col 0)
         let hover = build_hover(source, Position::new(2, 0));
         assert!(hover.is_some(), "hover should return a result");
-        if let Some(Hover { contents: HoverContents::Markup(markup), .. }) = hover {
+        if let Some(Hover {
+            contents: HoverContents::Markup(markup),
+            ..
+        }) = hover
+        {
             assert!(
                 markup.value.contains("Adds two numbers together."),
                 "hover should contain doc comment, got: {}",
+                markup.value
+            );
+        } else {
+            panic!("expected Markup hover contents");
+        }
+    }
+
+    #[test]
+    fn hover_on_record_field_shows_type_and_doc() {
+        let source = "data Point = Point {\n  -- | X coordinate.\n  x : F32,\n  y : F32, -- ^ Y coordinate.\n}";
+        // Hover on "x" field declaration (line 2, col 2)
+        let hover = build_hover(source, Position::new(2, 2));
+        assert!(
+            hover.is_some(),
+            "hover should return a result for record field"
+        );
+        if let Some(Hover {
+            contents: HoverContents::Markup(markup),
+            ..
+        }) = hover
+        {
+            assert!(
+                markup.value.contains("F32"),
+                "hover should show field type, got: {}",
+                markup.value
+            );
+            assert!(
+                markup.value.contains("X coordinate."),
+                "hover should show field doc comment, got: {}",
+                markup.value
+            );
+        } else {
+            panic!("expected Markup hover contents");
+        }
+        // Hover on "y" field with trailing doc (line 3, col 2)
+        let hover_y = build_hover(source, Position::new(3, 2));
+        assert!(
+            hover_y.is_some(),
+            "hover should return a result for field y"
+        );
+        if let Some(Hover {
+            contents: HoverContents::Markup(markup),
+            ..
+        }) = hover_y
+        {
+            assert!(
+                markup.value.contains("Y coordinate."),
+                "hover should show trailing doc comment for y, got: {}",
+                markup.value
+            );
+        } else {
+            panic!("expected Markup hover contents");
+        }
+    }
+
+    #[test]
+    fn hover_on_field_access_shows_field_info() {
+        let source =
+            "data Point = Point {\n  -- | X coordinate.\n  x : F32,\n  y : F32,\n}\ngetX p = p.x";
+        // Hover on "x" in "p.x" (line 5, col 11)
+        let hover = build_hover(source, Position::new(5, 11));
+        assert!(
+            hover.is_some(),
+            "hover should return a result for field access"
+        );
+        if let Some(Hover {
+            contents: HoverContents::Markup(markup),
+            ..
+        }) = hover
+        {
+            assert!(
+                markup.value.contains("X coordinate."),
+                "hover on .x should show field doc, got: {}",
+                markup.value
+            );
+            assert!(
+                markup.value.contains("F32"),
+                "hover on .x should show field type, got: {}",
                 markup.value
             );
         } else {

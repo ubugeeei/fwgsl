@@ -103,9 +103,11 @@ fn has_imports_in(decls: &[fwgsl_parser::parser::Decl]) -> bool {
     use fwgsl_parser::parser::Decl;
     decls.iter().any(|d| match d {
         Decl::ImportDecl { .. } => true,
-        Decl::CfgDecl { then_decls, else_decls, .. } => {
-            has_imports_in(then_decls) || has_imports_in(else_decls)
-        }
+        Decl::CfgDecl {
+            then_decls,
+            else_decls,
+            ..
+        } => has_imports_in(then_decls) || has_imports_in(else_decls),
         _ => false,
     })
 }
@@ -139,7 +141,8 @@ fn cmd_compile(file: &str, emit_ast: bool, preserve_comments: bool, feature_flag
     // If the program has imports, use the module resolver
     let mut program = if has_imports(&root_program) {
         let root_path = std::path::Path::new(file);
-        let source_root = root_path.parent()
+        let source_root = root_path
+            .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
             .to_path_buf();
 
@@ -234,7 +237,8 @@ fn cmd_check(file: &str, feature_flags: &[String]) {
     // If the program has imports, use the module resolver
     let mut program = if has_imports(&root_program) {
         let root_path = std::path::Path::new(file);
-        let source_root = root_path.parent()
+        let source_root = root_path
+            .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
             .to_path_buf();
 

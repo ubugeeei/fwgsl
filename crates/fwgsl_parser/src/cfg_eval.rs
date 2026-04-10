@@ -16,7 +16,9 @@ pub struct FeatureSet {
 impl FeatureSet {
     /// Create an empty feature set (no features enabled).
     pub fn new() -> Self {
-        FeatureSet { features: HashSet::new() }
+        FeatureSet {
+            features: HashSet::new(),
+        }
     }
 
     /// Create a feature set from CLI flag strings.
@@ -78,7 +80,12 @@ fn expand_decls(
 
     for decl in decls {
         match decl {
-            Decl::CfgDecl { condition, then_decls, else_decls, .. } => {
+            Decl::CfgDecl {
+                condition,
+                then_decls,
+                else_decls,
+                ..
+            } => {
                 collect_referenced_features(&condition, referenced);
                 if features.evaluate(&condition) {
                     // Recursively expand the then branch (may contain nested CfgDecls)
@@ -110,7 +117,9 @@ fn expand_decls(
 /// Collect all feature names referenced in a predicate.
 fn collect_referenced_features(pred: &CfgPredicate, referenced: &mut HashSet<String>) {
     match pred {
-        CfgPredicate::Feature(name) => { referenced.insert(name.clone()); }
+        CfgPredicate::Feature(name) => {
+            referenced.insert(name.clone());
+        }
         CfgPredicate::Not(inner) => collect_referenced_features(inner, referenced),
         CfgPredicate::And(a, b) | CfgPredicate::Or(a, b) => {
             collect_referenced_features(a, referenced);
@@ -143,7 +152,11 @@ mod tests {
 
         assert!(fs.evaluate(&CfgPredicate::Feature("debug".into())));
         assert!(!fs.evaluate(&CfgPredicate::Feature("msaa".into())));
-        assert!(fs.evaluate(&CfgPredicate::Not(Box::new(CfgPredicate::Feature("msaa".into())))));
+        assert!(
+            fs.evaluate(&CfgPredicate::Not(Box::new(CfgPredicate::Feature(
+                "msaa".into()
+            ))))
+        );
         assert!(!fs.evaluate(&CfgPredicate::And(
             Box::new(CfgPredicate::Feature("debug".into())),
             Box::new(CfgPredicate::Feature("msaa".into())),
@@ -162,12 +175,14 @@ mod tests {
         evaluate_features(&mut program, &features);
 
         // debugVal should be present
-        let names: Vec<_> = program.decls.iter().filter_map(|d| {
-            match d {
+        let names: Vec<_> = program
+            .decls
+            .iter()
+            .filter_map(|d| match d {
                 Decl::FunDecl { name, .. } => Some(name.as_str()),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         assert!(names.contains(&"debugVal"));
         assert!(names.contains(&"f"));
     }
@@ -179,12 +194,14 @@ mod tests {
         let features = FeatureSet::new(); // debug not enabled
         evaluate_features(&mut program, &features);
 
-        let names: Vec<_> = program.decls.iter().filter_map(|d| {
-            match d {
+        let names: Vec<_> = program
+            .decls
+            .iter()
+            .filter_map(|d| match d {
                 Decl::FunDecl { name, .. } => Some(name.as_str()),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         assert!(!names.contains(&"debugVal"));
         assert!(names.contains(&"f"));
     }
@@ -198,11 +215,17 @@ mod tests {
         let features = FeatureSet::from_flags(&["debug".to_string()]);
         let mut prog_on = program.clone();
         evaluate_features(&mut prog_on, &features);
-        assert!(prog_on.decls.iter().any(|d| matches!(d, Decl::ImportDecl { .. })));
+        assert!(prog_on
+            .decls
+            .iter()
+            .any(|d| matches!(d, Decl::ImportDecl { .. })));
 
         // Without debug enabled
         let features = FeatureSet::new();
         evaluate_features(&mut program, &features);
-        assert!(!program.decls.iter().any(|d| matches!(d, Decl::ImportDecl { .. })));
+        assert!(!program
+            .decls
+            .iter()
+            .any(|d| matches!(d, Decl::ImportDecl { .. })));
     }
 }

@@ -138,10 +138,7 @@ impl SemanticAnalyzer {
         // Pass 2b: collect trait declarations
         for decl in &all_decls {
             if let Decl::TraitDecl {
-                name,
-                var,
-                methods,
-                ..
+                name, var, methods, ..
             } = decl
             {
                 // Build a type variable scope seeded with the trait variable
@@ -190,14 +187,18 @@ impl SemanticAnalyzer {
                         if let Some(trait_info) = self.traits.get(tname) {
                             for (tmethod_name, tmethod_ty) in &trait_info.methods {
                                 if tmethod_name == &m.name {
-                                    let concrete_ty = replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
+                                    let concrete_ty =
+                                        replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
                                     self.env.insert(mangled.clone(), Scheme::mono(concrete_ty));
                                 }
                             }
                         } else {
                             self.engine.diagnostics.push(
-                                Diagnostic::error(format!("Unknown trait '{}' in impl declaration", tname))
-                                    .with_label(Label::primary(*span, "unknown trait")),
+                                Diagnostic::error(format!(
+                                    "Unknown trait '{}' in impl declaration",
+                                    tname
+                                ))
+                                .with_label(Label::primary(*span, "unknown trait")),
                             );
                         }
                     } else {
@@ -207,20 +208,28 @@ impl SemanticAnalyzer {
                         // get instantiated fresh in each call site's inference engine).
                         let mut poly_vars = Vec::new();
                         let ret_var = self.engine.fresh_var();
-                        if let Ty::Var(id) = ret_var { poly_vars.push(id); }
+                        if let Ty::Var(id) = ret_var {
+                            poly_vars.push(id);
+                        }
                         let mut result_ty = ret_var;
                         for i in (0..m.params.len()).rev() {
                             let param_ty = if i == 0 {
                                 impl_ty_scheme.ty.clone()
                             } else {
                                 let v = self.engine.fresh_var();
-                                if let Ty::Var(id) = v { poly_vars.push(id); }
+                                if let Ty::Var(id) = v {
+                                    poly_vars.push(id);
+                                }
                                 v
                             };
                             result_ty = Ty::arrow(param_ty, result_ty);
                         }
-                        self.env.insert(m.name.clone(), Scheme::poly(poly_vars.clone(), result_ty.clone()));
-                        self.env.insert(mangled.clone(), Scheme::poly(poly_vars, result_ty));
+                        self.env.insert(
+                            m.name.clone(),
+                            Scheme::poly(poly_vars.clone(), result_ty.clone()),
+                        );
+                        self.env
+                            .insert(mangled.clone(), Scheme::poly(poly_vars, result_ty));
                     }
                 }
                 self.impls.push(ImplInfo {
@@ -628,7 +637,10 @@ impl SemanticAnalyzer {
             Expr::Infix(lhs, op, rhs, span) => {
                 let op_ty = if let Some(scheme) = env.lookup(op) {
                     self.engine.instantiate(scheme)
-                } else if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%" | "&" | "^" | "|" | "<<" | ">>") {
+                } else if matches!(
+                    op.as_str(),
+                    "+" | "-" | "*" | "/" | "%" | "&" | "^" | "|" | "<<" | ">>"
+                ) {
                     // Built-in operator not declared in prelude (e.g. `>>`) —
                     // give it the generic type `a -> a -> a`
                     let a = self.engine.fresh_var();
@@ -739,7 +751,10 @@ impl SemanticAnalyzer {
                                 return scalar;
                             } else {
                                 return Ty::app(
-                                    Ty::app(Ty::Con("Vec".into()), Ty::Nat(swizzle_len as u64)),
+                                    Ty::app(
+                                        Ty::Con(ty_name::VEC.into()),
+                                        Ty::Nat(swizzle_len as u64),
+                                    ),
                                     scalar,
                                 );
                             }
@@ -810,7 +825,7 @@ impl SemanticAnalyzer {
                 }
 
                 Ty::app(
-                    Ty::app(Ty::Con("Vec".into()), Ty::Nat(total_components)),
+                    Ty::app(Ty::Con(ty_name::VEC.into()), Ty::Nat(total_components)),
                     scalar_ty,
                 )
             }
@@ -836,7 +851,7 @@ impl SemanticAnalyzer {
             Expr::Not(inner, span) => {
                 // Boolean not: operand and result are Bool
                 let inner_ty = self.infer_expr(inner, env);
-                let bool_ty = Ty::Con("Bool".into());
+                let bool_ty = Ty::bool();
                 self.engine.unify(&inner_ty, &bool_ty, *span);
                 bool_ty
             }
@@ -903,7 +918,7 @@ impl SemanticAnalyzer {
             Lit::Int(_) => Ty::i32(),
             Lit::UInt(_) => Ty::u32(),
             Lit::Float(_) => Ty::f32(),
-            Lit::String(_) => Ty::Con("String".into()),
+            Lit::String(_) => Ty::Con(ty_name::STRING.into()),
             Lit::Char(_) => Ty::Con("Char".into()),
         }
     }
@@ -987,12 +1002,14 @@ pub fn replace_all_vars(ty: &Ty, replacement: &Ty) -> Ty {
             Box::new(replace_all_vars(b, replacement)),
         ),
         Ty::Tuple(elems) => Ty::Tuple(
-            elems.iter().map(|e| replace_all_vars(e, replacement)).collect(),
+            elems
+                .iter()
+                .map(|e| replace_all_vars(e, replacement))
+                .collect(),
         ),
-        Ty::Forall(vars, body) => Ty::Forall(
-            vars.clone(),
-            Box::new(replace_all_vars(body, replacement)),
-        ),
+        Ty::Forall(vars, body) => {
+            Ty::Forall(vars.clone(), Box::new(replace_all_vars(body, replacement)))
+        }
     }
 }
 
@@ -1058,7 +1075,7 @@ pub fn extract_vec_type(ty: &Ty) -> Option<(u8, Ty)> {
     if let Ty::App(f, scalar) = &ty {
         if let Ty::App(con, nat) = f.as_ref() {
             if let (Ty::Con(name), Ty::Nat(n)) = (con.as_ref(), nat.as_ref()) {
-                if name == "Vec" {
+                if name == ty_name::VEC {
                     return Some((*n as u8, scalar.as_ref().clone()));
                 }
             }
@@ -1072,14 +1089,14 @@ pub fn extract_vec_type(ty: &Ty) -> Option<(u8, Ty)> {
 fn unwrap_resource_type(ty: &Ty) -> Ty {
     if let Ty::App(f, inner) = ty {
         if let Ty::Con(name) = f.as_ref() {
-            if name == "Uniform" {
+            if name == ty_name::UNIFORM {
                 return *inner.clone();
             }
         }
         // Storage<mode, T> = App(App(Con("Storage"), mode), T)
         if let Ty::App(ff, _mode) = f.as_ref() {
             if let Ty::Con(name) = ff.as_ref() {
-                if name == "Storage" {
+                if name == ty_name::STORAGE {
                     return *inner.clone();
                 }
             }

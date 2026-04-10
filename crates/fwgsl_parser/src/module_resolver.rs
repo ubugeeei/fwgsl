@@ -45,11 +45,18 @@ pub struct ModuleGraph {
 #[derive(Debug, Clone)]
 pub enum ModuleResolveError {
     /// A module file could not be found.
-    FileNotFound { module_path: String, searched: PathBuf },
+    FileNotFound {
+        module_path: String,
+        searched: PathBuf,
+    },
     /// Circular dependency detected.
     CyclicDependency { cycle: Vec<String> },
     /// Parse error in a module file.
-    ParseError { module_path: String, file: PathBuf, messages: Vec<String> },
+    ParseError {
+        module_path: String,
+        file: PathBuf,
+        messages: Vec<String>,
+    },
     /// IO error reading a file.
     IoError { file: PathBuf, message: String },
 }
@@ -57,14 +64,31 @@ pub enum ModuleResolveError {
 impl std::fmt::Display for ModuleResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ModuleResolveError::FileNotFound { module_path, searched } => {
-                write!(f, "module '{}' not found (searched {})", module_path, searched.display())
+            ModuleResolveError::FileNotFound {
+                module_path,
+                searched,
+            } => {
+                write!(
+                    f,
+                    "module '{}' not found (searched {})",
+                    module_path,
+                    searched.display()
+                )
             }
             ModuleResolveError::CyclicDependency { cycle } => {
                 write!(f, "circular dependency: {}", cycle.join(" -> "))
             }
-            ModuleResolveError::ParseError { module_path, file, messages } => {
-                write!(f, "parse errors in module '{}' ({}):", module_path, file.display())?;
+            ModuleResolveError::ParseError {
+                module_path,
+                file,
+                messages,
+            } => {
+                write!(
+                    f,
+                    "parse errors in module '{}' ({}):",
+                    module_path,
+                    file.display()
+                )?;
                 for msg in messages {
                     write!(f, "\n  {}", msg)?;
                 }
@@ -166,7 +190,8 @@ impl<'a> Resolver<'a> {
     /// Recursively discover and parse all imported modules.
     fn discover_imports(&mut self, module_name: &str) -> Result<(), Vec<ModuleResolveError>> {
         // Collect imports from this module
-        let imports: Vec<ModuleImport> = self.modules
+        let imports: Vec<ModuleImport> = self
+            .modules
             .get(module_name)
             .map(|m| m.imports.clone())
             .unwrap_or_default();
@@ -192,7 +217,9 @@ impl<'a> Resolver<'a> {
                     let file_path = match self.find_module_file(&import.module_path) {
                         Some(p) => p,
                         None => {
-                            let searched = self.source_roots.first()
+                            let searched = self
+                                .source_roots
+                                .first()
                                 .cloned()
                                 .unwrap_or_else(|| PathBuf::from("."));
                             self.errors.push(ModuleResolveError::FileNotFound {
@@ -233,7 +260,8 @@ impl<'a> Resolver<'a> {
         let program = parser.parse_program();
 
         if parser.diagnostics().has_errors() {
-            let messages: Vec<String> = parser.diagnostics()
+            let messages: Vec<String> = parser
+                .diagnostics()
                 .iter()
                 .map(|d| d.message.clone())
                 .collect();
@@ -284,7 +312,10 @@ impl<'a> Resolver<'a> {
                     if path.extension().and_then(|s| s.to_str()) == Some("fwgsl") {
                         if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                             let mod_name = format!("{}.{}", namespace, stem);
-                            if !results.iter().any(|(n, _): &(String, PathBuf)| n == &mod_name) {
+                            if !results
+                                .iter()
+                                .any(|(n, _): &(String, PathBuf)| n == &mod_name)
+                            {
                                 results.push((mod_name, path));
                             }
                         }
@@ -296,13 +327,22 @@ impl<'a> Resolver<'a> {
     }
 
     /// Topological sort of modules. Returns modules in dependency order.
-    fn topological_sort(&self, root_name: &str) -> Result<Vec<ParsedModule>, Vec<ModuleResolveError>> {
+    fn topological_sort(
+        &self,
+        root_name: &str,
+    ) -> Result<Vec<ParsedModule>, Vec<ModuleResolveError>> {
         let mut visited: HashSet<String> = HashSet::new();
         let mut in_progress: HashSet<String> = HashSet::new();
         let mut order: Vec<String> = Vec::new();
         let mut path_stack: Vec<String> = Vec::new();
 
-        if let Err(cycle) = self.topo_visit(root_name, &mut visited, &mut in_progress, &mut order, &mut path_stack) {
+        if let Err(cycle) = self.topo_visit(
+            root_name,
+            &mut visited,
+            &mut in_progress,
+            &mut order,
+            &mut path_stack,
+        ) {
             return Err(vec![ModuleResolveError::CyclicDependency { cycle }]);
         }
 
@@ -368,23 +408,34 @@ fn extract_module_name(program: &Program) -> Option<String> {
 
 /// Extract all import declarations from a program.
 fn extract_imports(program: &Program) -> Vec<ModuleImport> {
-    program.decls.iter().filter_map(|decl| {
-        if let Decl::ImportDecl { module_path, kind, .. } = decl {
-            Some(ModuleImport {
-                module_path: module_path.clone(),
-                kind: kind.clone(),
-            })
-        } else {
-            None
-        }
-    }).collect()
+    program
+        .decls
+        .iter()
+        .filter_map(|decl| {
+            if let Decl::ImportDecl {
+                module_path, kind, ..
+            } = decl
+            {
+                Some(ModuleImport {
+                    module_path: module_path.clone(),
+                    kind: kind.clone(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Derive a module name from a file path relative to source roots.
 /// `src/Math/Fp64.fwgsl` with source root `src/` → `Math.Fp64`.
 /// Falls back to just the file stem if no source root matches.
 fn derive_module_name(path: &Path, source_roots: &[PathBuf]) -> String {
-    let path = if path.is_absolute() { path.to_path_buf() } else { path.to_path_buf() };
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
     for root in source_roots {
         if let Ok(relative) = path.strip_prefix(root) {
             let name = relative
@@ -420,7 +471,9 @@ mod tests {
 
     impl MemoryReader {
         fn new() -> Self {
-            MemoryReader { files: HashMap::new() }
+            MemoryReader {
+                files: HashMap::new(),
+            }
         }
         fn add(&mut self, path: impl Into<PathBuf>, source: &str) {
             self.files.insert(path.into(), source.to_string());
@@ -429,7 +482,8 @@ mod tests {
 
     impl SourceReader for MemoryReader {
         fn read_source(&self, path: &Path) -> Result<String, String> {
-            self.files.get(path)
+            self.files
+                .get(path)
                 .cloned()
                 .ok_or_else(|| format!("file not found: {}", path.display()))
         }
@@ -529,7 +583,9 @@ g x = x
         let result = resolve_modules(&root, root_program, &[PathBuf::from("/p")], &reader);
         match result {
             Err(errors) => {
-                assert!(errors.iter().any(|e| matches!(e, ModuleResolveError::CyclicDependency { .. })));
+                assert!(errors
+                    .iter()
+                    .any(|e| matches!(e, ModuleResolveError::CyclicDependency { .. })));
             }
             Ok(_) => panic!("expected cycle error"),
         }
@@ -549,7 +605,9 @@ f x = x
         let result = resolve_modules(&root, root_program, &[PathBuf::from("/p")], &reader);
         match result {
             Err(errors) => {
-                assert!(errors.iter().any(|e| matches!(e, ModuleResolveError::FileNotFound { .. })));
+                assert!(errors
+                    .iter()
+                    .any(|e| matches!(e, ModuleResolveError::FileNotFound { .. })));
             }
             Ok(_) => panic!("expected file-not-found error"),
         }

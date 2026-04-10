@@ -860,22 +860,12 @@ mod tests {
         // >> is lexed as two separate Greater tokens
         assert_eq!(
             kinds(">>"),
-            vec![
-                SyntaxKind::Greater,
-                SyntaxKind::Greater,
-                SyntaxKind::Eof,
-            ]
+            vec![SyntaxKind::Greater, SyntaxKind::Greater, SyntaxKind::Eof,]
         );
         // && is still logical AND, not two ampersands
-        assert_eq!(
-            kinds("&&"),
-            vec![SyntaxKind::AndAnd, SyntaxKind::Eof]
-        );
+        assert_eq!(kinds("&&"), vec![SyntaxKind::AndAnd, SyntaxKind::Eof]);
         // Single & is now Ampersand (bitwise AND), not Error
-        assert_eq!(
-            kinds("&"),
-            vec![SyntaxKind::Ampersand, SyntaxKind::Eof]
-        );
+        assert_eq!(kinds("&"), vec![SyntaxKind::Ampersand, SyntaxKind::Eof]);
     }
 
     #[test]

@@ -73,7 +73,11 @@ impl Decl {
         let mut result = Vec::new();
         for decl in decls {
             match decl {
-                Decl::CfgDecl { then_decls, else_decls, .. } => {
+                Decl::CfgDecl {
+                    then_decls,
+                    else_decls,
+                    ..
+                } => {
                     result.extend(Decl::flatten_cfg_decls(then_decls));
                     result.extend(Decl::flatten_cfg_decls(else_decls));
                 }
@@ -570,15 +574,25 @@ impl Parser {
     fn is_record_update_ahead(&self) -> bool {
         let mut i = self.pos;
         // Skip trivia to find `{`
-        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() { i += 1; }
-        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::LBrace { return false; }
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::LBrace {
+            return false;
+        }
         i += 1;
         // Skip trivia to find `ident`
-        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() { i += 1; }
-        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::Ident { return false; }
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::Ident {
+            return false;
+        }
         i += 1;
         // Skip trivia to find `=`
-        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() { i += 1; }
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
         i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::Equals
     }
 
@@ -603,7 +617,10 @@ impl Parser {
         if next_tok.span.start != minus_end {
             return false;
         }
-        if !matches!(next_tok.kind, SyntaxKind::IntLiteral | SyntaxKind::FloatLiteral) {
+        if !matches!(
+            next_tok.kind,
+            SyntaxKind::IntLiteral | SyntaxKind::FloatLiteral
+        ) {
             return false;
         }
         // There must be whitespace before the `-` so it's not glued to the
@@ -832,7 +849,18 @@ impl Parser {
 
     /// Scan backwards from `pos` in the token stream to find a `-- |` doc comment.
     fn find_leading_doc(&self, pos: u32) -> Option<String> {
-        let tok_idx = self.tokens.iter().position(|t| t.span.start >= pos)?;
+        // Find the first non-layout token at or after pos, so that virtual
+        // layout tokens (LayoutBraceOpen, etc.) with the same span.start
+        // don't prevent us from scanning back past them.
+        let tok_idx = self.tokens.iter().position(|t| {
+            t.span.start >= pos
+                && !matches!(
+                    t.kind,
+                    SyntaxKind::LayoutBraceOpen
+                        | SyntaxKind::LayoutSemicolon
+                        | SyntaxKind::LayoutBraceClose
+                )
+        })?;
         let mut i = tok_idx;
         let mut doc_lines = Vec::new();
         while i > 0 {
@@ -1016,7 +1044,12 @@ impl Parser {
         self.skip_trivia();
         let ty = self.parse_type();
         let span = self.span_from(start);
-        Decl::TypeSig { name, ty, span, comments: vec![] }
+        Decl::TypeSig {
+            name,
+            ty,
+            span,
+            comments: vec![],
+        }
     }
 
     fn parse_fun_decl(&mut self, name: String, start: u32) -> Decl {
@@ -1344,7 +1377,9 @@ impl Parser {
 
         // Check for `else` / `else when`
         self.skip_trivia();
-        let else_decls = if self.at(SyntaxKind::KwElse) && self.column_of(self.current_span().start) == when_col {
+        let else_decls = if self.at(SyntaxKind::KwElse)
+            && self.column_of(self.current_span().start) == when_col
+        {
             self.bump(); // consume `else`
             self.skip_trivia();
             if self.at(SyntaxKind::KwWhen) {
@@ -1432,7 +1467,9 @@ impl Parser {
     /// Parse a cfg atom: `not pred`, `cfg.name`, or `(pred)`.
     fn parse_cfg_atom(&mut self) -> CfgPredicate {
         // `not` prefix
-        if self.at(SyntaxKind::Ident) && self.current_token().span.source_text(&self.source) == "not" {
+        if self.at(SyntaxKind::Ident)
+            && self.current_token().span.source_text(&self.source) == "not"
+        {
             self.bump(); // consume `not`
             self.skip_trivia();
             let inner = self.parse_cfg_atom();
@@ -1526,7 +1563,8 @@ impl Parser {
             while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
                 i += 1;
             }
-            let next_is_int = i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::IntLiteral;
+            let next_is_int =
+                i < self.tokens.len() && self.tokens[i].kind == SyntaxKind::IntLiteral;
             if next_is_int {
                 self.bump(); // consume `=`
                 self.skip_trivia();
@@ -1562,7 +1600,12 @@ impl Parser {
                 self.expect(SyntaxKind::Colon);
                 self.skip_trivia();
                 let ty = self.parse_type();
-                flds.push(RecordField { name: field_name, ty, attributes: field_attrs, doc: None });
+                flds.push(RecordField {
+                    name: field_name,
+                    ty,
+                    attributes: field_attrs,
+                    doc: None,
+                });
                 self.skip_trivia();
                 if !self.eat(SyntaxKind::Comma) {
                     break;
@@ -1606,7 +1649,13 @@ impl Parser {
         };
 
         let span = self.span_from(start);
-        ConDecl { name, fields, discriminant, span, doc: None }
+        ConDecl {
+            name,
+            fields,
+            discriminant,
+            span,
+            doc: None,
+        }
     }
 
     fn parse_alias_decl(&mut self) -> Decl {
@@ -1628,7 +1677,6 @@ impl Parser {
             comments: vec![],
         }
     }
-
 
     /// Parse `extern resource ...` or `extern name : type`.
     fn parse_extern_decl(&mut self) -> Decl {
@@ -2261,7 +2309,9 @@ impl Parser {
                     let mut fields = Vec::new();
                     loop {
                         self.skip_trivia();
-                        if self.at(SyntaxKind::RBrace) || self.at_end() { break; }
+                        if self.at(SyntaxKind::RBrace) || self.at_end() {
+                            break;
+                        }
                         let field_tok = self.expect(SyntaxKind::Ident);
                         let field_name = self.text_of(&field_tok).to_owned();
                         self.skip_trivia();
@@ -2270,7 +2320,9 @@ impl Parser {
                         let value = self.parse_expr();
                         fields.push((field_name, value));
                         self.skip_trivia();
-                        if !self.eat(SyntaxKind::Comma) { break; }
+                        if !self.eat(SyntaxKind::Comma) {
+                            break;
+                        }
                     }
                     self.expect(SyntaxKind::RBrace);
                     let span = self.span_from(start);
@@ -2418,14 +2470,20 @@ impl Parser {
         // Operator section `(+)`, `(-)`, etc.
         // Special case: `(-expr)` is negation in parens, not an operator section.
         if is_operator_token(self.peek()) {
-            let is_prefix_unary = self.peek() == SyntaxKind::Minus || self.peek() == SyntaxKind::Bang || self.peek() == SyntaxKind::Tilde;
+            let is_prefix_unary = self.peek() == SyntaxKind::Minus
+                || self.peek() == SyntaxKind::Bang
+                || self.peek() == SyntaxKind::Tilde;
             // Peek ahead past operator + trivia to see if it's `(op)`
             let next_non_trivia = {
                 let mut i = self.pos + 1;
                 while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
                     i += 1;
                 }
-                if i < self.tokens.len() { self.tokens[i].kind } else { SyntaxKind::Eof }
+                if i < self.tokens.len() {
+                    self.tokens[i].kind
+                } else {
+                    SyntaxKind::Eof
+                }
             };
             if is_prefix_unary && next_non_trivia != SyntaxKind::RParen {
                 // `(-expr)` or `(!expr)` — fall through to parse as normal expression
@@ -3151,22 +3209,22 @@ impl Parser {
 fn infix_binding_power(kind: SyntaxKind) -> Option<(u8, u8)> {
     match kind {
         SyntaxKind::Dollar => Some((1, 0)), // right-assoc (l > r)
-        SyntaxKind::OrOr => Some((1, 2)),                           // ||
-        SyntaxKind::AndAnd => Some((3, 4)),                         // &&
+        SyntaxKind::OrOr => Some((1, 2)),   // ||
+        SyntaxKind::AndAnd => Some((3, 4)), // &&
         // Note: `|` (Pipe) is NOT an infix operator here — it's used for
         // guard clauses, match arms, data constructors, and or-patterns.
         // Bitwise OR is available via the `bor` builtin function.
-        SyntaxKind::Caret => Some((5, 6)),                          // ^ (bitwise xor)
-        SyntaxKind::Ampersand => Some((7, 8)),                      // & (bitwise and)
+        SyntaxKind::Caret => Some((5, 6)),     // ^ (bitwise xor)
+        SyntaxKind::Ampersand => Some((7, 8)), // & (bitwise and)
         SyntaxKind::EqualEqual
         | SyntaxKind::NotEqual
         | SyntaxKind::Less
         | SyntaxKind::Greater
         | SyntaxKind::LessEqual
-        | SyntaxKind::GreaterEqual => Some((9, 10)),                // comparisons
-        SyntaxKind::LessLess => Some((11, 12)),  // <<
+        | SyntaxKind::GreaterEqual => Some((9, 10)), // comparisons
+        SyntaxKind::LessLess => Some((11, 12)), // <<
         // >> is handled specially in the parser loop (two Greater tokens)
-        SyntaxKind::Plus | SyntaxKind::Minus => Some((13, 14)),     // + -
+        SyntaxKind::Plus | SyntaxKind::Minus => Some((13, 14)), // + -
         SyntaxKind::Star | SyntaxKind::Slash | SyntaxKind::Percent => Some((15, 16)), // * / %
         _ => None,
     }
@@ -3672,7 +3730,10 @@ main x =
         let prog = parse(source);
         match &prog.decls[0] {
             Decl::DataDecl { constructors, .. } => {
-                assert_eq!(constructors[0].doc.as_deref(), Some("A circle with radius."));
+                assert_eq!(
+                    constructors[0].doc.as_deref(),
+                    Some("A circle with radius.")
+                );
                 assert_eq!(constructors[1].doc.as_deref(), Some("A rectangle."));
             }
             other => panic!("expected DataDecl, got {:?}", other),
@@ -3698,7 +3759,8 @@ main x =
 
     #[test]
     fn trailing_doc_comment_on_field() {
-        let source = "data Point = Point {\n  x : F32, -- ^ X coordinate.\n  y : F32  -- ^ Y coordinate.\n}";
+        let source =
+            "data Point = Point {\n  x : F32, -- ^ X coordinate.\n  y : F32  -- ^ Y coordinate.\n}";
         let prog = parse(source);
         match &prog.decls[0] {
             Decl::DataDecl { constructors, .. } => {
@@ -3710,6 +3772,22 @@ main x =
                 }
             }
             other => panic!("expected DataDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn doc_comment_on_trait_method() {
+        let source = "trait HasArea a where\n  -- | Compute the area.\n  area : a -> F32";
+        let prog = parse(source);
+        match &prog.decls[0] {
+            Decl::TraitDecl { methods, .. } => {
+                assert_eq!(
+                    methods[0].doc.as_deref(),
+                    Some("Compute the area."),
+                    "trait method doc should be attached"
+                );
+            }
+            other => panic!("expected TraitDecl, got {:?}", other),
         }
     }
 }

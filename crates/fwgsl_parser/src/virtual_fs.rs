@@ -18,7 +18,9 @@ pub struct VirtualFs {
 
 impl VirtualFs {
     pub fn new() -> Self {
-        VirtualFs { files: HashMap::new() }
+        VirtualFs {
+            files: HashMap::new(),
+        }
     }
 
     /// Add a file to the virtual filesystem.
@@ -33,10 +35,10 @@ impl VirtualFs {
 
     /// List all .fwgsl files under a directory.
     pub fn list_dir(&self, dir: &Path) -> Vec<PathBuf> {
-        self.files.keys()
+        self.files
+            .keys()
             .filter(|p| {
-                p.parent() == Some(dir)
-                    && p.extension().and_then(|s| s.to_str()) == Some("fwgsl")
+                p.parent() == Some(dir) && p.extension().and_then(|s| s.to_str()) == Some("fwgsl")
             })
             .cloned()
             .collect()
@@ -51,7 +53,8 @@ impl Default for VirtualFs {
 
 impl SourceReader for VirtualFs {
     fn read_source(&self, path: &Path) -> Result<String, String> {
-        self.files.get(path)
+        self.files
+            .get(path)
             .cloned()
             .ok_or_else(|| format!("file not found: {}", path.display()))
     }
@@ -110,7 +113,10 @@ fn parse_module_marker(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let prefix = "--- module ";
     let suffix = " ---";
-    if trimmed.starts_with(prefix) && trimmed.ends_with(suffix) && trimmed.len() > prefix.len() + suffix.len() {
+    if trimmed.starts_with(prefix)
+        && trimmed.ends_with(suffix)
+        && trimmed.len() > prefix.len() + suffix.len()
+    {
         let inner = trimmed[prefix.len()..trimmed.len() - suffix.len()].trim();
         if !inner.is_empty() {
             return Some(inner.to_string());
@@ -137,10 +143,7 @@ mod tests {
 
         assert!(fs.file_exists(Path::new("Main.fwgsl")));
         assert!(!fs.file_exists(Path::new("Missing.fwgsl")));
-        assert_eq!(
-            fs.read_source(Path::new("Main.fwgsl")).unwrap(),
-            "f x = x"
-        );
+        assert_eq!(fs.read_source(Path::new("Main.fwgsl")).unwrap(), "f x = x");
     }
 
     #[test]
@@ -191,8 +194,14 @@ f x = dot2 x x
 
     #[test]
     fn module_marker_parsing() {
-        assert_eq!(parse_module_marker("--- module Main ---"), Some("Main".to_string()));
-        assert_eq!(parse_module_marker("--- module Math.Vec ---"), Some("Math.Vec".to_string()));
+        assert_eq!(
+            parse_module_marker("--- module Main ---"),
+            Some("Main".to_string())
+        );
+        assert_eq!(
+            parse_module_marker("--- module Math.Vec ---"),
+            Some("Math.Vec".to_string())
+        );
         assert_eq!(parse_module_marker("not a marker"), None);
         assert_eq!(parse_module_marker("--- module ---"), None);
     }

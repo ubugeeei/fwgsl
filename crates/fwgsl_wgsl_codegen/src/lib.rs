@@ -100,10 +100,10 @@ const PREC_AND: u8 = 2;
 const PREC_BITOR: u8 = 3;
 const PREC_BITXOR: u8 = 4;
 const PREC_BITAND: u8 = 5;
-const PREC_EQ: u8 = 6;   // == !=
-const PREC_REL: u8 = 7;  // < > <= >=
+const PREC_EQ: u8 = 6; // == !=
+const PREC_REL: u8 = 7; // < > <= >=
 const PREC_SHIFT: u8 = 8; // << >>
-const PREC_ADD: u8 = 9;  // + -
+const PREC_ADD: u8 = 9; // + -
 const PREC_MUL: u8 = 10; // * / %
 const PREC_UNARY: u8 = 11; // - ! ~
 const PREC_POSTFIX: u8 = 12; // . []
@@ -359,7 +359,10 @@ impl WgslEmitter {
             let needs_location = matches!(ep.stage, ShaderStage::Vertex | ShaderStage::Fragment)
                 && !matches!(ep.return_ty, MirType::Struct(_));
             if needs_location {
-                self.write(&format!(" -> @location(0) {}", self.format_type(&ep.return_ty)));
+                self.write(&format!(
+                    " -> @location(0) {}",
+                    self.format_type(&ep.return_ty)
+                ));
             } else {
                 self.write(&format!(" -> {}", self.format_type(&ep.return_ty)));
             }

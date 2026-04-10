@@ -4,8 +4,8 @@
 //! comments and original structure are preserved. Re-emits tokens with
 //! canonical whitespace and indentation.
 
-use fwgsl_parser::lexer::Token;
 use fwgsl_parser::lex;
+use fwgsl_parser::lexer::Token;
 use fwgsl_syntax::SyntaxKind;
 
 /// Formatting configuration.
@@ -252,10 +252,7 @@ impl<'a> FormatEngine<'a> {
         // No space before certain punctuation
         if matches!(
             kind,
-            SyntaxKind::RParen
-                | SyntaxKind::RBracket
-                | SyntaxKind::Comma
-                | SyntaxKind::Semicolon
+            SyntaxKind::RParen | SyntaxKind::RBracket | SyntaxKind::Comma | SyntaxKind::Semicolon
         ) {
             return;
         }
@@ -279,9 +276,7 @@ impl<'a> FormatEngine<'a> {
 
         // Type parameter angle brackets: no space around `<`, `>`, or after `,`
         // when inside `Type<...>`.
-        if kind == SyntaxKind::Less
-            && self.last_emitted_kind() == Some(SyntaxKind::UpperIdent)
-        {
+        if kind == SyntaxKind::Less && self.last_emitted_kind() == Some(SyntaxKind::UpperIdent) {
             return; // no space before `<` in `Vec<`
         }
         if kind == SyntaxKind::Greater && self.type_angle_depth > 0 {
@@ -413,7 +408,10 @@ fn align_record_fields(output: &mut String) {
 fn parse_field_line(line: &str) -> Option<(usize, usize)> {
     let bytes = line.as_bytes();
     // Measure leading whitespace (must have some indent for a record field)
-    let indent = bytes.iter().take_while(|&&b| b == b' ' || b == b'\t').count();
+    let indent = bytes
+        .iter()
+        .take_while(|&&b| b == b' ' || b == b'\t')
+        .count();
     if indent == 0 || indent >= bytes.len() {
         return None;
     }
@@ -470,7 +468,6 @@ fn parse_field_line(line: &str) -> Option<(usize, usize)> {
     }
     Some((indent, name_end))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -598,15 +595,18 @@ mod tests {
 
     #[test]
     fn format_aligns_record_field_colons() {
-        let source = "data Particle = Particle {\n  x : F32,\n  y : F32,\n  vx : F32,\n  vy : F32,\n}\n";
-        let expected = "data Particle = Particle {\n  x  : F32,\n  y  : F32,\n  vx : F32,\n  vy : F32,\n}\n";
+        let source =
+            "data Particle = Particle {\n  x : F32,\n  y : F32,\n  vx : F32,\n  vy : F32,\n}\n";
+        let expected =
+            "data Particle = Particle {\n  x  : F32,\n  y  : F32,\n  vx : F32,\n  vy : F32,\n}\n";
         let result = format_default(source);
         assert_eq!(result, expected);
     }
 
     #[test]
     fn format_field_alignment_idempotent() {
-        let source = "data Particle = Particle {\n  x  : F32,\n  y  : F32,\n  vx : F32,\n  vy : F32,\n}\n";
+        let source =
+            "data Particle = Particle {\n  x  : F32,\n  y  : F32,\n  vx : F32,\n  vy : F32,\n}\n";
         let result = format_default(source);
         let result2 = format_default(&result);
         assert_eq!(result, result2, "field alignment is not idempotent");

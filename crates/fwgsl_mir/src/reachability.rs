@@ -44,7 +44,12 @@ pub fn compute_reachable(program: &MirProgram) -> ReachableSet {
                 walk_expr(expr, &mut reachable);
             }
             // Check for newly discovered functions
-            for new_fn in reachable.functions.difference(&visited).cloned().collect::<Vec<_>>() {
+            for new_fn in reachable
+                .functions
+                .difference(&visited)
+                .cloned()
+                .collect::<Vec<_>>()
+            {
                 visited.insert(new_fn.clone());
                 worklist.push(new_fn);
             }
@@ -213,7 +218,9 @@ fn walk_type(ty: &MirType, reachable: &mut ReachableSet) {
         MirType::Struct(name) => {
             reachable.structs.insert(name.clone());
         }
-        MirType::Vec(_, inner) | MirType::Array(inner, _) | MirType::RuntimeArray(inner) => walk_type(inner, reachable),
+        MirType::Vec(_, inner) | MirType::Array(inner, _) | MirType::RuntimeArray(inner) => {
+            walk_type(inner, reachable)
+        }
         MirType::Mat(_, _, inner) => walk_type(inner, reachable),
         _ => {}
     }
@@ -383,10 +390,7 @@ mod tests {
         let program = MirProgram {
             structs: vec![],
             globals: vec![],
-            functions: vec![
-                make_simple_fn("used", &[]),
-                make_simple_fn("unused", &[]),
-            ],
+            functions: vec![make_simple_fn("used", &[]), make_simple_fn("unused", &[])],
             entry_points: vec![make_entry_point("main", &["used"])],
             constants: vec![],
         };
@@ -449,7 +453,10 @@ mod tests {
                 body: vec![MirStmt::Let(
                     "s".to_string(),
                     MirType::Struct("Used".to_string()),
-                    MirExpr::ConstructStruct("Used".to_string(), vec![MirExpr::Lit(MirLit::F32(1.0))]),
+                    MirExpr::ConstructStruct(
+                        "Used".to_string(),
+                        vec![MirExpr::Lit(MirLit::F32(1.0))],
+                    ),
                 )],
                 return_expr: None,
                 comments: vec![],
@@ -490,7 +497,10 @@ mod tests {
                 params: vec![],
                 return_ty: MirType::Unit,
                 body: vec![MirStmt::IndexAssign(
-                    MirExpr::Var("used_buf".to_string(), MirType::Array(Box::new(MirType::F32), 64)),
+                    MirExpr::Var(
+                        "used_buf".to_string(),
+                        MirType::Array(Box::new(MirType::F32), 64),
+                    ),
                     MirExpr::Lit(MirLit::I32(0)),
                     MirExpr::Lit(MirLit::F32(1.0)),
                 )],
@@ -599,7 +609,10 @@ mod tests {
                 }],
                 return_ty: MirType::Struct("Used".to_string()),
                 body: vec![],
-                return_expr: Some(MirExpr::Var("s".to_string(), MirType::Struct("Used".to_string()))),
+                return_expr: Some(MirExpr::Var(
+                    "s".to_string(),
+                    MirType::Struct("Used".to_string()),
+                )),
                 comments: vec![],
             }],
             entry_points: vec![],

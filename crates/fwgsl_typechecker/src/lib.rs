@@ -8,6 +8,29 @@ use fwgsl_span::Span;
 use std::collections::HashMap;
 use std::fmt;
 
+/// Well-known type constructor name constants.
+///
+/// Centralises the magic strings used across the compiler so that adding or
+/// renaming a primitive type only requires a change in one place.
+pub mod ty_name {
+    // Scalar primitives
+    pub const I32: &str = "I32";
+    pub const U32: &str = "U32";
+    pub const F32: &str = "F32";
+    pub const BOOL: &str = "Bool";
+    pub const UNIT: &str = "()";
+    pub const STRING: &str = "String";
+
+    // Compound type constructors
+    pub const VEC: &str = "Vec";
+    pub const MAT: &str = "Mat";
+    pub const TENSOR: &str = "Tensor";
+
+    // Resource wrappers
+    pub const UNIFORM: &str = "Uniform";
+    pub const STORAGE: &str = "Storage";
+}
+
 /// Unique type variable identifier.
 pub type TyVarId = u32;
 
@@ -34,19 +57,19 @@ pub enum Ty {
 
 impl Ty {
     pub fn i32() -> Ty {
-        Ty::Con("I32".into())
+        Ty::Con(ty_name::I32.into())
     }
     pub fn f32() -> Ty {
-        Ty::Con("F32".into())
+        Ty::Con(ty_name::F32.into())
     }
     pub fn u32() -> Ty {
-        Ty::Con("U32".into())
+        Ty::Con(ty_name::U32.into())
     }
     pub fn bool() -> Ty {
-        Ty::Con("Bool".into())
+        Ty::Con(ty_name::BOOL.into())
     }
     pub fn unit() -> Ty {
-        Ty::Con("()".into())
+        Ty::Con(ty_name::UNIT.into())
     }
 
     pub fn arrow(from: Ty, to: Ty) -> Ty {
@@ -131,9 +154,9 @@ impl Ty {
 
 fn normalized_type_constructor_name(name: &str) -> Option<&'static str> {
     match name {
-        "Array" | "Tensor" | "Ten" => Some("Tensor"),
-        "Vec" | "Vector" => Some("Vec"),
-        "Mat" | "Matrix" => Some("Mat"),
+        "Array" | "Tensor" | "Ten" => Some(ty_name::TENSOR),
+        "Vec" | "Vector" => Some(ty_name::VEC),
+        "Mat" | "Matrix" => Some(ty_name::MAT),
         "Sca" | "Scalar" => Some("Scalar"),
         "Options" | "Option" => Some("Option"),
         _ => None,
@@ -167,16 +190,19 @@ pub fn normalize_type_aliases(ty: &Ty) -> Ty {
 }
 
 pub fn tensor_ty(dim: Ty, elem: Ty) -> Ty {
-    Ty::app(Ty::app(Ty::Con("Tensor".into()), dim), elem)
+    Ty::app(Ty::app(Ty::Con(ty_name::TENSOR.into()), dim), elem)
 }
 
 pub fn vector_ty(dim: u64, elem: Ty) -> Ty {
-    Ty::app(Ty::app(Ty::Con("Vec".into()), Ty::Nat(dim)), elem)
+    Ty::app(Ty::app(Ty::Con(ty_name::VEC.into()), Ty::Nat(dim)), elem)
 }
 
 pub fn matrix_ty(rows: u64, cols: u64, elem: Ty) -> Ty {
     Ty::app(
-        Ty::app(Ty::app(Ty::Con("Mat".into()), Ty::Nat(rows)), Ty::Nat(cols)),
+        Ty::app(
+            Ty::app(Ty::Con(ty_name::MAT.into()), Ty::Nat(rows)),
+            Ty::Nat(cols),
+        ),
         elem,
     )
 }
@@ -518,11 +544,11 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
 
     match &ty {
         Ty::Con(name) => match name.as_str() {
-            "I32" => Ok(WgslType::I32),
-            "U32" => Ok(WgslType::U32),
-            "F32" => Ok(WgslType::F32),
-            "Bool" => Ok(WgslType::Bool),
-            "()" => Ok(WgslType::Unit),
+            ty_name::I32 => Ok(WgslType::I32),
+            ty_name::U32 => Ok(WgslType::U32),
+            ty_name::F32 => Ok(WgslType::F32),
+            ty_name::BOOL => Ok(WgslType::Bool),
+            ty_name::UNIT => Ok(WgslType::Unit),
             other => Ok(WgslType::Struct(other.to_string())),
         },
         Ty::App(f, arg) => {
@@ -532,7 +558,7 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
                     // Mat N M Scalar
                     (Ty::App(fff, nn), Ty::Nat(m)) => {
                         if let (Ty::Con(name), Ty::Nat(n)) = (fff.as_ref(), nn.as_ref()) {
-                            if name == "Mat" {
+                            if name == ty_name::MAT {
                                 let scalar = ty_to_wgsl(arg)?;
                                 return Ok(WgslType::Mat(*n as u8, *m as u8, Box::new(scalar)));
                             }
@@ -540,12 +566,12 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
                         Err(format!("Cannot convert to WGSL: {}", ty))
                     }
                     // Vec N Scalar
-                    (Ty::Con(name), Ty::Nat(n)) if name == "Vec" => {
+                    (Ty::Con(name), Ty::Nat(n)) if name == ty_name::VEC => {
                         let scalar = ty_to_wgsl(arg)?;
                         Ok(WgslType::Vec(*n as u8, Box::new(scalar)))
                     }
                     // Tensor N Elem
-                    (Ty::Con(name), Ty::Nat(n)) if name == "Tensor" => {
+                    (Ty::Con(name), Ty::Nat(n)) if name == ty_name::TENSOR => {
                         let elem = ty_to_wgsl(arg)?;
                         let len = u32::try_from(*n)
                             .map_err(|_| format!("Tensor length out of range for WGSL: {}", n))?;
@@ -553,11 +579,11 @@ pub fn ty_to_wgsl(ty: &Ty) -> Result<WgslType, String> {
                     }
                     _ => Err(format!("Cannot convert to WGSL: {}", ty)),
                 },
-                Ty::Con(name) if name == "Tensor" => {
+                Ty::Con(name) if name == ty_name::TENSOR => {
                     let elem = ty_to_wgsl(arg)?;
                     Ok(WgslType::Array(Box::new(elem), None))
                 }
-                Ty::Con(name) if name == "Vec" => {
+                Ty::Con(name) if name == ty_name::VEC => {
                     // Vec applied to one arg (the dim), need another arg
                     Err(format!("Partially applied Vec: {}", ty))
                 }

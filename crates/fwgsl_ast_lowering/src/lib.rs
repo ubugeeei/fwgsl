@@ -159,7 +159,9 @@ impl AstLowering {
                         c.extend(comments.iter().cloned());
                         c
                     };
-                    if let Some(f) = self.lower_fun_decl(name, params, body, where_binds, *span, merged_comments) {
+                    if let Some(f) =
+                        self.lower_fun_decl(name, params, body, where_binds, *span, merged_comments)
+                    {
                         functions.push(f);
                     }
                 }
@@ -171,13 +173,22 @@ impl AstLowering {
                     span,
                     comments,
                 } => {
-                    if let Some(ep) = self.lower_entry_point(attributes, name, params, body, *span, comments.clone())
-                    {
+                    if let Some(ep) = self.lower_entry_point(
+                        attributes,
+                        name,
+                        params,
+                        body,
+                        *span,
+                        comments.clone(),
+                    ) {
                         entry_points.push(ep);
                     }
                 }
                 Decl::DataDecl {
-                    name, type_params, constructors, ..
+                    name,
+                    type_params,
+                    constructors,
+                    ..
                 } => {
                     data_types.push(self.lower_data_decl(name, type_params, constructors));
                 }
@@ -216,7 +227,11 @@ impl AstLowering {
                                     // Look up the enum type to determine bit width
                                     if let Some(dt_info) = self.data_types.get(type_name) {
                                         let count = dt_info.constructors.len() as u32;
-                                        let bits = if count <= 1 { 1 } else { (count as f64).log2().ceil() as u32 };
+                                        let bits = if count <= 1 {
+                                            1
+                                        } else {
+                                            (count as f64).log2().ceil() as u32
+                                        };
                                         (bits, Some(type_name.clone()))
                                     } else {
                                         // Unknown type — default to 1 bit
@@ -237,7 +252,7 @@ impl AstLowering {
                         .collect();
                     // Validate total bit width doesn't exceed base type
                     let max_bits: u32 = match &base_scheme.ty {
-                        Ty::Con(n) if n == "U32" || n == "I32" => 32,
+                        Ty::Con(n) if n == ty_name::U32 || n == ty_name::I32 => 32,
                         Ty::Con(n) if n == "U16" => 16,
                         Ty::Con(n) if n == "U8" => 8,
                         _ => 32,
@@ -300,10 +315,14 @@ impl AstLowering {
                         let mut method_info: Vec<(String, Ty)> = Vec::new();
                         if let Some(trait_info) = self.traits.get(tname) {
                             for m in methods {
-                                let mangled = fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
+                                let mangled =
+                                    fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
                                 for (tmethod_name, tmethod_ty) in &trait_info.methods {
                                     if tmethod_name == &m.name {
-                                        let concrete_ty = fwgsl_semantic::replace_all_vars(tmethod_ty, &impl_ty_scheme.ty);
+                                        let concrete_ty = fwgsl_semantic::replace_all_vars(
+                                            tmethod_ty,
+                                            &impl_ty_scheme.ty,
+                                        );
                                         method_info.push((mangled.clone(), concrete_ty));
                                     }
                                 }
@@ -311,7 +330,14 @@ impl AstLowering {
                         }
                         for (i, m) in methods.iter().enumerate() {
                             if let Some((mangled, concrete_ty)) = method_info.get(i) {
-                                if let Some(f) = self.lower_impl_method(mangled, &m.params, &m.body, concrete_ty, m.span, comments.clone()) {
+                                if let Some(f) = self.lower_impl_method(
+                                    mangled,
+                                    &m.params,
+                                    &m.body,
+                                    concrete_ty,
+                                    m.span,
+                                    comments.clone(),
+                                ) {
                                     functions.push(f);
                                 }
                             }
@@ -320,8 +346,16 @@ impl AstLowering {
                         // Standalone impl: lower each method as a regular function
                         // with the impl type as the first parameter type.
                         for m in methods {
-                            let mangled = fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
-                            if let Some(f) = self.lower_standalone_impl_method(&mangled, &m.params, &m.body, &impl_ty_scheme.ty, m.span, comments.clone()) {
+                            let mangled =
+                                fwgsl_semantic::mangle_instance_method(&m.name, &type_suffix);
+                            if let Some(f) = self.lower_standalone_impl_method(
+                                &mangled,
+                                &m.params,
+                                &m.body,
+                                &impl_ty_scheme.ty,
+                                m.span,
+                                comments.clone(),
+                            ) {
                                 // Register the inferred function type so subsequent
                                 // call sites (method-call syntax, pipelines) resolve
                                 // the correct return type.
@@ -482,7 +516,11 @@ impl AstLowering {
 
         for (i, pat) in params.iter().enumerate() {
             // First parameter gets the impl type; rest are inferred.
-            let param_ty = if i == 0 { impl_ty.clone() } else { self.engine.fresh_var() };
+            let param_ty = if i == 0 {
+                impl_ty.clone()
+            } else {
+                self.engine.fresh_var()
+            };
             let pname = pat_name(pat);
             self.bind_pattern(pat, &param_ty, &mut local_env);
             hir_params.push((pname, param_ty));
@@ -590,18 +628,30 @@ impl AstLowering {
                     .enumerate()
                     .map(|(i, t)| {
                         let ty = self.convert_syntax_type_pure(t);
-                        HirFieldDef { name: format!("field{}", i), ty, attributes: vec![] }
+                        HirFieldDef {
+                            name: format!("field{}", i),
+                            ty,
+                            attributes: vec![],
+                        }
                     })
                     .collect(),
                 ConFields::Record(fields) => fields
                     .iter()
                     .map(|f| {
                         let ty = self.convert_syntax_type_pure(&f.ty);
-                        let attrs = f.attributes.iter().map(|a| HirAttribute {
-                            name: a.name.clone(),
-                            args: a.args.clone(),
-                        }).collect();
-                        HirFieldDef { name: f.name.clone(), ty, attributes: attrs }
+                        let attrs = f
+                            .attributes
+                            .iter()
+                            .map(|a| HirAttribute {
+                                name: a.name.clone(),
+                                args: a.args.clone(),
+                            })
+                            .collect();
+                        HirFieldDef {
+                            name: f.name.clone(),
+                            ty,
+                            attributes: attrs,
+                        }
                     })
                     .collect(),
             };
@@ -710,11 +760,8 @@ impl AstLowering {
                             )
                         } else {
                             // Multi-param lambda: reduce first param, recurse on remaining
-                            let inner_lambda = Expr::Lambda(
-                                rest_pats.to_vec(),
-                                body.clone(),
-                                *lam_span,
-                            );
+                            let inner_lambda =
+                                Expr::Lambda(rest_pats.to_vec(), body.clone(), *lam_span);
                             let (hir_body, body_ty) =
                                 self.lower_expr(&inner_lambda, &mut local_env);
                             (
@@ -771,12 +818,7 @@ impl AstLowering {
                     let expected = Ty::arrow(arg_ty, ret_ty.clone());
                     self.engine.unify(&func_ty, &expected, *span);
                     (
-                        HirExpr::App(
-                            Box::new(hir_func),
-                            Box::new(hir_arg),
-                            ret_ty.clone(),
-                            *span,
-                        ),
+                        HirExpr::App(Box::new(hir_func), Box::new(hir_arg), ret_ty.clone(), *span),
                         ret_ty,
                     )
                 }
@@ -936,7 +978,8 @@ impl AstLowering {
                 if let Some(bf_name) = name {
                     if let Some(bf_fields) = self.bitfield_fields.get(bf_name).cloned() {
                         // Bitfield construction: lower to shift+OR chain
-                        return self.lower_bitfield_construct(bf_name, &bf_fields, fields, env, *span);
+                        return self
+                            .lower_bitfield_construct(bf_name, &bf_fields, fields, env, *span);
                     }
                 }
                 // Regular record construction: Name { f1 = e1, f2 = e2 }
@@ -958,9 +1001,18 @@ impl AstLowering {
                                             "missing field `{}` in record construction of `{}`",
                                             field_name, con_name
                                         ))
-                                        .with_label(fwgsl_diagnostics::Label::primary(*span, "missing field")),
+                                        .with_label(
+                                            fwgsl_diagnostics::Label::primary(
+                                                *span,
+                                                "missing field",
+                                            ),
+                                        ),
                                     );
-                                    args.push(HirExpr::Lit(HirLit::Int(0), field_ty.clone(), *span));
+                                    args.push(HirExpr::Lit(
+                                        HirLit::Int(0),
+                                        field_ty.clone(),
+                                        *span,
+                                    ));
                                 }
                             }
                             let result_ty = con_info.result_ty.clone();
@@ -997,7 +1049,10 @@ impl AstLowering {
                                 scalar
                             } else {
                                 Ty::app(
-                                    Ty::app(Ty::Con("Vec".into()), Ty::Nat(field.len() as u64)),
+                                    Ty::app(
+                                        Ty::Con(ty_name::VEC.into()),
+                                        Ty::Nat(field.len() as u64),
+                                    ),
                                     scalar,
                                 )
                             };
@@ -1035,7 +1090,8 @@ impl AstLowering {
 
                 // 3. Regular field access (struct fields, bitfield fields)
                 // Try to resolve the field type from the constructor info
-                let result_ty = self.resolve_record_field_type(&expr_ty_final, field)
+                let result_ty = self
+                    .resolve_record_field_type(&expr_ty_final, field)
                     .unwrap_or_else(|| self.engine.fresh_var());
                 (
                     HirExpr::FieldAccess(
@@ -1090,7 +1146,7 @@ impl AstLowering {
                 let n = total_components.clamp(2, 4);
                 let vec_name = format!("vec{}", n);
                 let result_ty = Ty::app(
-                    Ty::app(Ty::Con("Vec".into()), Ty::Nat(n)),
+                    Ty::app(Ty::Con(ty_name::VEC.into()), Ty::Nat(n)),
                     scalar_ty.clone(),
                 );
 
@@ -1123,7 +1179,7 @@ impl AstLowering {
 
             Expr::Not(inner, span) => {
                 let (hir_inner, _inner_ty) = self.lower_expr(inner, env);
-                let bool_ty = Ty::Con("Bool".into());
+                let bool_ty = Ty::bool();
                 (
                     HirExpr::UnaryNot(Box::new(hir_inner), bool_ty.clone(), *span),
                     bool_ty,
@@ -1185,7 +1241,10 @@ impl AstLowering {
 
                 // Try to resolve bitfield type from the finalized base type
                 let bf_match = if let Ty::Con(ref type_name) = base_ty_final {
-                    self.bitfield_fields.get(type_name).cloned().map(|bf| (type_name.clone(), bf))
+                    self.bitfield_fields
+                        .get(type_name)
+                        .cloned()
+                        .map(|bf| (type_name.clone(), bf))
                 } else {
                     None
                 };
@@ -1205,7 +1264,9 @@ impl AstLowering {
                 if let Some((type_name, bf_fields)) = bf_match {
                     let ty = Ty::Con(type_name.clone());
                     self.engine.unify(&base_ty, &ty, *span);
-                    return self.lower_bitfield_update(&type_name, hir_base, &bf_fields, fields, env, *span);
+                    return self.lower_bitfield_update(
+                        &type_name, hir_base, &bf_fields, fields, env, *span,
+                    );
                 }
 
                 // Non-bitfield record update: expr { field1 = val1, field2 = val2 }
@@ -1293,7 +1354,10 @@ impl AstLowering {
                     fwgsl_diagnostics::Diagnostic::error(
                         "Record update syntax requires a record type (data type with named fields)",
                     )
-                    .with_label(fwgsl_diagnostics::Label::primary(*span, "not a record type")),
+                    .with_label(fwgsl_diagnostics::Label::primary(
+                        *span,
+                        "not a record type",
+                    )),
                 );
                 (hir_base, base_ty)
             }
@@ -1432,7 +1496,7 @@ impl AstLowering {
             Lit::Int(v) => (HirLit::Int(*v), Ty::i32()),
             Lit::UInt(v) => (HirLit::UInt(*v), Ty::u32()),
             Lit::Float(v) => (HirLit::Float(*v), Ty::f32()),
-            Lit::String(_) => (HirLit::Int(0), Ty::Con("String".into())),
+            Lit::String(_) => (HirLit::Int(0), Ty::Con(ty_name::STRING.into())),
             Lit::Char(_) => (HirLit::Int(0), Ty::Con("Char".into())),
         }
     }
@@ -1475,7 +1539,7 @@ impl AstLowering {
                     }
                     Lit::UInt(_) => Ty::u32(),
                     Lit::Float(_) => Ty::f32(),
-                    Lit::String(_) => Ty::Con("String".into()),
+                    Lit::String(_) => Ty::Con(ty_name::STRING.into()),
                     Lit::Char(_) => Ty::Con("Char".into()),
                 };
                 self.engine.unify(ty, &lit_ty, *span);
@@ -1611,7 +1675,12 @@ impl AstLowering {
                 if elems.is_empty() {
                     Ty::unit()
                 } else {
-                    Ty::Tuple(elems.iter().map(|e| self.convert_syntax_type_pure(e)).collect())
+                    Ty::Tuple(
+                        elems
+                            .iter()
+                            .map(|e| self.convert_syntax_type_pure(e))
+                            .collect(),
+                    )
                 }
             }
             Type::Unit(_) => Ty::unit(),
@@ -1625,7 +1694,7 @@ impl AstLowering {
             Type::Con(name, _) => name.clone(),
             Type::App(f, _, _) => self.extract_address_space(f),
             Type::Paren(inner, _) => self.extract_address_space(inner),
-            _ => "Uniform".to_string(),
+            _ => ty_name::UNIFORM.to_string(),
         }
     }
 
@@ -1708,7 +1777,13 @@ impl AstLowering {
         }
 
         (
-            HirExpr::BitfieldUpdate(type_name.to_string(), Box::new(hir_base), hir_fields, ty.clone(), span),
+            HirExpr::BitfieldUpdate(
+                type_name.to_string(),
+                Box::new(hir_base),
+                hir_fields,
+                ty.clone(),
+                span,
+            ),
             ty,
         )
     }
@@ -1854,12 +1929,7 @@ impl AstLowering {
             Ty::arrow(init_ty.clone(), result_ty.clone()),
             span,
         );
-        let else_branch = HirExpr::App(
-            Box::new(app1),
-            Box::new(hir_body),
-            result_ty.clone(),
-            span,
-        );
+        let else_branch = HirExpr::App(Box::new(app1), Box::new(hir_body), result_ty.clone(), span);
 
         let loop_body = HirExpr::If(
             Box::new(cond),
@@ -1872,10 +1942,7 @@ impl AstLowering {
         // Build HirExpr::Loop
         let hir_loop = HirExpr::Loop(
             loop_name,
-            vec![
-                (idx_name, hir_start),
-                (acc_name, hir_init),
-            ],
+            vec![(idx_name, hir_start), (acc_name, hir_init)],
             Box::new(loop_body),
             result_ty.clone(),
             span,
@@ -1939,10 +2006,12 @@ impl AstLowering {
                 let op_str = op.to_str();
                 if let Some(mangled) = self.resolve_operator_trait(op_str, &lhs_ty) {
                     // Rewrite BinOp → App(App(Var(mangled), lhs), rhs)
-                    let method_ty = Ty::arrow(lhs_ty, Ty::arrow(final_rhs.ty().clone(), final_ty.clone()));
+                    let method_ty =
+                        Ty::arrow(lhs_ty, Ty::arrow(final_rhs.ty().clone(), final_ty.clone()));
                     let var_expr = HirExpr::Var(mangled, method_ty, span);
                     let partial_ty = Ty::arrow(final_rhs.ty().clone(), final_ty.clone());
-                    let app1 = HirExpr::App(Box::new(var_expr), Box::new(final_lhs), partial_ty, span);
+                    let app1 =
+                        HirExpr::App(Box::new(var_expr), Box::new(final_lhs), partial_ty, span);
                     HirExpr::App(Box::new(app1), Box::new(final_rhs), final_ty, span)
                 } else {
                     HirExpr::BinOp(op, Box::new(final_lhs), Box::new(final_rhs), final_ty, span)
@@ -2056,7 +2125,9 @@ impl AstLowering {
             for (method_name, _) in &trait_info.methods {
                 if method_name == op {
                     for inst in &self.impls {
-                        if inst.trait_name.as_deref() == Some(trait_info.name.as_str()) && inst.ty == *operand_ty {
+                        if inst.trait_name.as_deref() == Some(trait_info.name.as_str())
+                            && inst.ty == *operand_ty
+                        {
                             if let Some(mangled) = inst.methods.get(op) {
                                 return Some(mangled.clone());
                             }
@@ -2078,7 +2149,9 @@ impl AstLowering {
                     let concrete = extract_first_arg_type(ty);
                     if let Some(concrete_ty) = concrete {
                         for inst in &self.impls {
-                            if inst.trait_name.as_deref() == Some(trait_info.name.as_str()) && inst.ty == concrete_ty {
+                            if inst.trait_name.as_deref() == Some(trait_info.name.as_str())
+                                && inst.ty == concrete_ty
+                            {
                                 if let Some(mangled) = inst.methods.get(name) {
                                     return mangled.clone();
                                 }
@@ -2115,11 +2188,9 @@ impl AstLowering {
                     .collect(),
             ),
             HirPattern::Lit(lit) => HirPattern::Lit(lit),
-            HirPattern::Or(alts) => HirPattern::Or(
-                alts.into_iter()
-                    .map(|p| self.finalize_pattern(p))
-                    .collect(),
-            ),
+            HirPattern::Or(alts) => {
+                HirPattern::Or(alts.into_iter().map(|p| self.finalize_pattern(p)).collect())
+            }
         }
     }
 }
@@ -2355,7 +2426,11 @@ mod tests {
         let mut lowering = AstLowering::new(&sa);
         let hir = lowering.lower_program(&program);
 
-        let dt = hir.data_types.iter().find(|dt| dt.name == "Color").expect("Color data type");
+        let dt = hir
+            .data_types
+            .iter()
+            .find(|dt| dt.name == "Color")
+            .expect("Color data type");
         assert_eq!(dt.name, "Color");
         assert_eq!(dt.constructors.len(), 3);
         assert_eq!(dt.constructors[0].name, "Red");

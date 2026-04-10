@@ -1160,7 +1160,10 @@ mod codegen_tests {
                 fields: vec![MirField {
                     name: "gid".to_string(),
                     ty: MirType::Vec(3, Box::new(MirType::U32)),
-                    attributes: vec![MirAttribute { name: "builtin".to_string(), args: vec!["global_invocation_id".to_string()] }],
+                    attributes: vec![MirAttribute {
+                        name: "builtin".to_string(),
+                        args: vec!["global_invocation_id".to_string()],
+                    }],
                 }],
             }],
             globals: vec![],
@@ -1198,11 +1201,7 @@ mod codegen_tests {
             "WGSL: {}",
             wgsl
         );
-        assert!(
-            wgsl.contains("input: ComputeInput"),
-            "WGSL: {}",
-            wgsl
-        );
+        assert!(wgsl.contains("input: ComputeInput"), "WGSL: {}", wgsl);
         assert!(
             wgsl.contains("@builtin(global_invocation_id) gid: vec3<u32>"),
             "WGSL: {}",
@@ -2044,7 +2043,9 @@ mod trait_tests {
         assert!(!has_errors, "trait decl should parse without errors");
         assert_eq!(program.decls.len(), 1);
         match &program.decls[0] {
-            Decl::TraitDecl { name, var, methods, .. } => {
+            Decl::TraitDecl {
+                name, var, methods, ..
+            } => {
                 assert_eq!(name, "Num");
                 assert_eq!(var, "a");
                 assert_eq!(methods.len(), 2);
@@ -2062,7 +2063,11 @@ mod trait_tests {
         assert!(!has_errors, "impl decl should parse without errors");
         assert_eq!(program.decls.len(), 1);
         match &program.decls[0] {
-            Decl::ImplDecl { trait_name, methods, .. } => {
+            Decl::ImplDecl {
+                trait_name,
+                methods,
+                ..
+            } => {
                 assert_eq!(trait_name.as_deref(), Some("Num"));
                 assert_eq!(methods.len(), 2);
                 assert_eq!(methods[0].name, "add");
@@ -2076,7 +2081,10 @@ mod trait_tests {
     fn parse_trait_with_operator_methods() {
         let source = "trait Num a where\n  (+) : a -> a -> a\n  (-) : a -> a -> a";
         let (program, has_errors) = parse_raw(source);
-        assert!(!has_errors, "trait with operators should parse without errors");
+        assert!(
+            !has_errors,
+            "trait with operators should parse without errors"
+        );
         match &program.decls[0] {
             Decl::TraitDecl { methods, .. } => {
                 assert_eq!(methods[0].name, "+");
@@ -2158,7 +2166,10 @@ test : F32 -> F32
 test x = display x
 "#;
         let (_, has_errors) = parse_and_analyze(source);
-        assert!(!has_errors, "trait-using program should pass semantic analysis");
+        assert!(
+            !has_errors,
+            "trait-using program should pass semantic analysis"
+        );
     }
 
     #[test]
@@ -2187,13 +2198,33 @@ makeFlags : I32 -> I32 -> Flags
 makeFlags l s = Flags { layer = l, stencil = s }
 "#;
         let wgsl = compile_to_wgsl(source).expect("bitfield construction should compile");
-        assert!(wgsl.contains("fn makeFlags("), "WGSL should contain fn makeFlags, got: {}", wgsl);
+        assert!(
+            wgsl.contains("fn makeFlags("),
+            "WGSL should contain fn makeFlags, got: {}",
+            wgsl
+        );
         // Should contain bitwise ops: &, |, <<
-        assert!(wgsl.contains("&"), "WGSL should contain & for masking, got: {}", wgsl);
-        assert!(wgsl.contains("|"), "WGSL should contain | for combining, got: {}", wgsl);
-        assert!(wgsl.contains("<<"), "WGSL should contain << for shifting, got: {}", wgsl);
+        assert!(
+            wgsl.contains("&"),
+            "WGSL should contain & for masking, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("|"),
+            "WGSL should contain | for combining, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("<<"),
+            "WGSL should contain << for shifting, got: {}",
+            wgsl
+        );
         // Return type should be u32 (bitfield base type)
-        assert!(wgsl.contains("-> u32"), "WGSL should return u32, got: {}", wgsl);
+        assert!(
+            wgsl.contains("-> u32"),
+            "WGSL should return u32, got: {}",
+            wgsl
+        );
     }
 
     #[test]
@@ -2209,7 +2240,11 @@ makeFlags v l = Flags { visible = v, layer = l }
 "#;
         let wgsl = compile_to_wgsl(source).expect("bitfield construction with bool should compile");
         // 1-bit bool fields should use select(0u, 1u, val)
-        assert!(wgsl.contains("select("), "WGSL should contain select for bool field, got: {}", wgsl);
+        assert!(
+            wgsl.contains("select("),
+            "WGSL should contain select for bool field, got: {}",
+            wgsl
+        );
     }
 
     #[test]
@@ -2225,10 +2260,22 @@ updateLayer : Flags -> I32 -> Flags
 updateLayer f newLayer = f { layer = newLayer }
 "#;
         let wgsl = compile_to_wgsl(source).expect("bitfield update should compile");
-        assert!(wgsl.contains("fn updateLayer("), "WGSL should contain fn updateLayer, got: {}", wgsl);
+        assert!(
+            wgsl.contains("fn updateLayer("),
+            "WGSL should contain fn updateLayer, got: {}",
+            wgsl
+        );
         // Should clear bits with AND mask and set new bits with OR
-        assert!(wgsl.contains("&"), "WGSL should contain & for clearing, got: {}", wgsl);
-        assert!(wgsl.contains("|"), "WGSL should contain | for setting, got: {}", wgsl);
+        assert!(
+            wgsl.contains("&"),
+            "WGSL should contain & for clearing, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("|"),
+            "WGSL should contain | for setting, got: {}",
+            wgsl
+        );
     }
 
     #[test]
@@ -2250,7 +2297,10 @@ test x = x
         sa.analyze(&program);
         let mut lowering = AstLowering::new(&sa);
         lowering.lower_program(&program);
-        assert!(lowering.has_errors(), "bitfield exceeding 32 bits should produce an error");
+        assert!(
+            lowering.has_errors(),
+            "bitfield exceeding 32 bits should produce an error"
+        );
     }
 
     #[test]
@@ -2268,9 +2318,18 @@ main idx =
   let f = Flags { layer = 5, stencil = 128 }
   in writeAt output idx f
 "#;
-        let wgsl = compile_to_wgsl(source).expect("bitfield construction in entry point should compile");
-        assert!(wgsl.contains("@compute"), "WGSL should contain @compute, got: {}", wgsl);
-        assert!(wgsl.contains("0u |"), "WGSL should start accumulator from 0u, got: {}", wgsl);
+        let wgsl =
+            compile_to_wgsl(source).expect("bitfield construction in entry point should compile");
+        assert!(
+            wgsl.contains("@compute"),
+            "WGSL should contain @compute, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("0u |"),
+            "WGSL should start accumulator from 0u, got: {}",
+            wgsl
+        );
     }
 }
 

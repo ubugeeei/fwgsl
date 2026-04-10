@@ -7,6 +7,7 @@
 -- | A 2D point with floating-point coordinates.
 -- Trailing doc style (`-- ^`) on each field:
 data Point = Point {
+  -- | X coordinate.
   x : F32, -- ^ The x coordinate.
   y : F32, -- ^ The y coordinate.
 }
