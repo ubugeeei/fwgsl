@@ -11,8 +11,9 @@ data Shape
   = Circle F32
   | Rect (Vec<2, F32>)
 
-@group(0) @binding(0) storage(read_write) output : Array<F32, 1024>
-@group(0) @binding(1) uniform params  : ShapeParams
+@group(0)
+  @binding(0) storage(read_write) output : Array<F32, 1024>
+  @binding(1) uniform             params : ShapeParams
 
 scaleBy : F32 -> F32 -> F32
 scaleBy factor x = x * factor

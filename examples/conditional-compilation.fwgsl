@@ -8,6 +8,29 @@
 -- Conditional import: only import Debug module when debug is enabled
 import Debug when cfg.debug
 
+-- ═══════════════════════════════════════════════════════════════════════
+-- Conditional compilation of binding declarations
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Always-present bindings using group block syntax
+@group(0)
+  @binding(0) uniform frame   : Vec<4, F32>
+  @binding(1) uniform params  : Vec<4, F32>
+
+-- Debug-only bindings: extra storage buffer for diagnostic output
+when cfg.debug
+  @group(1)
+    @binding(0) storage(read_write) debugOutput : Array<Vec<4, F32>, 64>
+    @binding(1) uniform             debugFlags  : Vec<4, F32>
+
+-- MSAA-specific bindings: multi-sample resolve targets
+when cfg.msaa
+  @group(2) @binding(0) uniform msaaParams : Vec<4, F32>
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Conditional function declarations
+-- ═══════════════════════════════════════════════════════════════════════
+
 -- Block form: group related declarations behind one flag
 when cfg.debug
   debugColor : Vec<4, F32> -> Vec<4, F32>

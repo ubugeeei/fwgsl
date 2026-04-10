@@ -29,9 +29,9 @@
 (type_signature name: (identifier) @function)
 
 ; Binding declarations (GPU resources)
-(binding_declaration name: (identifier) @variable)
 (binding_declaration "group" @attribute)
-(binding_declaration "binding" @attribute)
+(binding_entry name: (identifier) @variable)
+(binding_entry "binding" @attribute)
 
 ; Builtin function calls ($prefixed)
 (builtin_identifier) @function.builtin

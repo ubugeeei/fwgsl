@@ -20,8 +20,9 @@ data Params = Params {
   factor    : F32,
 }
 
-@group(0) @binding(0) uniform params  : Params
-@group(0) @binding(1) storage(read_write) output : Array<Vec<4, F32>, 64>
+@group(0)
+  @binding(0) uniform             params : Params
+  @binding(1) storage(read_write) output : Array<Vec<4, F32>, 64>
 
 data ComputeInput = ComputeInput {
   @builtin(global_invocation_id) gid : Vec<3, U32>

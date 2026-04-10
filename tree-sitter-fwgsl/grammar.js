@@ -108,9 +108,17 @@ module.exports = grammar({
 
     // -- Binding declarations (GPU resources) ---------------------------------
 
+    // Both flat and grouped binding declarations.
+    // Flat:    @group(N) @binding(N) uniform name : Type
+    // Grouped: @group(N) \n @binding(N) uniform name : Type \n @binding(M) ...
     binding_declaration: ($) =>
-      seq(
+      prec.right(seq(
         "@", "group", "(", $.expression, ")",
+        repeat1($.binding_entry),
+      )),
+
+    binding_entry: ($) =>
+      seq(
         "@", "binding", "(", $.expression, ")",
         field("space", choice("uniform", seq("storage", optional(seq("(", $.identifier, ")"))))),
         field("name", $.identifier),
@@ -267,10 +275,13 @@ module.exports = grammar({
         $.type_constructor,
         $.type_variable,
         $.type_application,
+        $.type_literal,
         $.tuple_type,
         $.unit_type,
         $.parenthesized_type,
       ),
+
+    type_literal: ($) => $.integer_literal,
 
     type_constructor: ($) => $.upper_identifier,
 

@@ -39,10 +39,11 @@ data DrawParams = DrawParams {
 }
 
 -- Resources
-@group(0) @binding(0) uniform             matFlags : MaterialFlags
-@group(0) @binding(1) uniform             objFlags : ObjectFlags
-@group(0) @binding(2) uniform             params   : DrawParams
-@group(0) @binding(3) storage(read_write) output   : Array<Vec<4, F32>, 64>
+@group(0)
+  @binding(0) uniform             matFlags : MaterialFlags
+  @binding(1) uniform             objFlags : ObjectFlags
+  @binding(2) uniform             params   : DrawParams
+  @binding(3) storage(read_write) output   : Array<Vec<4, F32>, 64>
 
 -- Impl methods on bitfield types — dispatched via method-call syntax.
 -- Compiles to a standalone function with mangled name (isShiny_MaterialFlags).

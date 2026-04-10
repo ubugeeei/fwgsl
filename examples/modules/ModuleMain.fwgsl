@@ -3,8 +3,9 @@ module ModuleMain
 import Utils
 import Math.Vec2
 
-@group(0) @binding(0) storage(read_write) input  : Array<F32, 64>
-@group(0) @binding(1) storage(read_write) output : Array<F32, 64>
+@group(0)
+  @binding(0) storage(read_write) input  : Array<F32, 64>
+  @binding(1) storage(read_write) output : Array<F32, 64>
 
 data ComputeInput = ComputeInput {
   @builtin(global_invocation_id) gid : Vec<3, U32>

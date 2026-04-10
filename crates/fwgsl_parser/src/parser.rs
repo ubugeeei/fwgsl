@@ -505,6 +505,8 @@ pub struct Parser {
     fuel: u32,
     diagnostics: DiagnosticSink,
     source: String,
+    /// Buffer for extra declarations produced by group block expansion.
+    pending_decls: Vec<Decl>,
 }
 
 const MAX_FUEL: u32 = 10_000;
@@ -520,6 +522,7 @@ impl Parser {
             fuel: MAX_FUEL,
             diagnostics: DiagnosticSink::new(),
             source: source.to_owned(),
+            pending_decls: Vec::new(),
         }
     }
 
@@ -728,6 +731,13 @@ impl Parser {
     pub fn parse_program(&mut self) -> Program {
         let mut decls = Vec::new();
         loop {
+            // Drain any buffered decls from group block expansion first,
+            // before checking for EOF or consuming layout tokens.
+            if !self.pending_decls.is_empty() {
+                decls.push(self.pending_decls.remove(0));
+                continue;
+            }
+
             self.skip_trivia();
             // Also consume layout tokens between decls at top level
             while self.eat(SyntaxKind::LayoutSemicolon)
@@ -969,6 +979,11 @@ impl Parser {
     // ═════════════════════════════════════════════════════════════════════
 
     fn parse_decl(&mut self) -> Option<Decl> {
+        // Drain any buffered decls from group block expansion first.
+        if !self.pending_decls.is_empty() {
+            return Some(self.pending_decls.remove(0));
+        }
+
         self.skip_trivia();
         match self.peek_non_trivia() {
             SyntaxKind::At => {
@@ -980,7 +995,13 @@ impl Parser {
                 // Check if the first attribute name is "group" — indicates a binding
                 let is_binding = self.is_binding_decl_ahead();
                 if is_binding {
-                    Some(self.parse_binding_decl(start))
+                    let mut decls = self.parse_binding_decls(start);
+                    if decls.is_empty() {
+                        return None;
+                    }
+                    let first = decls.remove(0);
+                    self.pending_decls = decls;
+                    Some(first)
                 } else {
                     // Entry point: parse attributes, then annotated function declaration.
                     let mut attributes = Vec::new();
@@ -1447,6 +1468,12 @@ impl Parser {
     fn parse_when_body(&mut self, parent_col: u32) -> Vec<Decl> {
         let mut decls = Vec::new();
         loop {
+            // Drain any buffered decls from group block expansion.
+            if !self.pending_decls.is_empty() {
+                decls.push(self.pending_decls.remove(0));
+                continue;
+            }
+
             self.skip_trivia();
             self.eat_layout_semi();
             self.skip_trivia();
@@ -1742,17 +1769,97 @@ impl Parser {
         self.text_of(&self.tokens[i]) == "group"
     }
 
-    /// Parse a binding declaration starting from `@group(N) @binding(N) uniform/storage name : Type`.
-    /// Also handles group blocks:
+    /// Parse binding declaration(s) starting from `@group(N)`.
+    ///
+    /// Flat syntax (single binding):
     /// ```text
-    /// @group(N)
+    /// @group(0) @binding(0) uniform name : Type
+    /// ```
+    ///
+    /// Group block syntax (multiple bindings sharing a group):
+    /// ```text
+    /// @group(0)
     ///   @binding(0) uniform name1 : Type1
     ///   @binding(1) storage name2 : Type2
     /// ```
-    fn parse_binding_decl(&mut self, start: u32) -> Decl {
-        let (group, binding) = self.parse_group_binding_attrs();
+    /// Check whether there is a newline (or layout semicolon) between current
+    /// position and the next non-trivia token. Used to distinguish flat
+    /// `@group(N) @binding(N)` from group block syntax.
+    fn has_newline_before_next_token(&self) -> bool {
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            let kind = self.tokens[i].kind;
+            if kind == SyntaxKind::Newline || kind == SyntaxKind::LayoutSemicolon {
+                return true;
+            }
+            if !kind.is_trivia() {
+                return false;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    fn parse_binding_decls(&mut self, start: u32) -> Vec<Decl> {
+        let group_col = self.column_of(self.current_span().start);
+        let group = self.parse_binding_numbered_attr("group");
+
+        // Determine flat vs group block: if there's a newline after @group(N)
+        // before the next token, it's a group block.
+        let is_group_block = self.has_newline_before_next_token();
         self.skip_trivia();
-        self.parse_binding_body(start, group, binding)
+
+        if !is_group_block && self.is_binding_attr_ahead() {
+            // Flat: @group(N) @binding(N) uniform/storage name : Type
+            let binding = self.parse_binding_numbered_attr("binding");
+            self.skip_trivia();
+            vec![self.parse_binding_body(start, group, binding)]
+        } else {
+            // Group block: collect indented @binding(...) declarations
+            let mut decls = Vec::new();
+            loop {
+                self.skip_trivia();
+                self.eat_layout_semi();
+                self.skip_trivia();
+
+                if self.at_end() || self.at(SyntaxKind::LayoutBraceClose) {
+                    break;
+                }
+
+                let next_col = self.column_of(self.current_span().start);
+                if next_col <= group_col {
+                    break;
+                }
+
+                if !self.is_binding_attr_ahead() {
+                    break;
+                }
+
+                let binding_start = self.current_span().start;
+                let binding = self.parse_binding_numbered_attr("binding");
+                self.skip_trivia();
+                decls.push(self.parse_binding_body(binding_start, group, binding));
+            }
+            decls
+        }
+    }
+
+    /// Check if the next non-trivia tokens are `@binding` (without consuming).
+    fn is_binding_attr_ahead(&self) -> bool {
+        let mut i = self.pos;
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::At {
+            return false;
+        }
+        i += 1;
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        i < self.tokens.len()
+            && self.tokens[i].kind == SyntaxKind::Ident
+            && self.text_of(&self.tokens[i]) == "binding"
     }
 
     /// Parse `extern name : type` or `extern (+) : type`.
@@ -1854,53 +1961,30 @@ impl Parser {
         }
     }
 
-    /// Parse `@group(N) @binding(N)` attributes for a binding declaration.
-    /// Returns (group, binding).
-    fn parse_group_binding_attrs(&mut self) -> (u32, u32) {
-        let group;
-        let binding;
-
-        // Parse `@group(N)`
+    /// Parse `@name(N)` — a numbered binding attribute like `@group(0)` or `@binding(1)`.
+    /// Consumes `@`, the identifier, `(`, integer literal, `)` and returns the integer value.
+    fn parse_binding_numbered_attr(&mut self, expected: &str) -> u32 {
         self.expect(SyntaxKind::At);
         self.skip_trivia();
         let attr_tok = self.expect(SyntaxKind::Ident);
         let attr = self.text_of(&attr_tok).to_owned();
-        if attr != "group" {
+        if attr != expected {
             self.diagnostics.push(
-                Diagnostic::error(format!("expected 'group', found '{}'", attr))
-                    .with_label(Label::primary(attr_tok.span, "expected 'group'")),
+                Diagnostic::error(format!("expected '{}', found '{}'", expected, attr))
+                    .with_label(Label::primary(
+                        attr_tok.span,
+                        format!("expected '{}'", expected),
+                    )),
             );
         }
         self.skip_trivia();
         self.expect(SyntaxKind::LParen);
         self.skip_trivia();
         let val_tok = self.expect(SyntaxKind::IntLiteral);
-        group = parse_int_literal(self.text_of(&val_tok)).max(0) as u32;
+        let value = parse_int_literal(self.text_of(&val_tok)).max(0) as u32;
         self.skip_trivia();
         self.expect(SyntaxKind::RParen);
-        self.skip_trivia();
-
-        // Parse `@binding(N)`
-        self.expect(SyntaxKind::At);
-        self.skip_trivia();
-        let attr_tok2 = self.expect(SyntaxKind::Ident);
-        let attr2 = self.text_of(&attr_tok2).to_owned();
-        if attr2 != "binding" {
-            self.diagnostics.push(
-                Diagnostic::error(format!("expected 'binding', found '{}'", attr2))
-                    .with_label(Label::primary(attr_tok2.span, "expected 'binding'")),
-            );
-        }
-        self.skip_trivia();
-        self.expect(SyntaxKind::LParen);
-        self.skip_trivia();
-        let val_tok2 = self.expect(SyntaxKind::IntLiteral);
-        binding = parse_int_literal(self.text_of(&val_tok2)).max(0) as u32;
-        self.skip_trivia();
-        self.expect(SyntaxKind::RParen);
-        self.skip_trivia();
-
-        (group, binding)
+        value
     }
 
     /// Parse `bitfield Name : U32 = { field1 : width, field2 : width, ... }`

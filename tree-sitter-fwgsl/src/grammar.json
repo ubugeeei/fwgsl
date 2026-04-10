@@ -479,28 +479,44 @@
       }
     },
     "binding_declaration": {
+      "type": "PREC_RIGHT",
+      "value": 0,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "@"
+          },
+          {
+            "type": "STRING",
+            "value": "group"
+          },
+          {
+            "type": "STRING",
+            "value": "("
+          },
+          {
+            "type": "SYMBOL",
+            "name": "expression"
+          },
+          {
+            "type": "STRING",
+            "value": ")"
+          },
+          {
+            "type": "REPEAT1",
+            "content": {
+              "type": "SYMBOL",
+              "name": "binding_entry"
+            }
+          }
+        ]
+      }
+    },
+    "binding_entry": {
       "type": "SEQ",
       "members": [
-        {
-          "type": "STRING",
-          "value": "@"
-        },
-        {
-          "type": "STRING",
-          "value": "group"
-        },
-        {
-          "type": "STRING",
-          "value": "("
-        },
-        {
-          "type": "SYMBOL",
-          "name": "expression"
-        },
-        {
-          "type": "STRING",
-          "value": ")"
-        },
         {
           "type": "STRING",
           "value": "@"
@@ -1289,6 +1305,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "type_literal"
+        },
+        {
+          "type": "SYMBOL",
           "name": "tuple_type"
         },
         {
@@ -1300,6 +1320,10 @@
           "name": "parenthesized_type"
         }
       ]
+    },
+    "type_literal": {
+      "type": "SYMBOL",
+      "name": "integer_literal"
     },
     "type_constructor": {
       "type": "SYMBOL",

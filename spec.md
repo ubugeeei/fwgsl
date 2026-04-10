@@ -435,6 +435,19 @@ Bare `storage` defaults to read-only access (consistent with WGSL). Use `storage
 @group(1) @binding(0) storage(read_write) particles : Array<Particle>
 ```
 
+#### Group Block Sugar
+
+When multiple bindings share a group, the group can be specified once with indented bindings:
+
+```
+@group(0)
+  @binding(0) uniform             frame     : FrameData
+  @binding(1) uniform             params    : DrawParams
+  @binding(2) storage(read_write) output    : Array<Vec<4, F32>, 64>
+```
+
+This is equivalent to writing `@group(0)` on each line. The indented bindings inherit the group number.
+
 ### 4.9 Trait Declarations
 
 See [Section 9: Traits](#9-traits-and-implementations).
@@ -1785,8 +1798,9 @@ data ComputeInput = ComputeInput {
   @builtin(global_invocation_id) gid : Vec<3, U32>
 }
 
-@group(0) @binding(0) storage(read_write) input  : Array<Vec<4, F32>>
-@group(0) @binding(1) storage(read_write) output : Array<Vec<4, F32>>
+@group(0)
+  @binding(0) storage(read_write) input  : Array<Vec<4, F32>>
+  @binding(1) storage(read_write) output : Array<Vec<4, F32>>
 
 const SCALE : F32 = 2.0
 
