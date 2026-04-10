@@ -14,4 +14,3 @@ command = "shadml-lsp"
 
 [[grammar]]
 name = "shadml"
-source = { path = "../../tree-sitter-shadml" }

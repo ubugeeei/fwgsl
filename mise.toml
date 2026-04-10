@@ -1,6 +1,8 @@
 [tools]
 rust = "latest"
 node = "22"
+"cargo:tree-sitter-cli" = "latest"
+"cargo:wasm-pack" = "latest"
 
 [tasks.fmt]
 description = "Format all Rust code"
@@ -93,3 +95,24 @@ fi
 sed -i '' "s/^version = \"${current}\"/version = \"${base}\"/" Cargo.toml
 echo "Released $base"
 """
+
+[tasks."grammar:build"]
+description = "Build tree-sitter grammar for shadml"
+sources = ["tree-sitter-shadml/grammar.js", "tree-sitter-shadml/src/**/*"]
+outputs = ["tree-sitter-shadml/shadml.dylib"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+cd tree-sitter-shadml
+tree-sitter generate
+tree-sitter build
+"""
+
+[tasks.helix]
+description = "Launch Helix editor with shadml support"
+depends = ["release", "grammar:build"]
+run = "./editors/helix/run-helix.sh"
+
+[tasks.zed]
+description = "Launch Zed editor with shadml support"
+run = "./editors/zed/run-zed.sh"
