@@ -14,8 +14,11 @@ mkdir -p "$CONFIG_DIR"
 mkdir -p "$RUNTIME_DIR/queries/fwgsl"
 mkdir -p "$RUNTIME_DIR/grammars"
 
-# Symlink languages.toml
-ln -sf "$REPO_ROOT/editors/helix/languages.toml" "$CONFIG_DIR/languages.toml"
+# Generate languages.toml with absolute grammar path
+# (Helix resolves relative paths from the config file location, which is in /tmp,
+# so we need to rewrite the grammar source path to be absolute.)
+sed "s|path = \"../../tree-sitter-fwgsl\"|path = \"$REPO_ROOT/tree-sitter-fwgsl\"|" \
+  "$REPO_ROOT/editors/helix/languages.toml" > "$CONFIG_DIR/languages.toml"
 
 # Symlink query files (from tree-sitter-fwgsl if available, else editors/helix)
 if [ -d "$REPO_ROOT/tree-sitter-fwgsl/queries" ]; then

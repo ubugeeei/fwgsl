@@ -21,7 +21,7 @@ import Debug when cfg.debug
 when cfg.debug
   @group(1)
     @binding(0) storage(read_write) debugOutput : Array<Vec<4, F32>, 64>
-    @binding(1) uniform             debugFlags  : Vec<4, F32>
+    @binding(1) uniform debugFlags  : Vec<4, F32>
 
 -- MSAA-specific bindings: multi-sample resolve targets
 when cfg.msaa
@@ -46,7 +46,7 @@ else
 
 -- Regular declarations are always included
 baseColor : Vec<4, F32>
-baseColor = [0.2, 0.3, 0.8, 1.0]
+baseColor = vec4 0.2 0.3 0.8 1.0
 
 -- Chained else-when for tiered configurations
 when cfg.tier3

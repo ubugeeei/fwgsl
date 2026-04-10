@@ -59,6 +59,7 @@
 ; Numeric literals
 (integer_literal) @number
 (float_literal) @number.float
+(negative_literal) @number
 
 ; Strings
 (string_literal) @string
@@ -70,8 +71,8 @@
 (block_comment) @comment
 
 ; Operators
-["+" "-" "*" "/" "%" "==" "/=" "<" ">" "<=" ">=" "&&" "||"] @operator
-["|>" "$" "->" "=" "|" ":" "::" "."] @operator
+["+" "-" "*" "/" "%" "==" "/=" "<" ">" "<=" ">=" "&&" "||" "&" "^" "<<" ">>"] @operator
+["|>" "$" "->" "=" "|" ":" "::" "." "~"] @operator
 
 ; Punctuation
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket

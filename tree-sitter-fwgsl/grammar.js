@@ -14,11 +14,17 @@ module.exports = grammar({
 
   extras: ($) => [/\s/, $.line_comment, $.block_comment],
 
+  externals: ($) => [$._layout_end, $._layout_semicolon],
+
   word: ($) => $.identifier,
 
   conflicts: ($) => [
     [$.import_declaration],
     [$.constructor_expression, $.record_expression],
+    [$.cfg_declaration],
+    [$._simple_type, $._type_app_arg],
+    [$.function_declaration],
+    [$.type_signature],
   ],
 
   rules: {
@@ -66,6 +72,7 @@ module.exports = grammar({
         "=",
         $.constructor_list,
         optional(seq("deriving", $.deriving_list)),
+        optional($._layout_end),
       ),
 
     constructor_list: ($) =>
@@ -74,7 +81,11 @@ module.exports = grammar({
     constructor: ($) =>
       prec.right(seq(
         field("name", $.upper_identifier),
-        optional(choice($.record_fields, repeat1($._simple_type))),
+        optional(choice(
+          $.record_fields,
+          repeat1($._simple_type),
+        )),
+        optional(seq("=", field("discriminant", $.integer_literal))),
       )),
 
     record_fields: ($) =>
@@ -94,7 +105,7 @@ module.exports = grammar({
     // -- Type alias ----------------------------------------------------------
 
     type_alias: ($) =>
-      seq("alias", field("name", $.upper_identifier), "=", $._type),
+      seq("alias", field("name", $.upper_identifier), "=", $._type, optional($._layout_end)),
 
     // -- Extern declarations --------------------------------------------------
 
@@ -104,6 +115,7 @@ module.exports = grammar({
         field("name", choice($.identifier, seq("(", /[+\-*/%=<>!&^|~]+/, ")"))),
         ":",
         field("type", $._type),
+        optional($._layout_end),
       )),
 
     // -- Binding declarations (GPU resources) ---------------------------------
@@ -135,6 +147,7 @@ module.exports = grammar({
         repeat($.type_variable),
         "where",
         repeat($._trait_member),
+        optional($._layout_end),
       )),
 
     _trait_member: ($) =>
@@ -144,9 +157,10 @@ module.exports = grammar({
       prec.right(seq(
         "impl",
         field("trait", $.upper_identifier),
-        repeat1($._simple_type),
+        repeat($._simple_type),
         "where",
         repeat($._impl_member),
+        optional($._layout_end),
       )),
 
     _impl_member: ($) =>
@@ -200,7 +214,13 @@ module.exports = grammar({
     // -- Conditional compilation (when/cfg) ----------------------------------
 
     cfg_declaration: ($) =>
-      prec.right(seq("when", $.cfg_predicate, repeat($._declaration))),
+      prec.right(seq(
+        "when", $.cfg_predicate, repeat($._declaration),
+        optional(choice(
+          seq("else", "when", $.cfg_predicate, repeat($._declaration)),
+          seq("else", repeat($._declaration)),
+        )),
+      )),
 
     cfg_predicate: ($) =>
       choice(
@@ -223,6 +243,7 @@ module.exports = grammar({
         field("name", $.identifier),
         ":",
         field("type", $._type),
+        optional($._layout_end),
       ),
 
     function_declaration: ($) =>
@@ -233,18 +254,20 @@ module.exports = grammar({
         "=",
         field("body", $.expression),
         optional($.where_clause),
+        optional($._layout_end),
       ),
 
     where_clause: ($) =>
-      prec.right(seq("where", repeat1($.local_binding))),
+      prec.right(seq("where", repeat1($.local_binding), optional($._layout_end))),
 
     local_binding: ($) =>
-      seq(
+      prec.right(seq(
         field("name", $.identifier),
         repeat($.pattern),
         "=",
         $.expression,
-      ),
+        optional($._layout_semicolon),
+      )),
 
     // -- Attributes ----------------------------------------------------------
 
@@ -288,14 +311,40 @@ module.exports = grammar({
     type_variable: ($) => $.identifier,
 
     type_application: ($) =>
-      seq($.upper_identifier, "<", commaSep1($._type), ">"),
+      choice(
+        // Angle-bracket syntax: Vec<2, F32>
+        seq($.upper_identifier, "<", commaSep1($._type), ">"),
+        // Haskell-style space-separated: Box I32, Tensor 2 F32
+        // First arg must be a non-identifier type to avoid consuming the next
+        // declaration's name (e.g., `I32\nsampleCount` misread as `I32 sampleCount`).
+        prec.left(2, seq(
+          $.upper_identifier,
+          $._type_app_arg,
+          repeat($._simple_type),
+        )),
+      ),
+
+    // A type argument that is clearly a type (not an ambiguous identifier).
+    _type_app_arg: ($) =>
+      choice(
+        $.type_constructor,
+        $.type_literal,
+        $.tuple_type,
+        $.unit_type,
+        $.parenthesized_type,
+      ),
 
     tuple_type: ($) =>
       seq("(", $._type, ",", commaSep1($._type), ")"),
 
     unit_type: ($) => seq("(", ")"),
 
-    parenthesized_type: ($) => seq("(", $._type, ")"),
+    parenthesized_type: ($) =>
+      seq("(", choice(
+        // Haskell-style type application inside parens: (Box I32), (Tensor 2 F32)
+        seq($.upper_identifier, repeat1($._simple_type)),
+        $._type,
+      ), ")"),
 
     // -- Patterns ------------------------------------------------------------
 
@@ -347,22 +396,26 @@ module.exports = grammar({
         repeat($.pattern),
         "=",
         $.expression,
+        optional($._layout_semicolon),
       ),
 
     if_expression: ($) =>
       prec.right(-1, seq("if", $.expression, "then", $.expression, "else", $.expression)),
 
     case_expression: ($) =>
-      prec.right(-1, seq("case", $.expression, "of", repeat1($.case_arm))),
+      prec.right(-1, seq("case", $.expression, "of", sepBy1($._layout_semicolon, $.case_arm), optional($._layout_end))),
 
     match_expression: ($) =>
-      prec.right(-1, seq("match", $.expression, repeat1($.match_arm))),
+      prec.right(-1, seq("match", $.expression, sepBy1($._layout_semicolon, $.match_arm), optional($._layout_end))),
 
     case_arm: ($) =>
-      prec.right(seq($.pattern, "->", $.expression)),
+      prec.right(seq($.pattern, optional($.guard), "->", $.expression)),
 
     match_arm: ($) =>
-      prec.right(seq("|", $.pattern, "->", $.expression)),
+      prec.right(seq("|", $.pattern, optional($.guard), "->", $.expression)),
+
+    guard: ($) =>
+      seq("when", $.expression),
 
     lambda_expression: ($) =>
       prec.right(-1, seq("\\", repeat1($.pattern), "->", $.expression)),
@@ -390,6 +443,10 @@ module.exports = grammar({
           ["&&", 3],
           ["||", 2],
           ["::", 5],
+          ["&", 8],
+          ["^", 8],
+          ["<<", 9],
+          [">>", 9],
         ].map(([op, prec_val]) =>
           prec.left(
             /** @type {number} */ (prec_val),
@@ -411,7 +468,23 @@ module.exports = grammar({
     _simple_expression: ($) =>
       choice(
         $.function_application,
+        $.unary_expression,
         $._atomic_expression,
+      ),
+
+    unary_expression: ($) =>
+      prec(10, seq("~", $._atomic_expression)),
+
+    // Negative number literal: -42, -3.14 (not -x, which is binary subtraction)
+    negative_literal: ($) =>
+      token(
+        seq("-", choice(
+          /0[xX][0-9a-fA-F_]+[ui]?/,
+          /0[oO][0-7_]+[ui]?/,
+          /0[bB][01_]+[ui]?/,
+          /[0-9][0-9_]*[ui]?/,
+          /[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?/,
+        )),
       ),
 
     function_application: ($) =>
@@ -422,6 +495,7 @@ module.exports = grammar({
         $.identifier_expression,
         $.constructor_expression,
         $._literal,
+        $.negative_literal,
         $.field_access,
         $.index_expression,
         $.list_expression,
@@ -459,7 +533,12 @@ module.exports = grammar({
 
     unit_expression: ($) => seq("(", ")"),
 
-    parenthesized_expression: ($) => seq("(", $.expression, ")"),
+    parenthesized_expression: ($) =>
+      seq("(", choice(
+        // Negation in parens: (-x), (-b), (-(a + b))
+        seq("-", $.expression),
+        $.expression,
+      ), ")"),
 
     // -- Identifiers and literals -------------------------------------------
 
@@ -525,4 +604,14 @@ function commaSep(rule) {
  */
 function commaSep1(rule) {
   return seq(rule, repeat(seq(",", rule)));
+}
+
+/**
+ * One or more items separated by an optional separator.
+ * Used for layout-separated items (e.g. let bindings separated by _layout_semicolon).
+ * @param {RuleOrLiteral} sep
+ * @param {RuleOrLiteral} rule
+ */
+function sepBy1(sep, rule) {
+  return seq(rule, repeat(seq(optional(sep), rule)));
 }
