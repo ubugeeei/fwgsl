@@ -216,6 +216,9 @@ impl<'a> Lexer<'a> {
                 } else if self.peek() == b'-' {
                     self.advance();
                     self.emit(SyntaxKind::LeftArrow, start);
+                } else if self.peek() == b'<' {
+                    self.advance();
+                    self.emit(SyntaxKind::LessLess, start);
                 } else {
                     self.emit(SyntaxKind::Less, start);
                 }
@@ -226,6 +229,9 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     self.emit(SyntaxKind::GreaterEqual, start);
                 } else {
+                    // Don't lex `>>` as a single token — it conflicts with
+                    // nested generic type closers like `Vec<4, Vec<3, F32>>`.
+                    // The parser handles `> >` as shift-right when appropriate.
                     self.emit(SyntaxKind::Greater, start);
                 }
             }
@@ -244,8 +250,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     self.emit(SyntaxKind::AndAnd, start);
                 } else {
-                    // Single `&` is not a valid fwgsl token, emit error
-                    self.emit(SyntaxKind::Error, start);
+                    self.emit(SyntaxKind::Ampersand, start);
                 }
             }
             b'|' => {
@@ -313,6 +318,14 @@ impl<'a> Lexer<'a> {
             b'!' => {
                 self.advance();
                 self.emit(SyntaxKind::Bang, start);
+            }
+            b'^' => {
+                self.advance();
+                self.emit(SyntaxKind::Caret, start);
+            }
+            b'~' => {
+                self.advance();
+                self.emit(SyntaxKind::Tilde, start);
             }
             b'$' => {
                 self.advance();
@@ -816,6 +829,42 @@ mod tests {
                 SyntaxKind::At,
                 SyntaxKind::Eof,
             ]
+        );
+    }
+
+    #[test]
+    fn lex_bitwise_operators() {
+        assert_eq!(
+            kinds("& ^ ~ <<"),
+            vec![
+                SyntaxKind::Ampersand,
+                SyntaxKind::Whitespace,
+                SyntaxKind::Caret,
+                SyntaxKind::Whitespace,
+                SyntaxKind::Tilde,
+                SyntaxKind::Whitespace,
+                SyntaxKind::LessLess,
+                SyntaxKind::Eof,
+            ]
+        );
+        // >> is lexed as two separate Greater tokens
+        assert_eq!(
+            kinds(">>"),
+            vec![
+                SyntaxKind::Greater,
+                SyntaxKind::Greater,
+                SyntaxKind::Eof,
+            ]
+        );
+        // && is still logical AND, not two ampersands
+        assert_eq!(
+            kinds("&&"),
+            vec![SyntaxKind::AndAnd, SyntaxKind::Eof]
+        );
+        // Single & is now Ampersand (bitwise AND), not Error
+        assert_eq!(
+            kinds("&"),
+            vec![SyntaxKind::Ampersand, SyntaxKind::Eof]
         );
     }
 

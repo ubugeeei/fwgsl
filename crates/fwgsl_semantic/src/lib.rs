@@ -623,6 +623,11 @@ impl SemanticAnalyzer {
             Expr::Infix(lhs, op, rhs, span) => {
                 let op_ty = if let Some(scheme) = env.lookup(op) {
                     self.engine.instantiate(scheme)
+                } else if fwgsl_hir::BinOp::parse(op).is_some() {
+                    // Built-in operator not in prelude (e.g. `>>`) —
+                    // give it the generic type `a -> a -> a`
+                    let a = self.engine.fresh_var();
+                    Ty::arrow(a.clone(), Ty::arrow(a.clone(), a))
                 } else {
                     self.engine.diagnostics.push(
                         Diagnostic::error(format!("Unknown operator: {}", op))
@@ -829,6 +834,11 @@ impl SemanticAnalyzer {
                 let bool_ty = Ty::Con("Bool".into());
                 self.engine.unify(&inner_ty, &bool_ty, *span);
                 bool_ty
+            }
+
+            Expr::BitNot(inner, _span) => {
+                // Bitwise not: works on integer types, result is same type
+                self.infer_expr(inner, env)
             }
 
             Expr::Do(stmts, _span) => {

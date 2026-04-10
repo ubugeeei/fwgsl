@@ -1,0 +1,41 @@
+-- Bitwise operator examples.
+--
+-- Operators:
+--   &     bitwise AND (infix)
+--   ^     bitwise XOR (infix)
+--   <<    shift left (infix)
+--   >>    shift right (infix, two adjacent > with no space)
+--   ~     bitwise NOT (prefix)
+--   bor   bitwise OR (function, since | is used for pattern matching)
+--   shr   shift right (function alternative)
+
+-- Basic bitwise operations on U32
+testAnd : U32 -> U32 -> U32
+testAnd x y = x & y
+
+testXor : U32 -> U32 -> U32
+testXor x y = x ^ y
+
+testShl : U32 -> U32 -> U32
+testShl x y = x << y
+
+testShrInfix : U32 -> U32 -> U32
+testShrInfix x y = x >> y
+
+testNot : U32 -> U32
+testNot x = ~x
+
+testOr : U32 -> U32 -> U32
+testOr x y = bor x y
+
+-- Combining bitwise ops: clear a bit, then set another
+clearAndSet : U32 -> U32 -> U32 -> U32
+clearAndSet flags clearMask setMask = bor (flags & (~clearMask)) setMask
+
+-- Extract bits from a packed value
+extractBits : U32 -> U32 -> U32 -> U32
+extractBits value offset mask = (value >> offset) & mask
+
+-- Works on I32 too
+testI32And : I32 -> I32 -> I32
+testI32And x y = x & y

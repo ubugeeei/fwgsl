@@ -116,6 +116,8 @@ String literals are delimited by `"..."` and character literals by `'...'`. Thes
 
 **Logical:** `&&`, `||`
 
+**Bitwise:** `&` (AND), `^` (XOR), `~` (NOT prefix), `<<` (shift left). Bitwise OR uses the `bor` function; shift right uses `>>` (two adjacent `>`) or the `shr` function.
+
 ---
 
 ## 2. Layout Rules
@@ -806,22 +808,51 @@ From **lowest** to **highest** binding power:
 | 1 | `$` | Right | Low-precedence application |
 | 1–2 | `\|\|` | Left | Logical OR |
 | 3–4 | `&&` | Left | Logical AND |
-| 5–6 | `==` `/=` `<` `>` `<=` `>=` | Left | Comparison |
-| 7–8 | `+` `-` | Left | Additive |
-| 9–10 | `*` `/` `%` | Left | Multiplicative |
-| 11 | (application) | Left | Function application |
-| 13 | `-` (prefix), `!`, `.field`, `[index]` | — | Unary, access |
+| 5–6 | `^` | Left | Bitwise XOR |
+| 7–8 | `&` | Left | Bitwise AND |
+| 9–10 | `==` `/=` `<` `>` `<=` `>=` | Left | Comparison |
+| 11–12 | `<<` `>>` | Left | Bit shift |
+| 13–14 | `+` `-` | Left | Additive |
+| 15–16 | `*` `/` `%` | Left | Multiplicative |
+| 19 | (application) | Left | Function application |
+| 21 | `-` `!` `~` (prefix), `.field`, `[index]` | — | Unary, access |
 
 ### 7.2 Operator Syntax
 
-- Infix operators: `a + b`, `x == y`
-- Prefix operators: `-x` (negation), `!b` (boolean not)
+- Infix operators: `a + b`, `x == y`, `x & y`, `x ^ y`, `x << y`
+- Prefix operators: `-x` (negation), `!b` (boolean not), `~x` (bitwise not)
 - Operator sections: `(+)` wraps an operator as a function value
 - Backtick infix: `` a `f` b `` → `f a b`
 
 ### 7.3 Not-Equal Operator
 
 fwgsl uses `/=` (Haskell-style) for not-equal in source code. It compiles to `!=` in WGSL.
+
+### 7.4 Bitwise Operators
+
+| fwgsl | WGSL | Description |
+|-------|------|-------------|
+| `x & y` | `x & y` | Bitwise AND |
+| `x ^ y` | `x ^ y` | Bitwise XOR |
+| `bor x y` | `x \| y` | Bitwise OR (function; `\|` is reserved for pattern syntax) |
+| `x << y` | `x << y` | Shift left |
+| `x >> y` | `x >> y` | Shift right (two adjacent `>` with no space between them) |
+| `shr x y` | `x >> y` | Shift right (function alternative) |
+| `~x` | `~x` | Bitwise NOT |
+
+**Note:** `|` cannot be used as an infix bitwise OR operator because it is reserved for pattern matching guards, match arms, data constructor separators, and or-patterns. Use the `bor` function instead. Similarly, `>>` must be written with no space between the two `>` characters to distinguish it from nested generic type closers (e.g., `Vec<4, Vec<3, F32>>`). The `shr` function is available as an alternative.
+
+### 7.5 Vector Literals
+
+Vector literals use bracket syntax and desugar to WGSL vector constructors:
+
+```
+[1.0, 2.0, 3.0]       -- desugars to vec3<f32>(1.0, 2.0, 3.0)
+[x, y, z, 1.0]         -- desugars to vec4<f32>(x, y, z, 1.0)
+[base.xy, 0.0, 1.0]   -- components can be swizzled vectors
+```
+
+The number of components (2–4) is inferred from the elements. Scalar and vector elements can be mixed (e.g., a `vec2` element contributes 2 components).
 
 ---
 
@@ -1296,7 +1327,19 @@ extern (&&) : Bool -> Bool -> Bool
 extern (||) : Bool -> Bool -> Bool
 ```
 
-### 14.6 Math Functions (Unary)
+### 14.6 Bitwise Operators
+
+```
+extern (&)  : a -> a -> a   -- bitwise AND
+extern (^)  : a -> a -> a   -- bitwise XOR
+extern (<<) : a -> a -> a   -- shift left
+extern bor  : a -> a -> a   -- bitwise OR (| conflicts with pattern syntax)
+extern shr  : a -> a -> a   -- shift right (>> works as infix with no space)
+```
+
+Prefix bitwise NOT (`~x`) is a built-in prefix operator; no `extern` needed.
+
+### 14.7 Math Functions (Unary)
 
 ```
 sin  cos  abs  fract  floor  sign  sqrt  log  log2  exp  ceil  round  trunc  negate

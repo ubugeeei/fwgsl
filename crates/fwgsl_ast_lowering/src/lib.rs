@@ -1118,6 +1118,14 @@ impl AstLowering {
                 )
             }
 
+            Expr::BitNot(inner, span) => {
+                let (hir_inner, inner_ty) = self.lower_expr(inner, env);
+                (
+                    HirExpr::UnaryBitNot(Box::new(hir_inner), inner_ty.clone(), *span),
+                    inner_ty,
+                )
+            }
+
             Expr::Do(stmts, span) => {
                 // Lower do-notation as sequential let bindings
                 let mut local_env = env.clone();
@@ -1784,6 +1792,11 @@ impl AstLowering {
                 span,
             ),
             HirExpr::UnaryNot(inner, ty, span) => HirExpr::UnaryNot(
+                Box::new(self.finalize_expr(*inner)),
+                self.engine.finalize(&ty),
+                span,
+            ),
+            HirExpr::UnaryBitNot(inner, ty, span) => HirExpr::UnaryBitNot(
                 Box::new(self.finalize_expr(*inner)),
                 self.engine.finalize(&ty),
                 span,

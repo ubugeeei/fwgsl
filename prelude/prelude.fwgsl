@@ -49,6 +49,18 @@ extern (>=) : a -> a -> Bool
 extern (&&) : Bool -> Bool -> Bool
 extern (||) : Bool -> Bool -> Bool
 
+-- Bitwise operators
+-- `&`, `^`, `<<` are infix operators; `~` is a prefix operator.
+-- `|` conflicts with pattern matching syntax, so bitwise OR uses `bor`.
+-- `>>` conflicts with generic type closers, so right-shift uses `shr`
+-- (or write `x >> y` with no spaces between the `>`s in expression context).
+
+extern (&)  : a -> a -> a
+extern (^)  : a -> a -> a
+extern (<<) : a -> a -> a
+extern bor  : a -> a -> a
+extern shr  : a -> a -> a
+
 -- WGSL math — unary (a -> a)
 
 extern sin   : a -> a

@@ -320,6 +320,7 @@ pub enum Expr {
     OpSection(String, Span),
     Neg(Box<Expr>, Span),
     Not(Box<Expr>, Span),
+    BitNot(Box<Expr>, Span),
     Do(Vec<DoStmt>, Span),
     /// Vec literal: `[a, b, c]` — desugared to vecN constructor call.
     VecLit(Vec<Expr>, Span),
@@ -396,6 +397,7 @@ impl Expr {
             | Expr::OpSection(_, s)
             | Expr::Neg(_, s)
             | Expr::Not(_, s)
+            | Expr::BitNot(_, s)
             | Expr::Do(_, s)
             | Expr::VecLit(_, s)
             | Expr::Loop(_, _, _, s)
@@ -1875,7 +1877,7 @@ impl Parser {
                 let start = self.current_span().start;
                 self.bump();
                 self.skip_trivia();
-                let rhs = self.parse_expr_bp(13); // high precedence for neg
+                let rhs = self.parse_expr_bp(21); // high precedence for neg
                 let span = self.span_from(start);
                 Expr::Neg(Box::new(rhs), span)
             }
@@ -1885,9 +1887,19 @@ impl Parser {
                 let start = self.current_span().start;
                 self.bump();
                 self.skip_trivia();
-                let rhs = self.parse_expr_bp(13); // high precedence for not
+                let rhs = self.parse_expr_bp(21); // high precedence for not
                 let span = self.span_from(start);
                 Expr::Not(Box::new(rhs), span)
+            }
+            SyntaxKind::Tilde => {
+                // Bitwise not prefix
+                self.skip_trivia();
+                let start = self.current_span().start;
+                self.bump();
+                self.skip_trivia();
+                let rhs = self.parse_expr_bp(21); // high precedence for bitwise not
+                let span = self.span_from(start);
+                Expr::BitNot(Box::new(rhs), span)
             }
             SyntaxKind::Backslash => self.parse_lambda(),
             SyntaxKind::KwIf => self.parse_if(),
@@ -1907,7 +1919,7 @@ impl Parser {
             let op_kind = self.peek_non_trivia();
 
             // Dot for field access
-            if op_kind == SyntaxKind::Dot && min_bp <= 13 {
+            if op_kind == SyntaxKind::Dot && min_bp <= 21 {
                 self.skip_trivia();
                 self.bump(); // consume `.`
                 self.skip_trivia();
@@ -1930,7 +1942,7 @@ impl Parser {
             }
 
             // Index access: expr[expr]
-            if op_kind == SyntaxKind::LBracket && min_bp <= 13 {
+            if op_kind == SyntaxKind::LBracket && min_bp <= 21 {
                 self.skip_trivia();
                 self.bump();
                 self.skip_trivia();
@@ -1946,12 +1958,43 @@ impl Parser {
             // start an atom and we have enough binding power.
             // Also treat `-<digit>` (whitespace before, no space after) as a
             // negative literal atom so `vec2 -0.35 0.5` works without parens.
-            if (is_atom_start(op_kind) || self.is_negative_literal_ahead()) && min_bp <= 11 {
+            if (is_atom_start(op_kind) || self.is_negative_literal_ahead()) && min_bp <= 19 {
                 self.skip_trivia();
                 let arg = self.parse_atom();
                 let span = lhs.span().merge(arg.span());
                 lhs = Expr::App(Box::new(lhs), Box::new(arg), span);
                 continue;
+            }
+
+            // Shift-right `>>`: two adjacent Greater tokens with no whitespace.
+            // Must be checked BEFORE normal binary operators, since `>` is also
+            // a comparison operator. We don't lex `>>` as a single token because
+            // it conflicts with nested generic type closers like `Vec<4, Vec<3, F32>>`.
+            if op_kind == SyntaxKind::Greater {
+                let cur_pos = {
+                    let mut p = self.pos;
+                    while p < self.tokens.len() && self.tokens[p].kind.is_trivia() {
+                        p += 1;
+                    }
+                    p
+                };
+                let next_idx = cur_pos + 1;
+                let is_shift_right = next_idx < self.tokens.len()
+                    && self.tokens[next_idx].kind == SyntaxKind::Greater
+                    && self.tokens[cur_pos].span.end == self.tokens[next_idx].span.start;
+                if is_shift_right {
+                    let (l_bp, r_bp) = (11, 12); // same as LessLess
+                    if l_bp >= min_bp {
+                        self.skip_trivia();
+                        self.bump(); // first >
+                        self.bump(); // second >
+                        self.skip_trivia();
+                        let rhs = self.parse_expr_bp(r_bp);
+                        let span = lhs.span().merge(rhs.span());
+                        lhs = Expr::Infix(Box::new(lhs), ">>".to_string(), Box::new(rhs), span);
+                        continue;
+                    }
+                }
             }
 
             // Binary operators
@@ -2199,7 +2242,7 @@ impl Parser {
         // Operator section `(+)`, `(-)`, etc.
         // Special case: `(-expr)` is negation in parens, not an operator section.
         if is_operator_token(self.peek()) {
-            let is_prefix_unary = self.peek() == SyntaxKind::Minus || self.peek() == SyntaxKind::Bang;
+            let is_prefix_unary = self.peek() == SyntaxKind::Minus || self.peek() == SyntaxKind::Bang || self.peek() == SyntaxKind::Tilde;
             // Peek ahead past operator + trivia to see if it's `(op)`
             let next_non_trivia = {
                 let mut i = self.pos + 1;
@@ -2932,16 +2975,23 @@ impl Parser {
 fn infix_binding_power(kind: SyntaxKind) -> Option<(u8, u8)> {
     match kind {
         SyntaxKind::Dollar => Some((1, 0)), // right-assoc (l > r)
-        SyntaxKind::OrOr => Some((1, 2)),
-        SyntaxKind::AndAnd => Some((3, 4)),
+        SyntaxKind::OrOr => Some((1, 2)),                           // ||
+        SyntaxKind::AndAnd => Some((3, 4)),                         // &&
+        // Note: `|` (Pipe) is NOT an infix operator here — it's used for
+        // guard clauses, match arms, data constructors, and or-patterns.
+        // Bitwise OR is available via the `bor` builtin function.
+        SyntaxKind::Caret => Some((5, 6)),                          // ^ (bitwise xor)
+        SyntaxKind::Ampersand => Some((7, 8)),                      // & (bitwise and)
         SyntaxKind::EqualEqual
         | SyntaxKind::NotEqual
         | SyntaxKind::Less
         | SyntaxKind::Greater
         | SyntaxKind::LessEqual
-        | SyntaxKind::GreaterEqual => Some((5, 6)),
-        SyntaxKind::Plus | SyntaxKind::Minus => Some((7, 8)),
-        SyntaxKind::Star | SyntaxKind::Slash | SyntaxKind::Percent => Some((9, 10)),
+        | SyntaxKind::GreaterEqual => Some((9, 10)),                // comparisons
+        SyntaxKind::LessLess => Some((11, 12)),  // <<
+        // >> is handled specially in the parser loop (two Greater tokens)
+        SyntaxKind::Plus | SyntaxKind::Minus => Some((13, 14)),     // + -
+        SyntaxKind::Star | SyntaxKind::Slash | SyntaxKind::Percent => Some((15, 16)), // * / %
         _ => None,
     }
 }
@@ -2998,6 +3048,7 @@ fn insert_pipeline_arg(rhs: Expr, lhs: Expr, span: Span) -> Expr {
                 | Expr::Index(_, _, s)
                 | Expr::Neg(_, s)
                 | Expr::Not(_, s)
+                | Expr::BitNot(_, s)
                 | Expr::Do(_, s)
                 | Expr::VecLit(_, s)
                 | Expr::Lit(_, s)
@@ -3050,6 +3101,11 @@ fn is_operator_token(kind: SyntaxKind) -> bool {
             | SyntaxKind::NotEqual
             | SyntaxKind::AndAnd
             | SyntaxKind::OrOr
+            | SyntaxKind::Ampersand
+            | SyntaxKind::Caret
+            | SyntaxKind::Tilde
+            | SyntaxKind::LessLess
+            | SyntaxKind::GreaterGreater
             | SyntaxKind::Dollar
             | SyntaxKind::Bang
             | SyntaxKind::Dot

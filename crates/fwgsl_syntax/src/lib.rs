@@ -91,6 +91,16 @@ pub enum SyntaxKind {
     OrOr,
     /// `!`
     Bang,
+    /// `&`
+    Ampersand,
+    /// `^`
+    Caret,
+    /// `~`
+    Tilde,
+    /// `<<`
+    LessLess,
+    /// `>>`
+    GreaterGreater,
     /// `$`
     Dollar,
     /// `` ` ``
@@ -409,6 +419,11 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::AndAnd => "'&&'",
             SyntaxKind::OrOr => "'||'",
             SyntaxKind::Bang => "'!'",
+            SyntaxKind::Ampersand => "'&'",
+            SyntaxKind::Caret => "'^'",
+            SyntaxKind::Tilde => "'~'",
+            SyntaxKind::LessLess => "'<<'",
+            SyntaxKind::GreaterGreater => "'>>'",
             SyntaxKind::Dollar => "'$'",
             SyntaxKind::Backtick => "'`'",
             SyntaxKind::Compose => "'.'",

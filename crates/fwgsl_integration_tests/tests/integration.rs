@@ -2430,3 +2430,141 @@ main input =
         );
     }
 }
+
+// =========================================================================
+// Bitwise operator tests
+// =========================================================================
+
+mod bitwise_tests {
+    use super::*;
+
+    fn compile_to_wgsl(source: &str) -> Result<String, String> {
+        let mut parser = Parser::new(source);
+        let mut program = parser.parse_program();
+
+        if parser.diagnostics().has_errors() {
+            return Err("parse error".into());
+        }
+
+        with_prelude(&mut program);
+
+        let mut sa = SemanticAnalyzer::new();
+        sa.analyze(&program);
+
+        if sa.has_errors() {
+            return Err("semantic error".into());
+        }
+
+        let mut lowering = AstLowering::new(&sa);
+        let hir = lowering.lower_program(&program);
+
+        if lowering.has_errors() {
+            return Err("HIR lowering error".into());
+        }
+
+        let mir = fwgsl_mir::lower::lower_hir_to_mir(&hir).map_err(|e| e.join(", "))?;
+        let mir = fwgsl_mir::reachability::eliminate_dead_code(&mir);
+
+        Ok(fwgsl_wgsl_codegen::emit_wgsl(&mir))
+    }
+
+    #[test]
+    fn test_bitwise_and() {
+        let source = "testAnd : U32 -> U32 -> U32\ntestAnd x y = x & y";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("x & y"),
+            "WGSL should contain bitwise AND, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_bitwise_xor() {
+        let source = "testXor : U32 -> U32 -> U32\ntestXor x y = x ^ y";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("x ^ y"),
+            "WGSL should contain bitwise XOR, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_shift_left() {
+        let source = "testShl : U32 -> U32 -> U32\ntestShl x y = x << y";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("x << y"),
+            "WGSL should contain shift left, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_shift_right_infix() {
+        let source = "testShr : U32 -> U32 -> U32\ntestShr x y = x >> y";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("x >> y"),
+            "WGSL should contain shift right, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_shift_right_builtin() {
+        let source = "testShr : U32 -> U32 -> U32\ntestShr x y = shr x y";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("x >> y"),
+            "WGSL should contain shift right via shr, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_bitwise_not() {
+        let source = "testNot : U32 -> U32\ntestNot x = ~x";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("~x"),
+            "WGSL should contain bitwise NOT, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_bitwise_or_builtin() {
+        let source = "testOr : U32 -> U32 -> U32\ntestOr x y = bor x y";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("x | y"),
+            "WGSL should contain bitwise OR via bor, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_bitwise_operator_precedence() {
+        // & should bind tighter than ^ — WGSL has the same precedence, so no parens needed
+        let source = "testPrec : U32 -> U32 -> U32 -> U32\ntestPrec a b c = a ^ b & c";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("a ^ b & c"),
+            "WGSL should show & binding tighter than ^, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn test_bitwise_combined() {
+        let source = "mask : U32 -> U32 -> U32\nmask flags bit = flags & (~bit)";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("&") && wgsl.contains("~"),
+            "WGSL should contain & and ~, got: {}",
+            wgsl
+        );
+    }
+}

@@ -287,6 +287,9 @@ fn collect_mono_instances_from_expr(
         HirExpr::UnaryNot(inner, _, _) => {
             collect_mono_instances_from_expr(inner, generic_types, instances, seen);
         }
+        HirExpr::UnaryBitNot(inner, _, _) => {
+            collect_mono_instances_from_expr(inner, generic_types, instances, seen);
+        }
         HirExpr::BitfieldConstruct(_, fields, _, _) => {
             for (_, e) in fields {
                 collect_mono_instances_from_expr(e, generic_types, instances, seen);
@@ -1065,6 +1068,16 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
             ))
         }
 
+        HirExpr::UnaryBitNot(inner, ty, _span) => {
+            let mir_inner = lower_hir_expr(inner, ctx)?;
+            let mir_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::U32);
+            Ok(MirExpr::UnaryOp(
+                MirUnaryOp::BitNot,
+                Box::new(mir_inner),
+                mir_ty,
+            ))
+        }
+
         HirExpr::Let(binds, body, _ty, _span) => {
             let _ = binds;
             lower_hir_expr(body, ctx)
@@ -1402,6 +1415,18 @@ fn lower_app_with_args(
         ("toI32", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::I32)),
         ("toU32", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::U32)),
         ("toBool", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::Bool)),
+        ("bor", [lhs, rhs]) => Ok(MirExpr::BinOp(
+            MirBinOp::BitOr,
+            Box::new(lhs.clone()),
+            Box::new(rhs.clone()),
+            mir_ty,
+        )),
+        ("shr", [lhs, rhs]) => Ok(MirExpr::BinOp(
+            MirBinOp::Shr,
+            Box::new(lhs.clone()),
+            Box::new(rhs.clone()),
+            mir_ty,
+        )),
         ("splat2", [arg]) => Ok(MirExpr::Call(
             "vec2".to_string(),
             vec![arg.clone()],
@@ -1817,6 +1842,11 @@ fn lower_binop(op: &BinOp) -> MirBinOp {
         BinOp::Ge => MirBinOp::Ge,
         BinOp::And => MirBinOp::And,
         BinOp::Or => MirBinOp::Or,
+        BinOp::BitAnd => MirBinOp::BitAnd,
+        BinOp::BitOr => MirBinOp::BitOr,
+        BinOp::BitXor => MirBinOp::BitXor,
+        BinOp::Shl => MirBinOp::Shl,
+        BinOp::Shr => MirBinOp::Shr,
     }
 }
 

@@ -118,6 +118,8 @@ pub enum HirExpr {
     UnaryNeg(Box<HirExpr>, Ty, Span),
     /// Boolean not: `!expr`.
     UnaryNot(Box<HirExpr>, Ty, Span),
+    /// Bitwise not: `~expr`.
+    UnaryBitNot(Box<HirExpr>, Ty, Span),
     /// Constructor call: name, tag, arguments, result type, span.
     ConstructorCall(String, u32, Vec<HirExpr>, Ty, Span),
     FieldAccess(Box<HirExpr>, String, Ty, Span),
@@ -142,6 +144,7 @@ impl HirExpr {
             HirExpr::BinOp(_, _, _, ty, _) => ty,
             HirExpr::UnaryNeg(_, ty, _) => ty,
             HirExpr::UnaryNot(_, ty, _) => ty,
+            HirExpr::UnaryBitNot(_, ty, _) => ty,
             HirExpr::ConstructorCall(_, _, _, ty, _) => ty,
             HirExpr::FieldAccess(_, _, ty, _) => ty,
             HirExpr::Index(_, _, ty, _) => ty,
@@ -193,6 +196,11 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 impl BinOp {
@@ -211,6 +219,11 @@ impl BinOp {
             ">=" => Some(BinOp::Ge),
             "&&" => Some(BinOp::And),
             "||" => Some(BinOp::Or),
+            "&" => Some(BinOp::BitAnd),
+            "|" => Some(BinOp::BitOr),
+            "^" => Some(BinOp::BitXor),
+            "<<" => Some(BinOp::Shl),
+            ">>" => Some(BinOp::Shr),
             _ => None,
         }
     }
@@ -231,6 +244,11 @@ impl BinOp {
             BinOp::Ge => ">=",
             BinOp::And => "&&",
             BinOp::Or => "||",
+            BinOp::BitAnd => "&",
+            BinOp::BitOr => "|",
+            BinOp::BitXor => "^",
+            BinOp::Shl => "<<",
+            BinOp::Shr => ">>",
         }
     }
 
@@ -249,6 +267,11 @@ impl BinOp {
             BinOp::Ge => ">=",
             BinOp::And => "&&",
             BinOp::Or => "||",
+            BinOp::BitAnd => "&",
+            BinOp::BitOr => "|",
+            BinOp::BitXor => "^",
+            BinOp::Shl => "<<",
+            BinOp::Shr => ">>",
         }
     }
 }
