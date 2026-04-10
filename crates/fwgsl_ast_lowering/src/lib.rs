@@ -263,7 +263,8 @@ impl AstLowering {
                                 "bitfield '{}' uses {} bits, but base type allows only {}",
                                 name, offset, max_bits
                             ))
-                            .with_label(fwgsl_diagnostics::Label::primary(*span, "too many bits")),
+                            .with_label(fwgsl_diagnostics::Label::primary(*span, "too many bits"))
+                            .with_help("reduce the number of fields or use a wider base type"),
                         );
                     }
                     self.bitfield_fields.insert(name.clone(), bf_meta);
@@ -1006,7 +1007,8 @@ impl AstLowering {
                                                 *span,
                                                 "missing field",
                                             ),
-                                        ),
+                                        )
+                                        .with_help("all record fields must be provided in construction; add the missing field"),
                                     );
                                     args.push(HirExpr::Lit(
                                         HirLit::Int(0),
@@ -1357,7 +1359,8 @@ impl AstLowering {
                     .with_label(fwgsl_diagnostics::Label::primary(
                         *span,
                         "not a record type",
-                    )),
+                    ))
+                    .with_help("use `expr { field = value }` only on records defined with `data Name = Name { field : Type }`"),
                 );
                 (hir_base, base_ty)
             }
@@ -1729,7 +1732,8 @@ impl AstLowering {
                         "unknown bitfield field '{}' in '{}'",
                         field_name, bf_name
                     ))
-                    .with_label(fwgsl_diagnostics::Label::primary(span, "unknown field")),
+                    .with_label(fwgsl_diagnostics::Label::primary(span, "unknown field"))
+                    .with_help("check the bitfield definition for available field names"),
                 );
                 continue;
             }
@@ -1767,7 +1771,8 @@ impl AstLowering {
                         "unknown bitfield field '{}' in '{}'",
                         field_name, type_name
                     ))
-                    .with_label(fwgsl_diagnostics::Label::primary(span, "unknown field")),
+                    .with_label(fwgsl_diagnostics::Label::primary(span, "unknown field"))
+                    .with_help("check the bitfield definition for available field names"),
                 );
                 continue;
             }

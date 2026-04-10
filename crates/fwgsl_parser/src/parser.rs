@@ -533,7 +533,8 @@ impl Parser {
             let tok = self.current_token().clone();
             self.diagnostics.push(
                 Diagnostic::error(format!("expected {}, found {}", kind, tok.kind))
-                    .with_label(Label::primary(tok.span, format!("expected {}", kind))),
+                    .with_label(Label::primary(tok.span, format!("expected {}", kind)))
+                    .with_help("check for missing tokens, unmatched parentheses, or incorrect indentation"),
             );
             tok
         }
@@ -2418,7 +2419,8 @@ impl Parser {
                 let tok = self.current_token().clone();
                 self.diagnostics.push(
                     Diagnostic::error(format!("unexpected token: {}", tok.kind))
-                        .with_label(Label::primary(tok.span, "unexpected")),
+                        .with_label(Label::primary(tok.span, "unexpected"))
+                        .with_help("expressions start with a variable, literal, `let`, `if`, `match`, `loop`, or `(`"),
                 );
                 let span = tok.span;
                 self.bump();
@@ -3004,7 +3006,8 @@ impl Parser {
                 let tok = self.current_token().clone();
                 self.diagnostics.push(
                     Diagnostic::error(format!("unexpected token in pattern: {}", tok.kind))
-                        .with_label(Label::primary(tok.span, "unexpected")),
+                        .with_label(Label::primary(tok.span, "unexpected"))
+                        .with_help("patterns can be: variables, constructors, literals, wildcards (_), or tuples"),
                 );
                 let span = tok.span;
                 self.bump();

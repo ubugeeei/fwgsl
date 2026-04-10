@@ -198,7 +198,8 @@ impl SemanticAnalyzer {
                                     "Unknown trait '{}' in impl declaration",
                                     tname
                                 ))
-                                .with_label(Label::primary(*span, "unknown trait")),
+                                .with_label(Label::primary(*span, "unknown trait"))
+                                .with_help("define the trait with `trait Name a where ...` before writing an impl for it"),
                             );
                         }
                     } else {

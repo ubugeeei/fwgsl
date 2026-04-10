@@ -71,6 +71,144 @@ graph x time =
       wave2 = sin (x * 0.9 - time * 0.7) * 0.25
       wave3 = cos (x * 4.2 + time * 0.3) * 0.12
   in wave1 + wave2 + wave3`,
+
+    traits: `-- Traits and Operator Overloading
+-- Define custom types with arithmetic via trait impls
+
+data Fp64 = Fp64 { high : F32, low : F32 }
+
+quickTwoSum : (F32, F32) -> Fp64
+quickTwoSum (a, b) =
+  let s = a + b
+      e = b - (s - a)
+  in Fp64 s e
+
+twoSum : F32 -> F32 -> Fp64
+twoSum a b =
+  let s = a + b
+      v = s - a
+      e = (a - (s - v)) + (b - v)
+  in Fp64 s e
+
+impl Add Fp64 where
+  (+) a b =
+    let s = twoSum a.high b.high
+        t = twoSum a.low  b.low
+        combined = s.low + t.high
+    in quickTwoSum (s.high, combined)
+
+impl Fp64 where
+  collapse v = v.high + v.low
+
+-- Test: emulated double-precision addition
+testFp64 : F32
+testFp64 =
+  let a = Fp64 1.0 0.0000001
+      b = Fp64 2.0 0.0000002
+      c = a + b
+  in c.collapse`,
+
+    foldRange: `-- foldRange: Fold Over Integer Ranges
+-- Replaces manual repetition with a clean functional combinator
+
+-- Sum integers from 0 to n-1
+sumRange : I32 -> I32
+sumRange n = foldRange 0 n 0 (\\acc i -> acc + i)
+
+-- Factorial via foldRange
+factorial : I32 -> I32
+factorial n = foldRange 1 (n + 1) 1 (\\acc i -> acc * i)
+
+-- Particle accumulation (replaces 20 lines of manual repetition)
+hash : F32 -> F32
+hash n = fract (sin n * 43758.5453)
+
+particle : F32 -> F32 -> Vec<3, F32>
+particle id time = splat3 (glow * 0.02)
+  where
+    speed = 0.1 + hash (id * 7.13) * 0.3
+    glow  = hash (id * 3.77) * (0.5 + 0.5 * sin (time * speed))
+
+accumulateParticles : F32 -> Vec<3, F32>
+accumulateParticles time =
+  foldRange 0 20 (vec3 0.0 0.0 0.0) (\\acc i -> acc + particle (toF32 i) time)`,
+
+    loops: `-- Named Tail-Recursive Loops
+-- Scheme-style named let that emits efficient WGSL loops
+
+-- Sum from 0 to n-1
+sumTo : I32 -> I32
+sumTo n = loop go (acc = 0) (i = 0) in
+  if i >= n then acc else go (acc + i) (i + 1)
+
+-- Count set bits (popcount)
+popcount : U32 -> I32
+popcount x = loop go (bits = x) (count = 0) in
+  if bits == 0u then count
+  else go (bits & (bits - 1u)) (count + 1)
+
+-- Find first set bit position
+firstSetBit : U32 -> I32
+firstSetBit x = loop go (bits = x) (pos = 0) in
+  if bits == 0u then -1
+  else if (bits & 1u) == 1u then pos
+  else go (shr bits 1u) (pos + 1)`,
+
+    bitfields: `-- Bitfields: Packed Flag Words
+-- Pack multiple flags into a single U32 with named access
+
+bitfield RenderFlags : U32 = {
+  visible    : 1,
+  castShadow : 1,
+  wireframe  : 1,
+  selected   : 1,
+  layer      : 4,
+}
+
+-- Construct a bitfield
+defaultFlags : RenderFlags
+defaultFlags = RenderFlags {
+  visible = 1, castShadow = 1, wireframe = 0, selected = 0, layer = 0
+}
+
+-- Functional update: toggle selection
+toggleSelected : RenderFlags -> I32 -> RenderFlags
+toggleSelected flags val = flags { selected = val }
+
+-- Read individual fields
+isVisible : RenderFlags -> Bool
+isVisible flags = flags.visible
+
+getLayer : RenderFlags -> I32
+getLayer flags = flags.layer`,
+
+    where_bindings: `-- Where Bindings: Local Definitions
+-- Attach helper bindings below the main expression
+
+-- Quadratic formula (positive root)
+quadraticRoot : F32 -> F32 -> F32 -> F32
+quadraticRoot a b c = (-b + disc) / (2.0 * a)
+  where
+    disc = sqrt (b * b - 4.0 * a * c)
+
+-- Layered SDF composition
+sdScene : Vec<2, F32> -> F32
+sdScene p = min dCircle dRect
+  where
+    dCircle = length p - 0.3
+    q       = abs p - vec2 0.2 0.15
+    dRect   = length (max q (vec2 0.0 0.0)) + min (max q.x q.y) 0.0
+
+-- Phong lighting with where
+phong : Vec<3, F32> -> Vec<3, F32> -> Vec<3, F32> -> Vec<3, F32>
+phong normal lightDir viewDir = ambient + diffuse + specular
+  where
+    ambient  = splat3 0.1
+    diff     = max (dot normal lightDir) 0.0
+    diffuse  = splat3 (diff * 0.7)
+    reflDir  = reflect (negate lightDir) normal
+    spec     = pow (max (dot viewDir reflDir) 0.0) 32.0
+    specular = splat3 (spec * 0.5)`,
 };
 
 const AUTO_COMPILE_DELAY_MS = 250;
@@ -209,6 +347,24 @@ const STATIC_EDITOR_ITEMS = [
         snippet: true,
         kind: 'Keyword',
         contexts: ['value'],
+    },
+    {
+        label: 'foldRange',
+        detail: 'Fold over integer range',
+        documentation: 'Fold a function over a range of integers. Desugars to a WGSL for-loop.\n\n```fwgsl\nfoldRange 0 n init (\\acc i -> acc + i)\n```',
+        insertText: 'foldRange ${1:0} ${2:n} ${3:init} (\\\\${4:acc} ${5:i} -> ${6:body})',
+        snippet: true,
+        kind: 'Function',
+        contexts: ['value'],
+    },
+    {
+        label: 'bitfield',
+        detail: 'Packed bitfield declaration',
+        documentation: 'Declare a bitfield with named fields packed into an integer.\n\n```fwgsl\nbitfield Flags : U32 = {\n  visible : 1,\n  layer   : 4,\n}\n```',
+        insertText: 'bitfield ${1:Name} : U32 = {\n  ${2:field} : ${3:1},\n}',
+        snippet: true,
+        kind: 'Keyword',
+        contexts: ['value', 'type'],
     },
     {
         label: 'I32',
@@ -561,6 +717,11 @@ const EXAMPLE_LIBRARY = {
     compute: { label: 'Compute Shader', source: EXAMPLES.compute },
     ifexpr: { label: 'If Expressions', source: EXAMPLES.ifexpr },
     graph: { label: 'Graph Preview', source: EXAMPLES.graph },
+    traits: { label: 'Traits + Operators', source: EXAMPLES.traits },
+    foldRange: { label: 'foldRange', source: EXAMPLES.foldRange },
+    loops: { label: 'Loop Expressions', source: EXAMPLES.loops },
+    bitfields: { label: 'Bitfields', source: EXAMPLES.bitfields },
+    where_bindings: { label: 'Where Bindings', source: EXAMPLES.where_bindings },
 };
 
 for (const example of SHADORIAL_EXAMPLES) {
@@ -574,7 +735,12 @@ const PRESET_GROUPS = [
     {
         id: 'core',
         label: 'Core',
-        keys: ['hello', 'adt', 'compute', 'ifexpr', 'graph'],
+        keys: ['hello', 'adt', 'compute', 'ifexpr', 'graph', 'where_bindings'],
+    },
+    {
+        id: 'features',
+        label: 'Features',
+        keys: ['traits', 'foldRange', 'loops', 'bitfields'],
     },
     {
         id: 'shadorial',

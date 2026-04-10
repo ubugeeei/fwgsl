@@ -418,9 +418,9 @@ impl InferEngine {
             }
             _ => {
                 self.diagnostics.push(
-                    Diagnostic::error(format!("Type mismatch: {} vs {}", a, b))
-                        .with_label(Label::primary(span, "type mismatch"))
-                        .with_help("add a type annotation or convert one side so both types agree"),
+                    Diagnostic::error(format!("Type mismatch: expected `{}`, found `{}`", a, b))
+                        .with_label(Label::primary(span, format!("expected `{}`, found `{}`", a, b)))
+                        .with_help("add a type annotation or use a cast (toF32, toI32, toU32) to convert between types"),
                 );
             }
         }

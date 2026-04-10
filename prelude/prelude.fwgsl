@@ -83,6 +83,7 @@ extern shr  : a -> a -> a
 
 extern sin   : a -> a
 extern cos   : a -> a
+extern tan   : a -> a
 extern abs   : a -> a
 extern fract : a -> a
 extern floor : a -> a
@@ -91,10 +92,29 @@ extern sqrt  : a -> a
 extern log   : a -> a
 extern log2  : a -> a
 extern exp   : a -> a
+extern exp2  : a -> a
 extern ceil  : a -> a
 extern round : a -> a
 extern trunc : a -> a
 extern negate : a -> a
+extern saturate : a -> a
+extern inverseSqrt : a -> a
+
+-- Trigonometric — inverse and hyperbolic
+
+extern asin  : a -> a
+extern acos  : a -> a
+extern sinh  : a -> a
+extern cosh  : a -> a
+extern tanh  : a -> a
+extern asinh : a -> a
+extern acosh : a -> a
+extern atanh : a -> a
+
+-- Angle conversion
+
+extern radians : a -> a
+extern degrees : a -> a
 
 -- WGSL math — binary (a -> a -> a)
 
@@ -106,12 +126,14 @@ extern pow     : a -> a -> a
 extern reflect : a -> a -> a
 extern atan    : a -> a -> a
 extern atan2   : a -> a -> a
+extern ldexp   : a -> a -> a
 
 -- WGSL math — ternary
 
 extern clamp      : a -> a -> a -> a
 extern mix        : a -> a -> b -> a
 extern smoothstep : a -> a -> b -> a
+extern fma        : a -> a -> a -> a
 
 -- WGSL vector operations
 
@@ -120,8 +142,20 @@ extern length    : Vec<n, a> -> a
 extern dot       : Vec<n, a> -> Vec<n, a> -> a
 extern distance  : Vec<n, a> -> Vec<n, a> -> a
 extern cross     : Vec<3, a> -> Vec<3, a> -> Vec<3, a>
+extern faceForward : Vec<n, a> -> Vec<n, a> -> Vec<n, a> -> Vec<n, a>
+extern refract   : Vec<n, a> -> Vec<n, a> -> a -> Vec<n, a>
 
 extern select : a -> a -> Bool -> a
+
+-- Matrix operations
+
+extern determinant : a -> a
+extern transpose   : a -> a
+
+-- WGSL logical
+
+extern all : a -> Bool
+extern any : a -> Bool
 
 -- Loop combinators (compiler-recognized, emit WGSL for-loops)
 
@@ -129,8 +163,27 @@ extern foldRange : I32 -> I32 -> a -> (a -> I32 -> a) -> a
 
 -- WGSL packing/unpacking
 
-extern unpack4x8unorm : U32 -> Vec<4, F32>
-extern pack4x8unorm : Vec<4, F32> -> U32
+extern unpack4x8unorm  : U32 -> Vec<4, F32>
+extern pack4x8unorm    : Vec<4, F32> -> U32
+extern unpack4x8snorm  : U32 -> Vec<4, F32>
+extern pack4x8snorm    : Vec<4, F32> -> U32
+extern unpack2x16float : U32 -> Vec<2, F32>
+extern pack2x16float   : Vec<2, F32> -> U32
+extern unpack2x16unorm : U32 -> Vec<2, F32>
+extern pack2x16unorm   : Vec<2, F32> -> U32
+extern unpack2x16snorm : U32 -> Vec<2, F32>
+extern pack2x16snorm   : Vec<2, F32> -> U32
+
+-- Integer builtins
+
+extern countOneBits      : a -> a
+extern countLeadingZeros : a -> a
+extern countTrailingZeros : a -> a
+extern reverseBits       : a -> a
+extern firstTrailingBit  : a -> a
+extern firstLeadingBit   : a -> a
+extern extractBits       : a -> U32 -> U32 -> a
+extern insertBits        : a -> a -> U32 -> U32 -> a
 
 -- Vector constructors
 
@@ -161,6 +214,37 @@ extern fwidth      : a -> a
 extern fwidthCoarse : a -> a
 extern fwidthFine   : a -> a
 
+-- Synchronization barriers
+
+extern storageBarrier   : () -> ()
+extern workgroupBarrier : () -> ()
+
+-- Texture operations (compiler-special codegen)
+-- Note: Texture types use opaque type names. Full texture support
+-- requires additional type-system work for sampler/texture types.
+
+extern textureSample      : a -> b -> Vec<2, F32> -> Vec<4, F32>
+extern textureLoad        : a -> Vec<2, I32> -> I32 -> Vec<4, F32>
+extern textureStore       : a -> Vec<2, I32> -> Vec<4, F32> -> ()
+extern textureDimensions  : a -> Vec<2, U32>
+
+-- Atomic operations (for atomic<u32> / atomic<i32> in storage/workgroup)
+
+extern atomicLoad    : a -> b
+extern atomicStore   : a -> b -> ()
+extern atomicAdd     : a -> b -> b
+extern atomicSub     : a -> b -> b
+extern atomicMax     : a -> b -> b
+extern atomicMin     : a -> b -> b
+extern atomicAnd     : a -> b -> b
+extern atomicOr      : a -> b -> b
+extern atomicXor     : a -> b -> b
+extern atomicExchange : a -> b -> b
+
+-- Array length (for runtime-sized arrays)
+
+extern arrayLength : a -> U32
+
 -- Resource operations (compiler-special codegen)
 
 extern load    : a -> a
@@ -168,4 +252,5 @@ extern toF32   : a -> F32
 extern toI32   : a -> I32
 extern toU32   : a -> U32
 extern toBool  : a -> Bool
+extern toF16   : a -> F32
 extern writeAt : a -> b -> c -> ()

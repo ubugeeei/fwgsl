@@ -383,7 +383,7 @@ pub const TYPE_SPECS: &[CompletionSpec] = &[
         label: "Pair",
         kind: CompletionItemKind::TYPE_PARAMETER,
         detail: "Pair data type",
-        documentation: "Builtin product type used by utilities such as `$zip`.\n\n```fwgsl\nPair F32 Bool\n```",
+        documentation: "Builtin product type.\n\n```fwgsl\nPair F32 Bool\n```",
         insert_text: "Pair ${1:F32} ${2:Bool}",
         insert_text_format: Some(InsertTextFormat::SNIPPET),
         sort_group: "20",
