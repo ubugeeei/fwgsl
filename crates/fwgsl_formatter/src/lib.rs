@@ -59,6 +59,8 @@ struct FormatEngine<'a> {
     blank_lines: usize,
     /// Nesting depth of type-parameter angle brackets (`Vec<..>`).
     type_angle_depth: usize,
+    /// The last mid-line whitespace that was skipped (for alignment preservation).
+    last_skipped_ws: Option<&'a str>,
 }
 
 impl<'a> FormatEngine<'a> {
@@ -73,6 +75,7 @@ impl<'a> FormatEngine<'a> {
             at_line_start: true,
             blank_lines: 0,
             type_angle_depth: 0,
+            last_skipped_ws: None,
         }
     }
 
@@ -157,6 +160,7 @@ impl<'a> FormatEngine<'a> {
                     self.trim_trailing_whitespace();
                     self.emit_newline();
                     self.blank_lines += 1;
+                    self.last_skipped_ws = None;
                 }
                 SyntaxKind::Whitespace => {
                     // Whitespace at line start = indentation. Preserve it.
@@ -177,6 +181,9 @@ impl<'a> FormatEngine<'a> {
                     } else {
                         // Mid-line whitespace — skip it; we insert canonical spacing
                         // between tokens in the main loop.
+                        // Store the original whitespace for alignment preservation.
+                        let ws_text = self.text(tok);
+                        self.last_skipped_ws = Some(ws_text);
                         self.advance();
                     }
                 }
@@ -216,6 +223,7 @@ impl<'a> FormatEngine<'a> {
                     if !self.at_line_start {
                         self.emit_inter_token_space(tok);
                     }
+                    self.last_skipped_ws = None;
 
                     // Track type-parameter angle brackets (after spacing decision)
                     if tok.kind == SyntaxKind::Less
@@ -248,6 +256,7 @@ impl<'a> FormatEngine<'a> {
     /// Emit appropriate spacing between the previous token and the next one.
     fn emit_inter_token_space(&mut self, next: &Token) {
         let kind = next.kind;
+        let prev = self.last_emitted_kind();
 
         // No space before certain punctuation
         if matches!(
@@ -258,36 +267,162 @@ impl<'a> FormatEngine<'a> {
         }
 
         // No space after opening brackets (already handled since we're looking at 'next')
-        if self.last_emitted_kind() == Some(SyntaxKind::LParen)
-            || self.last_emitted_kind() == Some(SyntaxKind::LBracket)
-        {
+        if prev == Some(SyntaxKind::LParen) || prev == Some(SyntaxKind::LBracket) {
             return;
         }
 
         // No space between `@` and attribute name
-        if self.last_emitted_kind() == Some(SyntaxKind::At) {
+        if prev == Some(SyntaxKind::At) {
             return;
         }
 
         // No space before/after `.` (field access, composition)
-        if kind == SyntaxKind::Dot || self.last_emitted_kind() == Some(SyntaxKind::Dot) {
+        if kind == SyntaxKind::Dot || prev == Some(SyntaxKind::Dot) {
+            return;
+        }
+
+        // No space after `\` (lambda)
+        if prev == Some(SyntaxKind::Backslash) {
+            return;
+        }
+
+        // No space between attribute/function name and `(` — e.g. `@builtin(...)`,
+        // `@workgroup_size(...)`, `@location(0)`, `@interpolate(flat)`
+        if kind == SyntaxKind::LParen
+            && matches!(prev, Some(SyntaxKind::Ident | SyntaxKind::UpperIdent))
+            && self.is_prev_attribute_name()
+        {
+            return;
+        }
+
+        // No space before `[` when preceded by an identifier or `)` (array indexing)
+        if kind == SyntaxKind::LBracket
+            && matches!(
+                prev,
+                Some(
+                    SyntaxKind::Ident
+                        | SyntaxKind::UpperIdent
+                        | SyntaxKind::RParen
+                        | SyntaxKind::RBracket
+                )
+            )
+        {
+            return;
+        }
+
+        // No space after unary `-` or `!` when they appear as prefix operators.
+        // Detect prefix context: the `-` or `!` follows `(`, `=`, `let`, `in`,
+        // `then`, `else`, `->`, a comma, or is at statement start.
+        if (prev == Some(SyntaxKind::Minus) || prev == Some(SyntaxKind::Bang))
+            && self.is_prev_unary_context()
+        {
             return;
         }
 
         // Type parameter angle brackets: no space around `<`, `>`, or after `,`
         // when inside `Type<...>`.
-        if kind == SyntaxKind::Less && self.last_emitted_kind() == Some(SyntaxKind::UpperIdent) {
+        if kind == SyntaxKind::Less && prev == Some(SyntaxKind::UpperIdent) {
             return; // no space before `<` in `Vec<`
         }
         if kind == SyntaxKind::Greater && self.type_angle_depth > 0 {
             return; // no space before `>` in `...>`
         }
-        if self.last_emitted_kind() == Some(SyntaxKind::Less) && self.type_angle_depth > 0 {
+        if prev == Some(SyntaxKind::Less) && self.type_angle_depth > 0 {
             return; // no space after `<` in `<4, ...`
+        }
+
+        // Preserve original multi-space padding before alignment-sensitive tokens.
+        // This keeps author-intentional column alignment in let/where `=`, record `:`,
+        // match `->`, const `:`, and extern resource `:` / `@group`.
+        if let Some(ws) = self.last_skipped_ws {
+            if ws.len() > 1 {
+                let is_alignment_target = match kind {
+                    // `=` alignment only preserved on indented lines (let/where bindings,
+                    // record construction fields) — not top-level function defs.
+                    SyntaxKind::Equals => self.line_is_indented(),
+                    // `:`, `->`, `@` alignment preserved everywhere (const, extern, match arms).
+                    SyntaxKind::Colon | SyntaxKind::Arrow | SyntaxKind::At => true,
+                    // Ident after `)` — preserve attribute-to-field-name padding in records
+                    SyntaxKind::Ident | SyntaxKind::UpperIdent
+                        if prev == Some(SyntaxKind::RParen)
+                            && self.line_has_attribute() =>
+                    {
+                        true
+                    }
+                    _ => false,
+                };
+                if is_alignment_target {
+                    self.emit_str(ws);
+                    return;
+                }
+            }
         }
 
         // Single space for everything else
         self.ensure_single_space();
+    }
+
+    /// Check if the previous token is an attribute name (follows `@`).
+    fn is_prev_attribute_name(&self) -> bool {
+        if self.pos < 2 {
+            return false;
+        }
+        // Walk back from current pos to find the identifier, then check if `@` precedes it
+        for i in (0..self.pos).rev() {
+            let k = self.tokens[i].kind;
+            if k.is_trivia() {
+                continue;
+            }
+            if k == SyntaxKind::Ident || k == SyntaxKind::UpperIdent {
+                // Now check if the token before this ident is `@`
+                for j in (0..i).rev() {
+                    let k2 = self.tokens[j].kind;
+                    if k2.is_trivia() {
+                        continue;
+                    }
+                    return k2 == SyntaxKind::At;
+                }
+                return false;
+            }
+            return false;
+        }
+        false
+    }
+
+    /// Check if the previous `-` or `!` is in a unary (prefix) context.
+    fn is_prev_unary_context(&self) -> bool {
+        if self.pos < 2 {
+            return true; // at the start, it must be unary
+        }
+        // Find the token before the `-` or `!`
+        let op_idx = self.pos - 1; // the `-` or `!` token
+        for i in (0..op_idx).rev() {
+            let k = self.tokens[i].kind;
+            if k.is_trivia() {
+                continue;
+            }
+            // Prefix context: after `(`, `[`, `=`, `,`, `->`, `||`, `&&`, keywords, operators
+            return matches!(
+                k,
+                SyntaxKind::LParen
+                    | SyntaxKind::LBracket
+                    | SyntaxKind::Equals
+                    | SyntaxKind::Comma
+                    | SyntaxKind::Arrow
+                    | SyntaxKind::Pipe
+                    | SyntaxKind::OrOr
+                    | SyntaxKind::AndAnd
+                    | SyntaxKind::KwLet
+                    | SyntaxKind::KwIn
+                    | SyntaxKind::KwThen
+                    | SyntaxKind::KwElse
+                    | SyntaxKind::KwIf
+                    | SyntaxKind::KwMatch
+                    | SyntaxKind::KwCase
+                    | SyntaxKind::KwOf
+            );
+        }
+        true
     }
 
     /// Look back at the last non-whitespace character to determine the previous token kind.
@@ -303,6 +438,29 @@ impl<'a> FormatEngine<'a> {
             }
         }
         None
+    }
+
+    /// Check if the current output line contains an `@` (attribute context).
+    fn line_has_attribute(&self) -> bool {
+        let line_start = self.output.rfind('\n').map_or(0, |i| i + 1);
+        self.output[line_start..].contains('@')
+    }
+
+    /// Check if the current output line is indented (starts with whitespace).
+    fn line_is_indented(&self) -> bool {
+        if let Some(nl) = self.output.rfind('\n') {
+            let line_start = nl + 1;
+            self.output[line_start..]
+                .bytes()
+                .next()
+                .map_or(false, |b| b == b' ' || b == b'\t')
+        } else {
+            // No newline yet — check from start
+            self.output
+                .bytes()
+                .next()
+                .map_or(false, |b| b == b' ' || b == b'\t')
+        }
     }
 
     fn ensure_single_space(&mut self) {
@@ -417,8 +575,8 @@ fn parse_field_line(line: &str) -> Option<(usize, usize)> {
     }
     // Work with byte offset from line start
     let mut pos = indent;
-    // Skip optional attribute like @builtin(...) or @location(0)
-    if bytes.get(pos) == Some(&b'@') {
+    // Skip optional attributes like @builtin(...) @location(0) @interpolate(flat)
+    while bytes.get(pos) == Some(&b'@') {
         pos += 1;
         // Skip ident
         let ident_start = pos;
@@ -639,5 +797,133 @@ mod tests {
         let result = format_default(source);
         let result2 = format_default(&result);
         assert_eq!(result, result2, "type params formatting is not idempotent");
+    }
+
+    #[test]
+    fn format_attribute_args_no_space() {
+        let source = "@builtin(position) foo : Vec<4, F32>\n";
+        let result = format_default(source);
+        assert_eq!(result, "@builtin(position) foo : Vec<4, F32>\n");
+    }
+
+    #[test]
+    fn format_workgroup_size_no_space() {
+        let source = "@compute @workgroup_size(64, 1, 1)\n";
+        let result = format_default(source);
+        assert_eq!(result, "@compute @workgroup_size(64, 1, 1)\n");
+    }
+
+    #[test]
+    fn format_array_index_no_space() {
+        let source = "f x = buf[idx]\n";
+        let result = format_default(source);
+        assert_eq!(result, "f x = buf[idx]\n");
+    }
+
+    #[test]
+    fn format_unary_negation_no_space() {
+        let source = "f x = (-x)\n";
+        let result = format_default(source);
+        assert_eq!(result, "f x = (-x)\n");
+    }
+
+    #[test]
+    fn format_unary_not_no_space() {
+        let source = "f x = !x\n";
+        let result = format_default(source);
+        assert_eq!(result, "f x = !x\n");
+    }
+
+    #[test]
+    fn format_binary_minus_has_space() {
+        let source = "f x = x - 1\n";
+        let result = format_default(source);
+        assert_eq!(result, "f x = x - 1\n");
+    }
+
+    #[test]
+    fn format_lambda_no_space_after_backslash() {
+        let source = "f = (\\x -> x + 1)\n";
+        let result = format_default(source);
+        assert_eq!(result, "f = (\\x -> x + 1)\n");
+    }
+
+    #[test]
+    fn format_negative_literal() {
+        let source = "f = Fp64 (-a.high) (-a.low)\n";
+        let result = format_default(source);
+        assert_eq!(result, "f = Fp64 (-a.high) (-a.low)\n");
+    }
+
+    #[test]
+    fn format_match_negation() {
+        let source = "  | 4 | 8 -> -1.0\n";
+        let result = format_default(source);
+        assert_eq!(result, "  | 4 | 8 -> -1.0\n");
+    }
+
+    #[test]
+    fn format_multiple_attributes() {
+        let source = "  @location(4) @interpolate(flat) cap_type : U32\n";
+        let result = format_default(source);
+        assert_eq!(result, "  @location(4) @interpolate(flat) cap_type : U32\n");
+    }
+
+    #[test]
+    fn format_preserves_let_binding_alignment() {
+        let source = "  let x    = 1\n      yLong = 2\n";
+        let result = format_default(source);
+        assert_eq!(result, "  let x    = 1\n      yLong = 2\n");
+    }
+
+    #[test]
+    fn format_preserves_const_colon_alignment() {
+        let source = "const FOO      : I32 = 1\nconst BAR_LONG : I32 = 2\n";
+        let result = format_default(source);
+        assert_eq!(result, "const FOO      : I32 = 1\nconst BAR_LONG : I32 = 2\n");
+    }
+
+    #[test]
+    fn format_preserves_match_arrow_alignment() {
+        let source = "  | Red   -> 1\n  | Green -> 2\n";
+        let result = format_default(source);
+        assert_eq!(result, "  | Red   -> 1\n  | Green -> 2\n");
+    }
+
+    #[test]
+    fn format_preserves_extern_resource_alignment() {
+        let source = "extern resource buf     : Uniform<F32>          @group 0 @binding 0\nextern resource bigBuf  : Storage<ReadWrite, F32> @group 1 @binding 0\n";
+        let result = format_default(source);
+        assert_eq!(result, "extern resource buf     : Uniform<F32>          @group 0 @binding 0\nextern resource bigBuf  : Storage<ReadWrite, F32> @group 1 @binding 0\n");
+    }
+
+    #[test]
+    fn format_preserves_record_field_attr_padding() {
+        let source = "  @builtin(position)              clip_pos : Vec<4, F32>,\n  @location(0)                    dist     : F32,\n";
+        let result = format_default(source);
+        assert_eq!(result, "  @builtin(position)              clip_pos : Vec<4, F32>,\n  @location(0)                    dist     : F32,\n");
+    }
+
+    #[test]
+    fn format_normalizes_toplevel_equals() {
+        // Top-level function definitions should NOT preserve alignment padding
+        let source = "f   x   =   x + 1\n";
+        let result = format_default(source);
+        assert_eq!(result, "f x = x + 1\n");
+    }
+
+    #[test]
+    fn format_unary_not_after_or() {
+        let source = "  x = !a || !b\n";
+        let result = format_default(source);
+        assert_eq!(result, "  x = !a || !b\n");
+    }
+
+    #[test]
+    fn format_alignment_idempotent_let_block() {
+        let source = "  let x    = 1\n      yLong = 2\n";
+        let first = format_default(source);
+        let second = format_default(&first);
+        assert_eq!(first, second, "let binding alignment is not idempotent");
     }
 }
