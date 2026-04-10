@@ -1,0 +1,4 @@
+module Debug
+
+debugLog : F32 -> F32
+debugLog x = x

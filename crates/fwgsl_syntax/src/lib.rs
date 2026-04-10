@@ -144,16 +144,12 @@ pub enum SyntaxKind {
     KwConst,
     KwLoop,
     KwAs,
-    KwPrivate,
     KwWhen,
     KwCfg,
 
     // ── CST node kinds ─────────────────────────────────────────────
     SourceFile,
     ModuleDecl,
-    ModuleHeader,
-    ExportList,
-    ExportItem,
 
     ImportDecl,
     ImportList,
@@ -324,7 +320,6 @@ pub fn keyword_from_str(s: &str) -> Option<SyntaxKind> {
         "const" => Some(SyntaxKind::KwConst),
         "loop" => Some(SyntaxKind::KwLoop),
         "as" => Some(SyntaxKind::KwAs),
-        "private" => Some(SyntaxKind::KwPrivate),
         "when" => Some(SyntaxKind::KwWhen),
         "cfg" => Some(SyntaxKind::KwCfg),
         _ => None,
@@ -459,16 +454,12 @@ impl fmt::Display for SyntaxKind {
             SyntaxKind::KwConst => "'const'",
             SyntaxKind::KwLoop => "'loop'",
             SyntaxKind::KwAs => "'as'",
-            SyntaxKind::KwPrivate => "'private'",
             SyntaxKind::KwWhen => "'when'",
             SyntaxKind::KwCfg => "'cfg'",
 
             // CST node kinds
             SyntaxKind::SourceFile => "source file",
             SyntaxKind::ModuleDecl => "module declaration",
-            SyntaxKind::ModuleHeader => "module header",
-            SyntaxKind::ExportList => "export list",
-            SyntaxKind::ExportItem => "export item",
 
             SyntaxKind::ImportDecl => "import declaration",
             SyntaxKind::ImportList => "import list",

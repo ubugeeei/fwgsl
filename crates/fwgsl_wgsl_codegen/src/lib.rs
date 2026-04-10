@@ -355,7 +355,14 @@ impl WgslEmitter {
 
         self.write(")");
         if ep.return_ty != MirType::Unit {
-            self.write(&format!(" -> {}", self.format_type(&ep.return_ty)));
+            // Non-struct return types on vertex/fragment entry points need @location(0)
+            let needs_location = matches!(ep.stage, ShaderStage::Vertex | ShaderStage::Fragment)
+                && !matches!(ep.return_ty, MirType::Struct(_));
+            if needs_location {
+                self.write(&format!(" -> @location(0) {}", self.format_type(&ep.return_ty)));
+            } else {
+                self.write(&format!(" -> {}", self.format_type(&ep.return_ty)));
+            }
         }
         self.write(" {");
         self.newline();
@@ -878,7 +885,7 @@ mod tests {
         let wgsl = emit_wgsl(&program);
         assert!(wgsl.contains("@vertex"));
         assert!(wgsl.contains("fn vs_main()"));
-        assert!(wgsl.contains("-> vec4<f32>"));
+        assert!(wgsl.contains("-> @location(0) vec4<f32>"));
         assert!(wgsl.contains("return vec4<f32>(0.0, 0.0, 0.0, 1.0);"));
     }
 
@@ -913,7 +920,7 @@ mod tests {
         let wgsl = emit_wgsl(&program);
         assert!(wgsl.contains("@fragment"));
         assert!(wgsl.contains("fn fs_main()"));
-        assert!(wgsl.contains("-> vec4<f32>"));
+        assert!(wgsl.contains("-> @location(0) vec4<f32>"));
     }
 
     #[test]

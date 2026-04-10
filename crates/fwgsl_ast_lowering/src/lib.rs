@@ -860,14 +860,20 @@ impl AstLowering {
                 let result_ty = self.engine.fresh_var();
 
                 let mut hir_arms = Vec::new();
-                for (pat, body) in arms {
+                for (pat, guard, body) in arms {
                     let mut arm_env = env.clone();
                     self.bind_pattern(pat, &scrut_ty, &mut arm_env);
                     let hir_pattern = self.lower_pattern(pat, &scrut_ty);
+                    let hir_guard = guard.as_ref().map(|g| {
+                        let (hir_g, guard_ty) = self.lower_expr(g, &mut arm_env);
+                        self.engine.unify(&guard_ty, &Ty::bool(), *span);
+                        hir_g
+                    });
                     let (hir_body, body_ty) = self.lower_expr(body, &mut arm_env);
                     self.engine.unify(&result_ty, &body_ty, *span);
                     hir_arms.push(HirCaseArm {
                         pattern: hir_pattern,
+                        guard: hir_guard,
                         body: hir_body,
                     });
                 }
@@ -1716,6 +1722,7 @@ impl AstLowering {
                 arms.into_iter()
                     .map(|arm| HirCaseArm {
                         pattern: self.finalize_pattern(arm.pattern),
+                        guard: arm.guard.map(|g| self.finalize_expr(g)),
                         body: self.finalize_expr(arm.body),
                     })
                     .collect(),

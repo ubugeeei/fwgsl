@@ -1337,7 +1337,7 @@ mod codegen_tests {
         let wgsl = emit_wgsl(&program);
         assert!(wgsl.contains("@vertex"), "WGSL: {}", wgsl);
         assert!(wgsl.contains("fn vs_main()"), "WGSL: {}", wgsl);
-        assert!(wgsl.contains("-> vec4<f32>"), "WGSL: {}", wgsl);
+        assert!(wgsl.contains("-> @location(0) vec4<f32>"), "WGSL: {}", wgsl);
     }
 
     #[test]
@@ -1371,7 +1371,7 @@ mod codegen_tests {
         let wgsl = emit_wgsl(&program);
         assert!(wgsl.contains("@fragment"), "WGSL: {}", wgsl);
         assert!(wgsl.contains("fn fs_main()"), "WGSL: {}", wgsl);
-        assert!(wgsl.contains("-> vec4<f32>"), "WGSL: {}", wgsl);
+        assert!(wgsl.contains("-> @location(0) vec4<f32>"), "WGSL: {}", wgsl);
     }
 
     #[test]

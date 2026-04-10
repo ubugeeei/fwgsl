@@ -307,7 +307,8 @@ pub enum Expr {
     Infix(Box<Expr>, String, Box<Expr>, Span),
     Lambda(Vec<Pat>, Box<Expr>, Span),
     Let(Vec<(String, Expr)>, Box<Expr>, Span),
-    Case(Box<Expr>, Vec<(Pat, Expr)>, Span),
+    /// Match expression. Arms are `(pattern, optional_guard, body)`.
+    Case(Box<Expr>, Vec<(Pat, Option<Expr>, Expr)>, Span),
     If(Box<Expr>, Box<Expr>, Box<Expr>, Span),
     Paren(Box<Expr>, Span),
     Tuple(Vec<Expr>, Span),
@@ -2350,10 +2351,19 @@ impl Parser {
                 first_pat
             };
 
+            // Optional when-guard: `| pat when guard -> body`
+            let guard = if self.at(SyntaxKind::KwWhen) {
+                self.bump(); // consume `when`
+                self.skip_trivia();
+                Some(self.parse_expr())
+            } else {
+                None
+            };
+
             self.expect(SyntaxKind::Arrow);
             self.skip_trivia();
             let body = self.parse_expr();
-            arms.push((pat, body));
+            arms.push((pat, guard, body));
         }
 
         let span = self.span_from(start);

@@ -1,11 +1,8 @@
 //! Module merging: combine a dependency-ordered set of modules into a single
 //! flat program suitable for semantic analysis and compilation.
 //!
-//! All public (non-private) declarations are included. The output is a single
-//! `Program` with all declarations from all modules, with module/import
-//! declarations stripped.
-
-use std::collections::HashSet;
+//! All declarations are included. The output is a single `Program` with all
+//! declarations from all modules, with module/import declarations stripped.
 
 use crate::parser::{Decl, Program};
 use crate::module_resolver::ModuleGraph;
@@ -13,29 +10,18 @@ use crate::module_resolver::ModuleGraph;
 /// Merge a module graph into a single flat program.
 ///
 /// Processing order (dependency first):
-/// 1. For each module in topological order, collect all non-private,
-///    non-module/import declarations into the merged program.
-///
-/// Visibility: everything is public by default. Declarations preceded by
-/// `private` are excluded from the merged output (they stay module-local).
+/// For each module in topological order, collect all non-module/import
+/// declarations into the merged program.
 pub fn merge_modules(graph: &ModuleGraph) -> Program {
     let mut merged_decls: Vec<Decl> = Vec::new();
 
     for module in &graph.modules {
-        let private_names = collect_private_names(&module.program);
         for decl in &module.program.decls {
             match decl {
                 Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {
                     // Skip module/import declarations — they're metadata only
                 }
                 _ => {
-                    // Filter out private declarations
-                    let name = decl_name(decl);
-                    if let Some(n) = name {
-                        if private_names.contains(n) {
-                            continue;
-                        }
-                    }
                     merged_decls.push(decl.clone());
                 }
             }
@@ -43,38 +29,6 @@ pub fn merge_modules(graph: &ModuleGraph) -> Program {
     }
 
     Program { decls: merged_decls }
-}
-
-/// Get the primary name of a declaration, if any.
-fn decl_name(decl: &Decl) -> Option<&str> {
-    match decl {
-        Decl::TypeSig { name, .. }
-        | Decl::FunDecl { name, .. }
-        | Decl::EntryPoint { name, .. }
-        | Decl::DataDecl { name, .. }
-        | Decl::TypeAlias { name, .. }
-        | Decl::ResourceDecl { name, .. }
-        | Decl::BitfieldDecl { name, .. }
-        | Decl::ConstDecl { name, .. }
-        | Decl::TraitDecl { name, .. }
-        | Decl::ExternDecl { name, .. } => Some(name.as_str()),
-        Decl::ImplDecl { .. }
-        | Decl::ModuleDecl { .. }
-        | Decl::ImportDecl { .. }
-        | Decl::CfgDecl { .. } => None,
-    }
-}
-
-/// Collect names of declarations that follow a `private` keyword in the source.
-///
-/// For now, `private` is detected by scanning comments attached to declarations.
-/// TODO: Once the parser emits a `Decl::Private` wrapper or flag, use that instead.
-/// Currently this is a placeholder — full `private` support requires parser changes
-/// to track which declarations are marked private.
-fn collect_private_names(_program: &Program) -> HashSet<String> {
-    // Placeholder: no declarations are private yet.
-    // When the parser supports `private`, this will extract private names.
-    HashSet::new()
 }
 
 #[cfg(test)]

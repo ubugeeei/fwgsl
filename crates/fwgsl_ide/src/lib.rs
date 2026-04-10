@@ -649,7 +649,7 @@ impl<'a> IndexBuilder<'a> {
             }
             Expr::Case(scrutinee, arms, _) => {
                 self.walk_expr(scrutinee, frames);
-                for (pattern, body) in arms {
+                for (pattern, guard, body) in arms {
                     let container = frames.last().and_then(|frame| frame.container.clone());
                     frames.push(ScopeFrame::new(body.span(), container));
                     self.define_pattern(
@@ -658,6 +658,9 @@ impl<'a> IndexBuilder<'a> {
                         frames,
                         SymbolKind::PatternBinding,
                     );
+                    if let Some(guard_expr) = guard {
+                        self.walk_expr(guard_expr, frames);
+                    }
                     self.walk_expr(body, frames);
                     frames.pop();
                 }

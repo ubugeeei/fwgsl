@@ -760,16 +760,26 @@ fn lower_bitfield_construct(
         // just mask the value which already works for u32, and for bool we
         // wrap in a conditional
         let coerced = if bf_info.width == 1 {
-            // Bool → u32: select(0u, 1u, val)
-            MirExpr::Call(
-                "select".to_string(),
-                vec![
-                    MirExpr::Lit(MirLit::U32(0)),
-                    MirExpr::Lit(MirLit::U32(1)),
-                    mir_val,
-                ],
-                MirType::U32,
-            )
+            let val_ty = mir_val.result_type();
+            if val_ty.as_ref() == Some(&MirType::Bool) {
+                // Bool → u32: select(0u, 1u, val)
+                MirExpr::Call(
+                    "select".to_string(),
+                    vec![
+                        MirExpr::Lit(MirLit::U32(0)),
+                        MirExpr::Lit(MirLit::U32(1)),
+                        mir_val,
+                    ],
+                    MirType::U32,
+                )
+            } else {
+                // Integer → u32: cast directly
+                if val_ty.as_ref() == Some(&MirType::U32) {
+                    mir_val
+                } else {
+                    MirExpr::Cast(Box::new(mir_val), MirType::U32)
+                }
+            }
         } else {
             // Ensure value is u32 (integer literals default to i32)
             let val_ty = mir_val.result_type();
@@ -849,15 +859,26 @@ fn lower_bitfield_update(
         let mask = (1u32 << bf_info.width) - 1;
 
         let coerced = if bf_info.width == 1 {
-            MirExpr::Call(
-                "select".to_string(),
-                vec![
-                    MirExpr::Lit(MirLit::U32(0)),
-                    MirExpr::Lit(MirLit::U32(1)),
-                    mir_val,
-                ],
-                MirType::U32,
-            )
+            let val_ty = mir_val.result_type();
+            if val_ty.as_ref() == Some(&MirType::Bool) {
+                // Bool → u32: select(0u, 1u, val)
+                MirExpr::Call(
+                    "select".to_string(),
+                    vec![
+                        MirExpr::Lit(MirLit::U32(0)),
+                        MirExpr::Lit(MirLit::U32(1)),
+                        mir_val,
+                    ],
+                    MirType::U32,
+                )
+            } else {
+                // Integer → u32: cast directly
+                if val_ty.as_ref() == Some(&MirType::U32) {
+                    mir_val
+                } else {
+                    MirExpr::Cast(Box::new(mir_val), MirType::U32)
+                }
+            }
         } else {
             let val_ty = mir_val.result_type();
             if val_ty.as_ref() == Some(&MirType::U32) {
@@ -1128,7 +1149,9 @@ fn lower_case_arms(
     }
 
     // --- Try to emit a native WGSL switch for integer literal patterns ---
-    if matches!(scrut_ty, MirType::I32 | MirType::U32) {
+    // Guards disable the switch optimization (can't express arbitrary conditions in WGSL switch).
+    let no_guards = arms.iter().all(|arm| arm.guard.is_none());
+    if no_guards && matches!(scrut_ty, MirType::I32 | MirType::U32) {
         let all_int_or_wild = arms.iter().all(|arm| is_switch_compatible_pattern(&arm.pattern));
 
         if all_int_or_wild {
@@ -1177,8 +1200,18 @@ fn lower_case_arms(
                             });
                         }
                     }
-                    HirPattern::Wild | HirPattern::Var(_, _) => {
+                    HirPattern::Wild => {
                         default_body = body_stmts;
+                    }
+                    HirPattern::Var(name, var_ty) => {
+                        let mir_ty = ty_to_mir_type_with_ctx(var_ty, Some(ctx)).unwrap_or(scrut_ty.clone());
+                        let mut stmts = vec![MirStmt::Let(
+                            name.clone(),
+                            mir_ty,
+                            MirExpr::Var(scrut_name.to_string(), scrut_ty.clone()),
+                        )];
+                        stmts.extend(body_stmts);
+                        default_body = stmts;
                     }
                     _ => unreachable!(),
                 }
@@ -1196,9 +1229,58 @@ fn lower_case_arms(
         let (mut body_stmts, body_expr) = lower_hir_expr_to_stmts(&arm.body, ctx)?;
         body_stmts.push(MirStmt::Assign(result_name.to_string(), body_expr));
 
+        // Lower the optional guard expression.
+        // Guard may reference pattern-bound variables, so it must be evaluated
+        // *after* pattern bindings are established.
+        let guard_mir = if let Some(guard_expr) = &arm.guard {
+            Some(lower_hir_expr_to_stmts(guard_expr, ctx)?)
+        } else {
+            None
+        };
+
+        /// Wrap body_stmts with a guard check if present.
+        /// Returns: `guard_setup; if (guard) { body } else { fallthrough }` when guarded,
+        /// or just `body` when unguarded.
+        fn apply_guard(
+            guard_mir: Option<(Vec<MirStmt>, MirExpr)>,
+            body_stmts: Vec<MirStmt>,
+            fallthrough: &mut Option<MirStmt>,
+        ) -> Vec<MirStmt> {
+            if let Some((guard_setup_stmts, guard_val)) = guard_mir {
+                let else_stmts = take_else_stmts(fallthrough);
+                let mut guarded = guard_setup_stmts;
+                guarded.push(MirStmt::If(guard_val, body_stmts, else_stmts));
+                guarded
+            } else {
+                body_stmts
+            }
+        }
+
+        fn take_else_stmts(result: &mut Option<MirStmt>) -> Vec<MirStmt> {
+            match result.take() {
+                Some(MirStmt::If(c, t, e)) => vec![MirStmt::If(c, t, e)],
+                Some(MirStmt::Block(stmts)) => stmts,
+                Some(other) => vec![other],
+                None => vec![],
+            }
+        }
+
         match &arm.pattern {
             HirPattern::Wild | HirPattern::Var(_, _) => {
-                result = Some(MirStmt::Block(body_stmts));
+                // Bind Var pattern to scrutinee so body/guard can reference it
+                let mut binding = Vec::new();
+                if let HirPattern::Var(name, var_ty) = &arm.pattern {
+                    let mir_ty = ty_to_mir_type_with_ctx(var_ty, Some(ctx)).unwrap_or(scrut_ty.clone());
+                    binding.push(MirStmt::Let(
+                        name.clone(),
+                        mir_ty,
+                        MirExpr::Var(scrut_name.to_string(), scrut_ty.clone()),
+                    ));
+                }
+                let guarded_body = apply_guard(guard_mir, body_stmts, &mut result);
+                let mut full = binding;
+                full.extend(guarded_body);
+                result = Some(MirStmt::Block(full));
             }
 
             HirPattern::Constructor(con_name, tag, sub_pats) => {
@@ -1229,10 +1311,6 @@ fn lower_case_arms(
                     }
                 }
 
-                // Prepend bindings to the body
-                let mut full_body = bindings;
-                full_body.append(&mut body_stmts);
-
                 // Match on tag: if (scrut.tag == tag) { ... }
                 let scrut_tag = if scrut_ty == &MirType::U32 {
                     MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())
@@ -1250,12 +1328,21 @@ fn lower_case_arms(
                     MirType::Bool,
                 );
 
-                let else_stmts = match result {
-                    Some(MirStmt::If(c, t, e)) => vec![MirStmt::If(c, t, e)],
-                    Some(MirStmt::Block(stmts)) => stmts,
-                    Some(other) => vec![other],
-                    None => vec![],
-                };
+                // Build body: bindings, then guard check (if any), then body.
+                // When a guard is present, both guard-failure and tag-mismatch
+                // must fall through to the remaining arms, so clone the fallthrough.
+                let mut full_body = bindings;
+                if guard_mir.is_some() {
+                    let fallthrough_clone = result.clone();
+                    let guarded_body = apply_guard(guard_mir, body_stmts, &mut result);
+                    full_body.extend(guarded_body);
+                    // Restore result for the outer tag-mismatch else
+                    result = fallthrough_clone;
+                } else {
+                    full_body.extend(body_stmts);
+                }
+
+                let else_stmts = take_else_stmts(&mut result);
 
                 result = Some(MirStmt::If(cond, full_body, else_stmts));
             }
@@ -1278,14 +1365,16 @@ fn lower_case_arms(
                     MirType::Bool,
                 );
 
-                let else_stmts = match result {
-                    Some(MirStmt::If(c, t, e)) => vec![MirStmt::If(c, t, e)],
-                    Some(MirStmt::Block(stmts)) => stmts,
-                    Some(other) => vec![other],
-                    None => vec![],
-                };
-
-                result = Some(MirStmt::If(cond, body_stmts, else_stmts));
+                if guard_mir.is_some() {
+                    let fallthrough_clone = result.clone();
+                    let guarded_body = apply_guard(guard_mir, body_stmts, &mut result);
+                    result = fallthrough_clone;
+                    let else_stmts = take_else_stmts(&mut result);
+                    result = Some(MirStmt::If(cond, guarded_body, else_stmts));
+                } else {
+                    let else_stmts = take_else_stmts(&mut result);
+                    result = Some(MirStmt::If(cond, body_stmts, else_stmts));
+                }
             }
 
             HirPattern::Or(alts) => {
@@ -1321,13 +1410,16 @@ fn lower_case_arms(
                     }
                 }
                 if let Some(cond) = cond {
-                    let else_stmts = match result {
-                        Some(MirStmt::If(c, t, e)) => vec![MirStmt::If(c, t, e)],
-                        Some(MirStmt::Block(stmts)) => stmts,
-                        Some(other) => vec![other],
-                        None => vec![],
-                    };
-                    result = Some(MirStmt::If(cond, body_stmts, else_stmts));
+                    if guard_mir.is_some() {
+                        let fallthrough_clone = result.clone();
+                        let guarded_body = apply_guard(guard_mir, body_stmts, &mut result);
+                        result = fallthrough_clone;
+                        let else_stmts = take_else_stmts(&mut result);
+                        result = Some(MirStmt::If(cond, guarded_body, else_stmts));
+                    } else {
+                        let else_stmts = take_else_stmts(&mut result);
+                        result = Some(MirStmt::If(cond, body_stmts, else_stmts));
+                    }
                 } else {
                     // Or-pattern with only wilds
                     result = Some(MirStmt::Block(body_stmts));

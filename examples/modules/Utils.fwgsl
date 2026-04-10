@@ -1,4 +1,4 @@
-module Utils exposing (double, triple)
+module Utils
 
 double : F32 -> F32
 double x = x * 2.0

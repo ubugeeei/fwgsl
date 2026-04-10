@@ -99,6 +99,7 @@ Program {
                                 end: 80,
                             },
                         ),
+                        None,
                         Lit(
                             Int(
                                 0,
@@ -118,6 +119,7 @@ Program {
                                 end: 95,
                             },
                         ),
+                        None,
                         Lit(
                             Int(
                                 1,
@@ -137,6 +139,7 @@ Program {
                                 end: 110,
                             },
                         ),
+                        None,
                         Lit(
                             Int(
                                 2,

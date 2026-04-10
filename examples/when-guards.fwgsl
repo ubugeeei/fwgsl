@@ -1,0 +1,115 @@
+-- when-guards.fwgsl — Demonstrates when-guard syntax in match expressions.
+--
+-- When-guards allow boolean conditions on match arms:
+--   match expr
+--     | pattern when condition -> body
+--
+-- The guard is checked after the pattern matches. If the guard fails,
+-- execution falls through to the next arm.
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Basic types for examples
+-- ═══════════════════════════════════════════════════════════════════════
+
+data Shape
+  = Circle F32
+  | Rect F32 F32
+
+data Color = Red | Green | Blue
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Range classification with when-guards
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Classify a float into named ranges using when-guards on wildcard patterns.
+-- This replaces nested if-else chains with declarative match arms.
+classify : F32 -> I32
+classify x = match x
+  | _ when x < 0.0   -> 0
+  | _ when x < 1.0   -> 1
+  | _ when x < 10.0  -> 2
+  | _                 -> 3
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ADT matching with guards
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Compute area, but clamp small shapes to a minimum size.
+-- Guards let us refine constructor matches with additional conditions.
+areaOrMinimum : Shape -> F32 -> F32
+areaOrMinimum shape minArea = match shape
+  | Circle r when r * r * 3.14159 < minArea -> minArea
+  | Circle r                                -> r * r * 3.14159
+  | Rect w h when w * h < minArea           -> minArea
+  | Rect w h                                -> w * h
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Guards on variable patterns
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Guards on variable patterns: the variable binds the scrutinee,
+-- then the guard can use it.
+absValue : I32 -> I32
+absValue x = match x
+  | n when n < 0 -> 0 - n
+  | n            -> n
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Guards with enum matching
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Mix a guard condition with enum constructors.
+-- The wildcard arm with a guard fires only when the condition holds.
+colorWeight : Color -> F32 -> F32
+colorWeight c brightness = match c
+  | Red   when brightness > 0.5 -> 1.0
+  | Red                         -> 0.5
+  | Green when brightness > 0.5 -> 0.8
+  | Green                       -> 0.4
+  | Blue                        -> 0.3
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Integer ranges via when-guards
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- HSV sector selection — the classic if-else-if chain becomes
+-- a clean match expression. Guards turn an imperative style into
+-- a declarative one.
+hsvSector : F32 -> I32
+hsvSector h = match h
+  | _ when h < 0.166 -> 0
+  | _ when h < 0.333 -> 1
+  | _ when h < 0.500 -> 2
+  | _ when h < 0.666 -> 3
+  | _ when h < 0.833 -> 4
+  | _                 -> 5
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Entry point — exercise all the when-guard examples
+-- ═══════════════════════════════════════════════════════════════════════
+
+extern resource results : Storage<ReadWrite, Array<Vec<4, F32>>> @group 0 @binding 0
+
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> ()
+@compute @workgroup_size(64, 1, 1)
+main input =
+  let idx = toI32 input.gid.x
+
+      -- Range classification
+      rangeClass = classify (toF32 idx * 0.5 - 2.0)
+
+      -- Absolute value via guard
+      av = absValue (idx - 5)
+
+      -- Color weight with brightness guard
+      cw = colorWeight Red (toF32 idx / 10.0)
+
+      -- HSV sector
+      sector = hsvSector (toF32 idx / 12.0)
+
+      result = vec4 (toF32 rangeClass) (toF32 av) cw (toF32 sector)
+  in writeAt results (toU32 idx) result

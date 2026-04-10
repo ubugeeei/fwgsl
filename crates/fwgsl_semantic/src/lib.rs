@@ -671,9 +671,13 @@ impl SemanticAnalyzer {
             Expr::Case(scrutinee, arms, span) => {
                 let scrut_ty = self.infer_expr(scrutinee, env);
                 let result_ty = self.engine.fresh_var();
-                for (pat, body) in arms {
+                for (pat, guard, body) in arms {
                     let mut arm_env = env.clone();
                     self.bind_pattern(pat, &scrut_ty, &mut arm_env);
+                    if let Some(guard_expr) = guard {
+                        let guard_ty = self.infer_expr(guard_expr, &mut arm_env);
+                        self.engine.unify(&guard_ty, &Ty::bool(), *span);
+                    }
                     let body_ty = self.infer_expr(body, &mut arm_env);
                     self.engine.unify(&result_ty, &body_ty, *span);
                 }
@@ -1506,10 +1510,12 @@ mod tests {
                         vec![
                             (
                                 Pat::Con("True2".into(), vec![], span()),
+                                None,
                                 Expr::Lit(Lit::Int(1), span()),
                             ),
                             (
                                 Pat::Con("False2".into(), vec![], span()),
+                                None,
                                 Expr::Lit(Lit::Int(0), span()),
                             ),
                         ],
@@ -1586,6 +1592,7 @@ mod tests {
                         vec![
                             (
                                 Pat::Con("Some".into(), vec![Pat::Var("x".into(), span())], span()),
+                                None,
                                 Expr::App(
                                     Box::new(Expr::Var("Some".into(), span())),
                                     Box::new(Expr::Infix(
@@ -1599,6 +1606,7 @@ mod tests {
                             ),
                             (
                                 Pat::Con("None".into(), vec![], span()),
+                                None,
                                 Expr::Var("None".into(), span()),
                             ),
                         ],
@@ -1630,10 +1638,12 @@ mod tests {
                         vec![
                             (
                                 Pat::Con("Ok".into(), vec![Pat::Var("x".into(), span())], span()),
+                                None,
                                 Expr::Var("x".into(), span()),
                             ),
                             (
                                 Pat::Con("Err".into(), vec![Pat::Wild(span())], span()),
+                                None,
                                 Expr::Lit(Lit::Int(0), span()),
                             ),
                         ],

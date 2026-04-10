@@ -154,6 +154,8 @@ impl HirExpr {
 #[derive(Debug)]
 pub struct HirCaseArm {
     pub pattern: HirPattern,
+    /// Optional when-guard: `| pat when expr -> body`.
+    pub guard: Option<HirExpr>,
     pub body: HirExpr,
 }
 
@@ -317,6 +319,7 @@ mod tests {
     fn test_hir_case_arm() {
         let arm = HirCaseArm {
             pattern: HirPattern::Lit(HirLit::Int(0)),
+            guard: None,
             body: HirExpr::Lit(HirLit::Bool(true), Ty::bool(), Span::new(0, 4)),
         };
         assert!(matches!(arm.pattern, HirPattern::Lit(HirLit::Int(0))));
