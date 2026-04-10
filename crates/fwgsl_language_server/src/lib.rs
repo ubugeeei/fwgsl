@@ -38,6 +38,24 @@ fn with_prelude(program: &mut Program) {
     program.decls = combined;
 }
 
+/// Check if the program has import declarations (needs multi-file resolution).
+fn has_imports(program: &Program) -> bool {
+    has_imports_in(&program.decls)
+}
+
+fn has_imports_in(decls: &[fwgsl_parser::parser::Decl]) -> bool {
+    use fwgsl_parser::parser::Decl;
+    decls.iter().any(|d| match d {
+        Decl::ImportDecl { .. } => true,
+        Decl::CfgDecl {
+            then_decls,
+            else_decls,
+            ..
+        } => has_imports_in(then_decls) || has_imports_in(else_decls),
+        _ => false,
+    })
+}
+
 // ============================================================================
 // Semantic token legend
 // ============================================================================
@@ -97,6 +115,8 @@ pub struct FwgslBackend {
     client: Client,
     /// In-memory document store: URI -> document text.
     documents: DashMap<Url, String>,
+    /// Cached module files: root URI -> list of (file_path, source_text) for imported modules.
+    module_files: DashMap<Url, Vec<(std::path::PathBuf, String)>>,
 }
 
 impl FwgslBackend {
@@ -105,6 +125,7 @@ impl FwgslBackend {
         Self {
             client,
             documents: DashMap::new(),
+            module_files: DashMap::new(),
         }
     }
 
@@ -117,7 +138,7 @@ impl FwgslBackend {
 
         // Phase 1: Parse
         let mut parser = Parser::new(text);
-        let mut program = parser.parse_program();
+        let root_program = parser.parse_program();
 
         // Collect parser diagnostics
         for diag in parser.diagnostics().iter() {
@@ -126,10 +147,61 @@ impl FwgslBackend {
             }
         }
 
+        // Phase 2: Module resolution (if the file has imports)
+        let mut program = if has_imports(&root_program) {
+            if let Some(file_path) = uri.to_file_path().ok() {
+                let source_root = file_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .to_path_buf();
+                let reader = fwgsl_parser::FsReader;
+                match fwgsl_parser::resolve_modules(
+                    &file_path,
+                    root_program,
+                    &[source_root],
+                    &reader,
+                ) {
+                    Ok(graph) => {
+                        // Cache imported module file paths and sources for
+                        // cross-file goto-definition.
+                        let mut imported = Vec::new();
+                        for m in &graph.modules {
+                            if m.path != file_path {
+                                if let Ok(src) = std::fs::read_to_string(&m.path) {
+                                    imported.push((m.path.clone(), src));
+                                }
+                            }
+                        }
+                        self.module_files.insert(uri.clone(), imported);
+
+                        fwgsl_parser::merge_modules(&graph)
+                    }
+                    Err(errors) => {
+                        for e in &errors {
+                            all_diagnostics.push(tower_lsp::lsp_types::Diagnostic {
+                                range: tower_lsp::lsp_types::Range::default(),
+                                severity: Some(DiagnosticSeverity::ERROR),
+                                message: e.to_string(),
+                                ..Default::default()
+                            });
+                        }
+                        // Fall back to the root program without resolved imports
+                        parser = Parser::new(text);
+                        parser.parse_program()
+                    }
+                }
+            } else {
+                root_program
+            }
+        } else {
+            self.module_files.remove(&uri);
+            root_program
+        };
+
         // Prepend prelude
         with_prelude(&mut program);
 
-        // Phase 2: Semantic analysis
+        // Phase 3: Semantic analysis
         let mut analyzer = SemanticAnalyzer::new();
         analyzer.analyze(&program);
 
@@ -176,6 +248,8 @@ impl LanguageServer for FwgslBackend {
                     ),
                 ),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                document_range_formatting_provider: Some(OneOf::Left(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -265,7 +339,79 @@ impl LanguageServer for FwgslBackend {
             None => return Ok(None),
         };
 
-        Ok(ide_build_goto_definition(uri, &text, pos))
+        // Extract the identifier at cursor position (needed for cross-file lookup).
+        let name = ident_at_position(&text, pos);
+
+        // Try local goto-definition first.
+        if let Some(result) = ide_build_goto_definition(uri, &text, pos) {
+            // Verify the result actually points to a definition of the same name
+            // in the current file. The IDE index can produce spurious results for
+            // names imported from other modules.
+            let is_valid = match &result {
+                GotoDefinitionResponse::Scalar(loc) => {
+                    name.as_deref().map_or(true, |n| {
+                        location_text_matches(&text, &loc.range, n)
+                    })
+                }
+                GotoDefinitionResponse::Array(locs) => {
+                    name.as_deref().map_or(true, |n| {
+                        locs.iter().any(|loc| location_text_matches(&text, &loc.range, n))
+                    })
+                }
+                _ => true,
+            };
+            if is_valid {
+                return Ok(Some(result));
+            }
+        }
+
+        // If the cursor is on a record field (after `.`), search for field
+        // definitions in data declarations — in the current file first, then
+        // in imported modules.
+        if let Some(ref name) = name {
+            if is_field_access_at(&text, pos) {
+                if let Some(range) = find_record_field_in_source(&text, name) {
+                    return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                        uri: uri.clone(),
+                        range,
+                    })));
+                }
+                if let Some(imported) = self.module_files.get(uri) {
+                    for (path, src) in imported.iter() {
+                        if let Some(range) = find_record_field_in_source(src, name) {
+                            let module_uri = match Url::from_file_path(path) {
+                                Ok(u) => u,
+                                Err(_) => continue,
+                            };
+                            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                                uri: module_uri,
+                                range,
+                            })));
+                        }
+                    }
+                }
+            }
+        }
+
+        // If not found locally, try imported module files for top-level definitions.
+        if let Some(ref name) = name {
+            if let Some(imported) = self.module_files.get(uri) {
+                for (path, src) in imported.iter() {
+                    if let Some(range) = find_definition_in_source(src, name) {
+                        let module_uri = match Url::from_file_path(path) {
+                            Ok(u) => u,
+                            Err(_) => continue,
+                        };
+                        return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                            uri: module_uri,
+                            range,
+                        })));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
@@ -329,6 +475,63 @@ impl LanguageServer for FwgslBackend {
             range: Range::new(Position::new(0, 0), Position::new(line_count, last_line_len)),
             new_text: formatted,
         }]))
+    }
+
+    async fn range_formatting(
+        &self,
+        params: DocumentRangeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+
+        let text = match self.documents.get(uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+
+        // Extract the selected range text
+        let start_offset = position_to_offset(&text, params.range.start);
+        let end_offset = position_to_offset(&text, params.range.end);
+
+        let (Some(start), Some(end)) = (start_offset, end_offset) else {
+            return Ok(None);
+        };
+        let end = end.min(text.len());
+
+        // Expand to full lines to avoid partial-line formatting artefacts
+        let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+        let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
+
+        let slice = &text[line_start..line_end];
+        let formatted = fwgsl_formatter::format_default(slice);
+
+        if formatted.trim_end() == slice.trim_end() {
+            return Ok(None);
+        }
+
+        let start_pos = offset_to_position(&text, line_start);
+        let end_pos = offset_to_position(&text, line_end);
+
+        Ok(Some(vec![TextEdit {
+            range: Range::new(start_pos, end_pos),
+            new_text: formatted,
+        }]))
+    }
+
+    // -- Document symbols ---------------------------------------------------
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = &params.text_document.uri;
+
+        let text = match self.documents.get(uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+
+        let symbols = build_document_symbols(&text);
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 }
 
@@ -676,6 +879,17 @@ fn find_definition_span(tokens: &[Token], source: &str, name: &str) -> Option<Sp
         if (tok.kind == SyntaxKind::Ident || tok.kind == SyntaxKind::UpperIdent)
             && tok.text(source) == name
         {
+            // Check if preceded by `data`, `alias`, `const`, or `extern` keyword
+            if i > 0 {
+                let prev = non_trivia[i - 1].kind;
+                if prev == SyntaxKind::KwData
+                    || prev == SyntaxKind::KwAlias
+                    || prev == SyntaxKind::KwConst
+                    || prev == SyntaxKind::KwExtern
+                {
+                    return Some(tok.span);
+                }
+            }
             // Check if next non-trivia token is `::` (type signature)
             if i + 1 < non_trivia.len() && non_trivia[i + 1].kind == SyntaxKind::ColonColon {
                 return Some(tok.span);
@@ -694,6 +908,499 @@ fn find_definition_span(tokens: &[Token], source: &str, name: &str) -> Option<Sp
         }
     }
 
+    None
+}
+
+/// Check whether the text at the start of a Range in the source matches the expected name.
+/// This validates that a goto-definition result actually points to a definition of the name,
+/// not a spurious span from mismatched prelude symbols.
+fn location_text_matches(source: &str, range: &Range, name: &str) -> bool {
+    let Some(start) = fwgsl_ide::position_to_offset(source, range.start) else {
+        return false;
+    };
+    let end = start + name.len();
+    end <= source.len() && &source[start..end] == name
+}
+
+/// Extract the identifier text at a given cursor position.
+fn ident_at_position(source: &str, pos: Position) -> Option<String> {
+    let offset = fwgsl_ide::position_to_offset(source, pos)? as u32;
+    let tokens = lex(source);
+    let tok = tokens.iter().find(|t| {
+        (t.kind == SyntaxKind::Ident || t.kind == SyntaxKind::UpperIdent)
+            && t.span.start <= offset
+            && offset < t.span.end
+    })?;
+    Some(tok.text(source).to_string())
+}
+
+/// Find the definition of a name in a source string, returning its Range.
+fn find_definition_in_source(source: &str, name: &str) -> Option<Range> {
+    let tokens = lex(source);
+    let span = find_definition_span(&tokens, source, name)?;
+    Some(fwgsl_ide::span_to_range(source, span))
+}
+
+/// Check whether the cursor is on a field name (preceded by `.` in the token stream).
+fn is_field_access_at(source: &str, pos: Position) -> bool {
+    let Some(offset) = fwgsl_ide::position_to_offset(source, pos) else {
+        return false;
+    };
+    let offset = offset as u32;
+    let tokens = lex(source);
+    // Find the token at cursor
+    let tok_idx = tokens.iter().position(|t| {
+        (t.kind == SyntaxKind::Ident || t.kind == SyntaxKind::UpperIdent)
+            && t.span.start <= offset
+            && offset < t.span.end
+    });
+    let Some(idx) = tok_idx else { return false };
+    // Check if the previous non-trivia token is `.`
+    tokens[..idx]
+        .iter()
+        .rev()
+        .find(|t| !t.kind.is_trivia())
+        .is_some_and(|t| t.kind == SyntaxKind::Dot)
+}
+
+/// Find a record field definition in source. Scans for `Ident(name) Colon`
+/// patterns inside `{ }` blocks that belong to data declarations, returning the
+/// span of the field name token.
+fn find_record_field_in_source(source: &str, field_name: &str) -> Option<Range> {
+    let tokens = lex(source);
+    let non_trivia: Vec<&Token> = tokens
+        .iter()
+        .filter(|t| {
+            !t.kind.is_trivia()
+                && t.kind != SyntaxKind::LayoutBraceOpen
+                && t.kind != SyntaxKind::LayoutSemicolon
+                && t.kind != SyntaxKind::LayoutBraceClose
+        })
+        .collect();
+
+    // Track whether we're inside a data declaration's record braces.
+    // Look for: `data Name = ConName {` ... `fieldName : Type` ... `}`
+    let mut in_data_decl = false;
+    let mut brace_depth: i32 = 0;
+    let mut data_brace_depth: i32 = 0; // brace depth when we entered data decl braces
+
+    for (i, tok) in non_trivia.iter().enumerate() {
+        match tok.kind {
+            SyntaxKind::KwData => {
+                in_data_decl = true;
+            }
+            SyntaxKind::LBrace if in_data_decl => {
+                brace_depth += 1;
+                if data_brace_depth == 0 {
+                    data_brace_depth = brace_depth;
+                }
+            }
+            SyntaxKind::LBrace => {
+                brace_depth += 1;
+            }
+            SyntaxKind::RBrace => {
+                if brace_depth == data_brace_depth {
+                    data_brace_depth = 0;
+                    in_data_decl = false;
+                }
+                brace_depth -= 1;
+            }
+            SyntaxKind::Ident if data_brace_depth > 0 && brace_depth == data_brace_depth => {
+                // Inside a data decl record block — check if this ident matches
+                // and is followed by `:`
+                if tok.text(source) == field_name {
+                    if i + 1 < non_trivia.len() && non_trivia[i + 1].kind == SyntaxKind::Colon {
+                        return Some(fwgsl_ide::span_to_range(source, tok.span));
+                    }
+                }
+            }
+            _ => {
+                // If we see a top-level keyword that isn't part of data decl, reset
+                if brace_depth == 0
+                    && in_data_decl
+                    && tok.kind.is_keyword()
+                    && tok.kind != SyntaxKind::KwData
+                {
+                    in_data_decl = false;
+                    data_brace_depth = 0;
+                }
+            }
+        }
+    }
+    None
+}
+
+// ============================================================================
+// Document symbols
+// ============================================================================
+
+/// Convert a byte offset to an LSP Position.
+fn offset_to_position(source: &str, offset: usize) -> Position {
+    let line_starts = fwgsl_ide::compute_line_starts(source);
+    let (line, col) = fwgsl_ide::offset_to_line_col(&line_starts, offset as u32);
+    Position::new(line, col)
+}
+
+/// Build a nested list of document symbols from the parsed AST.
+#[allow(deprecated)] // DocumentSymbol.deprecated field
+fn build_document_symbols(source: &str) -> Vec<DocumentSymbol> {
+    let mut parser = Parser::new(source);
+    let program = parser.parse_program();
+
+    // Also run semantic analysis so we can show type info in details
+    let mut full_program = program.clone();
+    with_prelude(&mut full_program);
+    let mut analyzer = SemanticAnalyzer::new();
+    analyzer.analyze(&full_program);
+
+    let mut symbols = Vec::new();
+
+    for decl in &program.decls {
+        match decl {
+            fwgsl_parser::parser::Decl::TypeSig { name, span, .. } => {
+                // Type signatures are paired with FunDecls — skip standalone ones
+                // if the FunDecl follows. We'll emit them when we see the FunDecl.
+                // But if there's no matching FunDecl, emit as a standalone symbol.
+                let has_fundecl = program.decls.iter().any(|d| matches!(
+                    d,
+                    fwgsl_parser::parser::Decl::FunDecl { name: n, .. }
+                    | fwgsl_parser::parser::Decl::EntryPoint { name: n, .. }
+                    if n == name
+                ));
+                if !has_fundecl {
+                    let detail = analyzer
+                        .env
+                        .lookup(name)
+                        .map(|s| format_scheme(&analyzer.engine, s));
+                    symbols.push(DocumentSymbol {
+                        name: name.clone(),
+                        detail,
+                        kind: SymbolKind::FUNCTION,
+                        tags: None,
+                        deprecated: None,
+                        range: span_to_range(source, *span),
+                        selection_range: first_name_range(source, name, *span),
+                        children: None,
+                    });
+                }
+            }
+            fwgsl_parser::parser::Decl::FunDecl { name, span, .. } => {
+                let detail = analyzer
+                    .env
+                    .lookup(name)
+                    .map(|s| format_scheme(&analyzer.engine, s));
+                // Merge span with preceding type signature if present
+                let full_span = program.decls.iter().find_map(|d| {
+                    if let fwgsl_parser::parser::Decl::TypeSig { name: n, span: ts, .. } = d {
+                        if n == name { Some(Span::new(ts.start, span.end)) } else { None }
+                    } else {
+                        None
+                    }
+                }).unwrap_or(*span);
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail,
+                    kind: SymbolKind::FUNCTION,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, full_span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: None,
+                });
+            }
+            fwgsl_parser::parser::Decl::EntryPoint { name, span, attributes, .. } => {
+                let stage = attributes.iter().find_map(|a| {
+                    if matches!(a.name.as_str(), "compute" | "vertex" | "fragment") {
+                        Some(format!("@{}", a.name))
+                    } else {
+                        None
+                    }
+                });
+                let detail = stage.or_else(|| {
+                    analyzer
+                        .env
+                        .lookup(name)
+                        .map(|s| format_scheme(&analyzer.engine, s))
+                });
+                let full_span = program.decls.iter().find_map(|d| {
+                    if let fwgsl_parser::parser::Decl::TypeSig { name: n, span: ts, .. } = d {
+                        if n == name { Some(Span::new(ts.start, span.end)) } else { None }
+                    } else {
+                        None
+                    }
+                }).unwrap_or(*span);
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail,
+                    kind: SymbolKind::FUNCTION,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, full_span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: None,
+                });
+            }
+            fwgsl_parser::parser::Decl::DataDecl { name, constructors, span, .. } => {
+                let children: Vec<DocumentSymbol> = constructors
+                    .iter()
+                    .map(|con| {
+                        let mut con_children = Vec::new();
+                        if let fwgsl_parser::parser::ConFields::Record(fields) = &con.fields {
+                            for f in fields {
+                                if let Some(field_range) = find_field_name_range(source, &f.name, con.span) {
+                                    con_children.push(DocumentSymbol {
+                                        name: f.name.clone(),
+                                        detail: Some(format_type(&f.ty)),
+                                        kind: SymbolKind::FIELD,
+                                        tags: None,
+                                        deprecated: None,
+                                        range: field_range,
+                                        selection_range: field_range,
+                                        children: None,
+                                    });
+                                }
+                            }
+                        }
+                        DocumentSymbol {
+                            name: con.name.clone(),
+                            detail: None,
+                            kind: SymbolKind::CONSTRUCTOR,
+                            tags: None,
+                            deprecated: None,
+                            range: span_to_range(source, con.span),
+                            selection_range: first_name_range(source, &con.name, con.span),
+                            children: if con_children.is_empty() { None } else { Some(con_children) },
+                        }
+                    })
+                    .collect();
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail: Some("data type".to_owned()),
+                    kind: SymbolKind::STRUCT,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: if children.is_empty() { None } else { Some(children) },
+                });
+            }
+            fwgsl_parser::parser::Decl::TypeAlias { name, span, .. } => {
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail: Some("type alias".to_owned()),
+                    kind: SymbolKind::TYPE_PARAMETER,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: None,
+                });
+            }
+            fwgsl_parser::parser::Decl::ConstDecl { name, span, .. } => {
+                let detail = analyzer
+                    .env
+                    .lookup(name)
+                    .map(|s| format_scheme(&analyzer.engine, s));
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail,
+                    kind: SymbolKind::CONSTANT,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: None,
+                });
+            }
+            fwgsl_parser::parser::Decl::ResourceDecl { name, span, .. } => {
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail: Some("resource".to_owned()),
+                    kind: SymbolKind::VARIABLE,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: None,
+                });
+            }
+            fwgsl_parser::parser::Decl::BitfieldDecl { name, fields, span, .. } => {
+                let children: Vec<DocumentSymbol> = fields
+                    .iter()
+                    .map(|f| DocumentSymbol {
+                        name: f.name.clone(),
+                        detail: Some(format!("{:?}", f.width)),
+                        kind: SymbolKind::FIELD,
+                        tags: None,
+                        deprecated: None,
+                        range: span_to_range(source, f.span),
+                        selection_range: first_name_range(source, &f.name, f.span),
+                        children: None,
+                    })
+                    .collect();
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail: Some("bitfield".to_owned()),
+                    kind: SymbolKind::STRUCT,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: if children.is_empty() { None } else { Some(children) },
+                });
+            }
+            fwgsl_parser::parser::Decl::TraitDecl { name, methods, span, .. } => {
+                let children: Vec<DocumentSymbol> = methods
+                    .iter()
+                    .map(|m| DocumentSymbol {
+                        name: m.name.clone(),
+                        detail: Some(format_type(&m.ty)),
+                        kind: SymbolKind::METHOD,
+                        tags: None,
+                        deprecated: None,
+                        range: span_to_range(source, m.span),
+                        selection_range: first_name_range(source, &m.name, m.span),
+                        children: None,
+                    })
+                    .collect();
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail: Some("trait".to_owned()),
+                    kind: SymbolKind::INTERFACE,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: if children.is_empty() { None } else { Some(children) },
+                });
+            }
+            fwgsl_parser::parser::Decl::ImplDecl { trait_name, ty, methods, span, .. } => {
+                let impl_name = match trait_name {
+                    Some(t) => format!("impl {} {}", t, format_type(ty)),
+                    None => format!("impl {}", format_type(ty)),
+                };
+                let children: Vec<DocumentSymbol> = methods
+                    .iter()
+                    .map(|m| DocumentSymbol {
+                        name: m.name.clone(),
+                        detail: None,
+                        kind: SymbolKind::METHOD,
+                        tags: None,
+                        deprecated: None,
+                        range: span_to_range(source, m.span),
+                        selection_range: first_name_range(source, &m.name, m.span),
+                        children: None,
+                    })
+                    .collect();
+                symbols.push(DocumentSymbol {
+                    name: impl_name,
+                    detail: None,
+                    kind: SymbolKind::CLASS,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: span_to_range(source, *span),
+                    children: if children.is_empty() { None } else { Some(children) },
+                });
+            }
+            fwgsl_parser::parser::Decl::ExternDecl { name, span, .. } => {
+                let detail = analyzer
+                    .env
+                    .lookup(name)
+                    .map(|s| format_scheme(&analyzer.engine, s));
+                symbols.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail,
+                    kind: SymbolKind::FUNCTION,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: first_name_range(source, name, *span),
+                    children: None,
+                });
+            }
+            fwgsl_parser::parser::Decl::ImportDecl { module_path, span, .. } => {
+                symbols.push(DocumentSymbol {
+                    name: format!("import {}", module_path),
+                    detail: None,
+                    kind: SymbolKind::MODULE,
+                    tags: None,
+                    deprecated: None,
+                    range: span_to_range(source, *span),
+                    selection_range: span_to_range(source, *span),
+                    children: None,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    symbols
+}
+
+/// Format a parser Type for display in document symbols.
+fn format_type(ty: &fwgsl_parser::parser::Type) -> String {
+    use fwgsl_parser::parser::Type;
+    match ty {
+        Type::Con(name, _) => name.clone(),
+        Type::Var(name, _) => name.clone(),
+        Type::Nat(n, _) => n.to_string(),
+        Type::App(_, _, _) => {
+            // Collect all type application arguments: F a b c → F<a, b, c>
+            let mut args = Vec::new();
+            let mut head = ty;
+            while let Type::App(f, arg, _) = head {
+                args.push(format_type(arg));
+                head = f;
+            }
+            args.reverse();
+            format!("{}<{}>", format_type(head), args.join(", "))
+        }
+        Type::Arrow(from, to, _) => format!("{} -> {}", format_type(from), format_type(to)),
+        Type::Paren(inner, _) => format!("({})", format_type(inner)),
+        Type::Tuple(items, _) => {
+            let parts: Vec<_> = items.iter().map(format_type).collect();
+            format!("({})", parts.join(", "))
+        }
+        Type::Unit(_) => "()".to_string(),
+    }
+}
+
+/// Find the range of a specific name within a span, for use as `selection_range`.
+fn first_name_range(source: &str, name: &str, within: Span) -> Range {
+    let tokens = lex(source);
+    for tok in &tokens {
+        if tok.span.start >= within.start
+            && tok.span.end <= within.end
+            && (tok.kind == SyntaxKind::Ident || tok.kind == SyntaxKind::UpperIdent)
+            && tok.text(source) == name
+        {
+            return span_to_range(source, tok.span);
+        }
+    }
+    span_to_range(source, within)
+}
+
+/// Find the range of a record field name within a constructor span.
+fn find_field_name_range(source: &str, field_name: &str, within: Span) -> Option<Range> {
+    let tokens = lex(source);
+    let non_trivia: Vec<&Token> = tokens
+        .iter()
+        .filter(|t| {
+            t.span.start >= within.start
+                && t.span.end <= within.end
+                && !t.kind.is_trivia()
+        })
+        .collect();
+    for (i, tok) in non_trivia.iter().enumerate() {
+        if tok.kind == SyntaxKind::Ident
+            && tok.text(source) == field_name
+            && i + 1 < non_trivia.len()
+            && non_trivia[i + 1].kind == SyntaxKind::Colon
+        {
+            return Some(span_to_range(source, tok.span));
+        }
+    }
     None
 }
 
@@ -724,27 +1431,7 @@ pub fn classify_tokens(tokens: &[Token], _source: &str) -> Vec<ClassifiedToken> 
         let tok = &tokens[i];
         let token_type = match tok.kind {
             // Keywords
-            SyntaxKind::KwLet
-            | SyntaxKind::KwIn
-            | SyntaxKind::KwMatch
-            | SyntaxKind::KwIf
-            | SyntaxKind::KwThen
-            | SyntaxKind::KwElse
-            | SyntaxKind::KwWhere
-            | SyntaxKind::KwDo
-            | SyntaxKind::KwModule
-            | SyntaxKind::KwImport
-            | SyntaxKind::KwData
-            | SyntaxKind::KwAlias
-            | SyntaxKind::KwTrait
-            | SyntaxKind::KwImpl
-            | SyntaxKind::KwForall
-            | SyntaxKind::KwCase
-            | SyntaxKind::KwOf
-            | SyntaxKind::KwInfixl
-            | SyntaxKind::KwInfixr
-            | SyntaxKind::KwInfix
-            | SyntaxKind::KwDeriving => Some(TOK_KEYWORD),
+            _ if tok.kind.is_keyword() => Some(TOK_KEYWORD),
 
             // Numbers
             SyntaxKind::IntLiteral | SyntaxKind::FloatLiteral => Some(TOK_NUMBER),

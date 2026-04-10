@@ -8,7 +8,7 @@
 
 ; Keywords — other
 ["module" "import" "where" "trait" "impl" "bitfield"
- "do" "forall" "deriving" "as" "private" "when" "cfg" "not"] @keyword
+ "do" "forall" "deriving" "as" "when" "cfg" "not"] @keyword
 
 ; Booleans
 (boolean) @constant.builtin
