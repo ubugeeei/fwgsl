@@ -174,9 +174,9 @@ impl AstLowering {
                     }
                 }
                 Decl::DataDecl {
-                    name, constructors, ..
+                    name, type_params, constructors, ..
                 } => {
-                    data_types.push(self.lower_data_decl(name, constructors));
+                    data_types.push(self.lower_data_decl(name, type_params, constructors));
                 }
                 Decl::ResourceDecl {
                     name,
@@ -574,7 +574,7 @@ impl AstLowering {
         })
     }
 
-    fn lower_data_decl(&self, name: &str, cons: &[ConDecl]) -> HirDataType {
+    fn lower_data_decl(&self, name: &str, type_params: &[String], cons: &[ConDecl]) -> HirDataType {
         let mut hir_cons = Vec::new();
         for (tag, con) in cons.iter().enumerate() {
             let fields = match &con.fields {
@@ -608,6 +608,7 @@ impl AstLowering {
         }
         HirDataType {
             name: name.to_string(),
+            type_params: type_params.to_vec(),
             constructors: hir_cons,
         }
     }

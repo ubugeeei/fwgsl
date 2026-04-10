@@ -86,6 +86,7 @@ pub struct HirAttribute {
 #[derive(Debug)]
 pub struct HirDataType {
     pub name: String,
+    pub type_params: Vec<String>,
     pub constructors: Vec<HirConstructor>,
 }
 

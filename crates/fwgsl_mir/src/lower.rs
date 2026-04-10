@@ -9,7 +9,7 @@
 //! - Simple enum ADTs map to u32 tag values
 //! - Record ADTs produce MirStruct definitions
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use fwgsl_hir::*;
 use fwgsl_typechecker::Ty;
@@ -31,12 +31,19 @@ struct LowerCtx {
     constructors: HashMap<String, (String, u32, Vec<HirFieldDef>)>,
     /// Map from bitfield type name to its field metadata
     bitfields: HashMap<String, Vec<(String, BitfieldFieldInfo)>>,
+    /// Generic data type info: name → (type_params, constructors with original field Tys)
+    generic_types: HashMap<String, Vec<String>>,
+    /// Collected concrete instantiations: (type_name, vec of concrete Ty args)
+    /// e.g., ("Box", [Ty::Con("I32")]) or ("Pair", [Ty::Con("F32"), Ty::Con("I32")])
+    mono_instances: Vec<(String, Vec<Ty>)>,
 }
 
 impl LowerCtx {
     fn new(hir: &HirProgram) -> Self {
         let mut data_types = HashMap::new();
         let mut constructors = HashMap::new();
+        let mut generic_types = HashMap::new();
+
         for dt in &hir.data_types {
             data_types.insert(dt.name.clone(), dt.constructors.clone());
             for con in &dt.constructors {
@@ -44,6 +51,9 @@ impl LowerCtx {
                     con.name.clone(),
                     (dt.name.clone(), con.tag, con.fields.clone()),
                 );
+            }
+            if !dt.type_params.is_empty() {
+                generic_types.insert(dt.name.clone(), dt.type_params.clone());
             }
         }
         let mut bitfields = HashMap::new();
@@ -63,10 +73,31 @@ impl LowerCtx {
                 .collect();
             bitfields.insert(bf.name.clone(), fields);
         }
+
+        // Collect concrete instantiations of generic types from all HIR expressions
+        let mut mono_instances = Vec::new();
+        let mut seen = HashSet::new();
+        for f in &hir.functions {
+            collect_mono_instances_from_expr(&f.body, &generic_types, &mut mono_instances, &mut seen);
+            for (_, ty) in &f.params {
+                collect_mono_instances_from_ty(ty, &generic_types, &mut mono_instances, &mut seen);
+            }
+            collect_mono_instances_from_ty(&f.return_ty, &generic_types, &mut mono_instances, &mut seen);
+        }
+        for ep in &hir.entry_points {
+            collect_mono_instances_from_expr(&ep.body, &generic_types, &mut mono_instances, &mut seen);
+            for (_, ty) in &ep.params {
+                collect_mono_instances_from_ty(ty, &generic_types, &mut mono_instances, &mut seen);
+            }
+            collect_mono_instances_from_ty(&ep.return_ty, &generic_types, &mut mono_instances, &mut seen);
+        }
+
         LowerCtx {
             data_types,
             constructors,
             bitfields,
+            generic_types,
+            mono_instances,
         }
     }
 
@@ -97,6 +128,17 @@ impl LowerCtx {
             .is_some_and(|cons| cons.len() > 1 && cons.iter().all(|c| c.fields.is_empty()))
     }
 
+    /// Resolve a data type name to its (possibly monomorphized) struct name
+    /// using the result type from a constructor call.
+    fn resolve_struct_name(&self, dt_name: &str, result_ty: &Ty) -> String {
+        if let Some((name, args)) = extract_generic_instantiation(result_ty, &self.generic_types) {
+            if name == dt_name {
+                return mono_mangled_name(&name, &args);
+            }
+        }
+        dt_name.to_string()
+    }
+
     /// Resolve a type constructor name to MirType, taking ADTs and bitfields into account.
     fn resolve_type_con(&self, name: &str) -> Option<MirType> {
         // Check if this is a bitfield type — resolve to its base MIR type
@@ -121,6 +163,285 @@ impl LowerCtx {
     }
 }
 
+// ── Monomorphization: collect and specialize generic data types ──────────────
+
+/// Extract concrete type arguments from a type application like `App(Con("Box"), Con("I32"))`.
+/// Returns Some((type_name, [arg_types])) if this is an instantiation of a generic type.
+fn extract_generic_instantiation(ty: &Ty, generic_types: &HashMap<String, Vec<String>>) -> Option<(String, Vec<Ty>)> {
+    // Peel off nested App to find the base Con and collect all args
+    let mut args = Vec::new();
+    let mut cursor = ty;
+    loop {
+        match cursor {
+            Ty::App(f, arg) => {
+                args.push(arg.as_ref().clone());
+                cursor = f.as_ref();
+            }
+            Ty::Con(name) if generic_types.contains_key(name.as_str()) => {
+                args.reverse(); // Args were collected right-to-left
+                let expected = generic_types[name.as_str()].len();
+                if args.len() == expected {
+                    return Some((name.clone(), args));
+                }
+                return None;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Collect concrete instantiations from a Ty.
+fn collect_mono_instances_from_ty(
+    ty: &Ty,
+    generic_types: &HashMap<String, Vec<String>>,
+    instances: &mut Vec<(String, Vec<Ty>)>,
+    seen: &mut HashSet<String>,
+) {
+    if let Some((name, args)) = extract_generic_instantiation(ty, generic_types) {
+        let key = mono_mangled_name(&name, &args);
+        if seen.insert(key) {
+            instances.push((name, args));
+        }
+        return;
+    }
+    match ty {
+        Ty::App(f, arg) => {
+            collect_mono_instances_from_ty(f, generic_types, instances, seen);
+            collect_mono_instances_from_ty(arg, generic_types, instances, seen);
+        }
+        Ty::Arrow(a, b) => {
+            collect_mono_instances_from_ty(a, generic_types, instances, seen);
+            collect_mono_instances_from_ty(b, generic_types, instances, seen);
+        }
+        Ty::Tuple(elems) => {
+            for e in elems {
+                collect_mono_instances_from_ty(e, generic_types, instances, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk an HIR expression tree to find all concrete instantiations of generic types.
+fn collect_mono_instances_from_expr(
+    expr: &HirExpr,
+    generic_types: &HashMap<String, Vec<String>>,
+    instances: &mut Vec<(String, Vec<Ty>)>,
+    seen: &mut HashSet<String>,
+) {
+    // Collect from the type annotation on this expression
+    collect_mono_instances_from_ty(expr.ty(), generic_types, instances, seen);
+
+    match expr {
+        HirExpr::Lit(_, _, _) | HirExpr::Var(_, _, _) => {}
+        HirExpr::App(f, arg, _, _) => {
+            collect_mono_instances_from_expr(f, generic_types, instances, seen);
+            collect_mono_instances_from_expr(arg, generic_types, instances, seen);
+        }
+        HirExpr::Let(bindings, body, _, _) => {
+            for (_, e) in bindings {
+                collect_mono_instances_from_expr(e, generic_types, instances, seen);
+            }
+            collect_mono_instances_from_expr(body, generic_types, instances, seen);
+        }
+        HirExpr::Case(scrut, arms, _, _) => {
+            collect_mono_instances_from_expr(scrut, generic_types, instances, seen);
+            for arm in arms {
+                collect_mono_instances_from_expr(&arm.body, generic_types, instances, seen);
+                if let Some(guard) = &arm.guard {
+                    collect_mono_instances_from_expr(guard, generic_types, instances, seen);
+                }
+                collect_mono_instances_from_pattern(&arm.pattern, generic_types, instances, seen);
+            }
+        }
+        HirExpr::If(cond, then_e, else_e, _, _) => {
+            collect_mono_instances_from_expr(cond, generic_types, instances, seen);
+            collect_mono_instances_from_expr(then_e, generic_types, instances, seen);
+            collect_mono_instances_from_expr(else_e, generic_types, instances, seen);
+        }
+        HirExpr::BinOp(_, lhs, rhs, _, _) => {
+            collect_mono_instances_from_expr(lhs, generic_types, instances, seen);
+            collect_mono_instances_from_expr(rhs, generic_types, instances, seen);
+        }
+        HirExpr::UnaryNeg(inner, _, _) => {
+            collect_mono_instances_from_expr(inner, generic_types, instances, seen);
+        }
+        HirExpr::ConstructorCall(_, _, args, _, _) => {
+            for arg in args {
+                collect_mono_instances_from_expr(arg, generic_types, instances, seen);
+            }
+        }
+        HirExpr::FieldAccess(base, _, _, _) => {
+            collect_mono_instances_from_expr(base, generic_types, instances, seen);
+        }
+        HirExpr::Index(base, idx, _, _) => {
+            collect_mono_instances_from_expr(base, generic_types, instances, seen);
+            collect_mono_instances_from_expr(idx, generic_types, instances, seen);
+        }
+        HirExpr::Loop(_, bindings, body, _, _) => {
+            for (_, e) in bindings {
+                collect_mono_instances_from_expr(e, generic_types, instances, seen);
+            }
+            collect_mono_instances_from_expr(body, generic_types, instances, seen);
+        }
+        HirExpr::UnaryNot(inner, _, _) => {
+            collect_mono_instances_from_expr(inner, generic_types, instances, seen);
+        }
+        HirExpr::BitfieldConstruct(_, fields, _, _) => {
+            for (_, e) in fields {
+                collect_mono_instances_from_expr(e, generic_types, instances, seen);
+            }
+        }
+        HirExpr::BitfieldUpdate(_, base, fields, _, _) => {
+            collect_mono_instances_from_expr(base, generic_types, instances, seen);
+            for (_, e) in fields {
+                collect_mono_instances_from_expr(e, generic_types, instances, seen);
+            }
+        }
+    }
+}
+
+/// Collect from pattern types (pattern variables have type annotations).
+fn collect_mono_instances_from_pattern(
+    pat: &HirPattern,
+    generic_types: &HashMap<String, Vec<String>>,
+    instances: &mut Vec<(String, Vec<Ty>)>,
+    seen: &mut HashSet<String>,
+) {
+    match pat {
+        HirPattern::Var(_, ty) => {
+            collect_mono_instances_from_ty(ty, generic_types, instances, seen);
+        }
+        HirPattern::Constructor(_, _, sub_pats) => {
+            for p in sub_pats {
+                collect_mono_instances_from_pattern(p, generic_types, instances, seen);
+            }
+        }
+        HirPattern::Or(alts) => {
+            for p in alts {
+                collect_mono_instances_from_pattern(p, generic_types, instances, seen);
+            }
+        }
+        HirPattern::Wild | HirPattern::Lit(_) => {}
+    }
+}
+
+/// Generate a mangled name for a monomorphized type: "Box_i32", "Pair_f32_u32"
+fn mono_mangled_name(type_name: &str, args: &[Ty]) -> String {
+    let mut name = type_name.to_string();
+    for arg in args {
+        name.push('_');
+        name.push_str(&ty_to_mono_suffix(arg));
+    }
+    name
+}
+
+/// Convert a Ty to a suffix string for mangling.
+fn ty_to_mono_suffix(ty: &Ty) -> String {
+    match ty {
+        Ty::Con(name) => match name.as_str() {
+            "I32" => "i32".to_string(),
+            "U32" => "u32".to_string(),
+            "F32" => "f32".to_string(),
+            "Bool" => "bool".to_string(),
+            "()" => "unit".to_string(),
+            other => other.to_lowercase(),
+        },
+        Ty::App(_, _) => {
+            // Nested generic: e.g., Box (Option I32) → box_option_i32
+            let mut parts = Vec::new();
+            let mut cursor = ty;
+            loop {
+                match cursor {
+                    Ty::App(f, arg) => {
+                        parts.push(ty_to_mono_suffix(arg));
+                        cursor = f.as_ref();
+                    }
+                    other => {
+                        parts.push(ty_to_mono_suffix(other));
+                        break;
+                    }
+                }
+            }
+            parts.reverse();
+            parts.join("_")
+        }
+        Ty::Var(v) => format!("t{}", v),
+        Ty::Nat(n) => format!("{}", n),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// Substitute type parameters in a field type with concrete types.
+/// e.g., for `data Box a = Box a`, substitute `a` → `I32` in field type `Con("a")`.
+fn substitute_type_params(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
+    match ty {
+        Ty::Con(name) => {
+            if let Some(replacement) = subst.get(name.as_str()) {
+                replacement.clone()
+            } else {
+                ty.clone()
+            }
+        }
+        Ty::App(f, arg) => {
+            Ty::app(substitute_type_params(f, subst), substitute_type_params(arg, subst))
+        }
+        Ty::Arrow(a, b) => {
+            Ty::arrow(substitute_type_params(a, subst), substitute_type_params(b, subst))
+        }
+        Ty::Tuple(elems) => {
+            Ty::Tuple(elems.iter().map(|e| substitute_type_params(e, subst)).collect())
+        }
+        _ => ty.clone(),
+    }
+}
+
+/// Convert a data type's constructors into a MirStruct, if it needs one.
+fn lower_data_type_to_struct(name: &str, constructors: &[HirConstructor], ctx: &LowerCtx) -> Option<MirStruct> {
+    if constructors.len() > 1 && constructors.iter().any(|c| !c.fields.is_empty()) {
+        // Sum type with fields: emit one struct with tag + union of fields
+        let mut fields = vec![MirField {
+            name: "tag".to_string(),
+            ty: MirType::U32,
+            attributes: vec![],
+        }];
+        let max_con = constructors.iter().max_by_key(|c| c.fields.len()).unwrap();
+        for f in &max_con.fields {
+            let mir_ty = ty_to_mir_type_with_ctx(&f.ty, Some(ctx)).unwrap_or(MirType::I32);
+            fields.push(MirField {
+                name: f.name.clone(),
+                ty: mir_ty,
+                attributes: f.attributes.iter().map(|a| MirAttribute {
+                    name: a.name.clone(),
+                    args: a.args.clone(),
+                }).collect(),
+            });
+        }
+        Some(MirStruct { name: name.to_string(), fields })
+    } else if constructors.len() == 1 {
+        let con = &constructors[0];
+        if !con.fields.is_empty() {
+            let fields = con.fields.iter().map(|f| {
+                let mir_ty = ty_to_mir_type_with_ctx(&f.ty, Some(ctx)).unwrap_or(MirType::I32);
+                MirField {
+                    name: f.name.clone(),
+                    ty: mir_ty,
+                    attributes: f.attributes.iter().map(|a| MirAttribute {
+                        name: a.name.clone(),
+                        args: a.args.clone(),
+                    }).collect(),
+                }
+            }).collect();
+            Some(MirStruct { name: name.to_string(), fields })
+        } else {
+            None
+        }
+    } else {
+        // Pure enums (all nullary constructors) → no struct needed
+        None
+    }
+}
+
 /// Lower a complete HIR program to MIR.
 pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
     let ctx = LowerCtx::new(hir);
@@ -132,60 +453,45 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
 
     // Lower data types to structs
     for dt in &hir.data_types {
-        if dt.constructors.len() > 1 && dt.constructors.iter().any(|c| !c.fields.is_empty()) {
-            // Sum type with fields: emit one struct with tag + union of fields
-            let mut fields = vec![MirField {
-                name: "tag".to_string(),
-                ty: MirType::U32,
-                attributes: vec![],
-            }];
-            // Collect all field names/types from the largest constructor
-            let max_con = dt
-                .constructors
-                .iter()
-                .max_by_key(|c| c.fields.len())
-                .unwrap();
-            for f in &max_con.fields {
-                let mir_ty = ty_to_mir_type_with_ctx(&f.ty, Some(&ctx)).unwrap_or(MirType::I32);
-                fields.push(MirField {
-                    name: f.name.clone(),
-                    ty: mir_ty,
-                    attributes: f.attributes.iter().map(|a| MirAttribute {
-                        name: a.name.clone(),
-                        args: a.args.clone(),
-                    }).collect(),
-                });
-            }
-            structs.push(MirStruct {
-                name: dt.name.clone(),
-                fields,
-            });
-        } else if dt.constructors.len() == 1 {
-            // Single constructor (record type): emit struct with just its fields
-            let con = &dt.constructors[0];
-            if !con.fields.is_empty() {
-                let fields = con
-                    .fields
-                    .iter()
-                    .map(|f| {
-                        let mir_ty = ty_to_mir_type_with_ctx(&f.ty, Some(&ctx)).unwrap_or(MirType::I32);
-                        MirField {
-                            name: f.name.clone(),
-                            ty: mir_ty,
-                            attributes: f.attributes.iter().map(|a| MirAttribute {
-                                name: a.name.clone(),
-                                args: a.args.clone(),
-                            }).collect(),
-                        }
-                    })
-                    .collect();
-                structs.push(MirStruct {
-                    name: dt.name.clone(),
+        // Skip generic data types — they'll be emitted as specialized versions below
+        if !dt.type_params.is_empty() {
+            continue;
+        }
+        if let Some(s) = lower_data_type_to_struct(&dt.name, &dt.constructors, &ctx) {
+            structs.push(s);
+        }
+    }
+
+    // Emit specialized structs for each monomorphized instance
+    for (type_name, concrete_args) in &ctx.mono_instances {
+        if let Some(dt) = hir.data_types.iter().find(|d| d.name == *type_name) {
+            // Build substitution: type_param_name → concrete Ty
+            let subst: HashMap<String, Ty> = dt.type_params.iter()
+                .zip(concrete_args.iter())
+                .map(|(param, arg)| (param.clone(), arg.clone()))
+                .collect();
+
+            // Create specialized constructors with substituted field types
+            let specialized_cons: Vec<HirConstructor> = dt.constructors.iter().map(|con| {
+                let fields = con.fields.iter().map(|f| {
+                    HirFieldDef {
+                        name: f.name.clone(),
+                        ty: substitute_type_params(&f.ty, &subst),
+                        attributes: f.attributes.clone(),
+                    }
+                }).collect();
+                HirConstructor {
+                    name: con.name.clone(),
+                    tag: con.tag,
                     fields,
-                });
+                }
+            }).collect();
+
+            let mangled = mono_mangled_name(type_name, concrete_args);
+            if let Some(s) = lower_data_type_to_struct(&mangled, &specialized_cons, &ctx) {
+                structs.push(s);
             }
         }
-        // Pure enums (all nullary constructors) → no struct needed, use u32
     }
 
     // Lower resource declarations to global bindings
@@ -263,48 +569,56 @@ fn ty_to_mir_type_with_ctx(ty: &Ty, ctx: Option<&LowerCtx>) -> Result<MirType, S
                 Ok(MirType::Struct(other.to_string()))
             }
         },
-        Ty::App(f, arg) => match f.as_ref() {
-            // Unsized array: Tensor<T> (single application, no Nat dimension)
-            Ty::Con(name) if name == "Tensor" => {
-                let elem = ty_to_mir_type_with_ctx(arg, ctx)?;
-                Ok(MirType::RuntimeArray(Box::new(elem)))
+        Ty::App(ref f, ref arg) => {
+            // Check for monomorphized generic data type: e.g., App(Con("Box"), Con("I32"))
+            if let Some(ctx) = ctx {
+                if let Some((name, args)) = extract_generic_instantiation(&ty, &ctx.generic_types) {
+                    let mangled = mono_mangled_name(&name, &args);
+                    return Ok(MirType::Struct(mangled));
+                }
             }
-            Ty::App(ff, n) => match (ff.as_ref(), n.as_ref()) {
-                (Ty::App(fff, nn), Ty::Nat(m)) => {
-                    if let (Ty::Con(name), Ty::Nat(n)) = (fff.as_ref(), nn.as_ref()) {
-                        if name == "Mat" {
-                            let scalar = ty_to_mir_type_with_ctx(arg, ctx)?;
-                            return Ok(MirType::Mat(*n as u8, *m as u8, Box::new(scalar)));
-                        }
-                    }
-                    Err(format!("Cannot convert to MIR type: {}", ty))
-                }
-                (Ty::Con(name), Ty::Nat(n)) if name == "Vec" => {
-                    let scalar = ty_to_mir_type_with_ctx(arg, ctx)?;
-                    Ok(MirType::Vec(*n as u8, Box::new(scalar)))
-                }
-                (Ty::Con(name), Ty::Nat(n)) if name == "Tensor" => {
+            match f.as_ref() {
+                // Unsized array: Tensor<T> (single application, no Nat dimension)
+                Ty::Con(name) if name == "Tensor" => {
                     let elem = ty_to_mir_type_with_ctx(arg, ctx)?;
-                    let len = u32::try_from(*n)
-                        .map_err(|_| format!("Tensor length out of range for MIR: {}", n))?;
-                    Ok(MirType::Array(Box::new(elem), len))
+                    Ok(MirType::RuntimeArray(Box::new(elem)))
                 }
-                // Handle surface syntax order: Tensor<T, N> (Array<T, N>)
-                // where n is the elem type and arg is Nat
-                (Ty::Con(name), _elem_ty) if name == "Tensor" => {
-                    if let Ty::Nat(len) = arg.as_ref() {
-                        let elem = ty_to_mir_type_with_ctx(n, ctx)?;
-                        let len = u32::try_from(*len)
-                            .map_err(|_| format!("Tensor length out of range for MIR: {}", len))?;
-                        Ok(MirType::Array(Box::new(elem), len))
-                    } else {
+                Ty::App(ff, n) => match (ff.as_ref(), n.as_ref()) {
+                    (Ty::App(fff, nn), Ty::Nat(m)) => {
+                        if let (Ty::Con(name), Ty::Nat(n)) = (fff.as_ref(), nn.as_ref()) {
+                            if name == "Mat" {
+                                let scalar = ty_to_mir_type_with_ctx(arg, ctx)?;
+                                return Ok(MirType::Mat(*n as u8, *m as u8, Box::new(scalar)));
+                            }
+                        }
                         Err(format!("Cannot convert to MIR type: {}", ty))
                     }
-                }
+                    (Ty::Con(name), Ty::Nat(n)) if name == "Vec" => {
+                        let scalar = ty_to_mir_type_with_ctx(arg, ctx)?;
+                        Ok(MirType::Vec(*n as u8, Box::new(scalar)))
+                    }
+                    (Ty::Con(name), Ty::Nat(n)) if name == "Tensor" => {
+                        let elem = ty_to_mir_type_with_ctx(arg, ctx)?;
+                        let len = u32::try_from(*n)
+                            .map_err(|_| format!("Tensor length out of range for MIR: {}", n))?;
+                        Ok(MirType::Array(Box::new(elem), len))
+                    }
+                    // Handle surface syntax order: Tensor<T, N> (Array<T, N>)
+                    (Ty::Con(name), _elem_ty) if name == "Tensor" => {
+                        if let Ty::Nat(len) = arg.as_ref() {
+                            let elem = ty_to_mir_type_with_ctx(n, ctx)?;
+                            let len = u32::try_from(*len)
+                                .map_err(|_| format!("Tensor length out of range for MIR: {}", len))?;
+                            Ok(MirType::Array(Box::new(elem), len))
+                        } else {
+                            Err(format!("Cannot convert to MIR type: {}", ty))
+                        }
+                    }
+                    _ => Err(format!("Cannot convert to MIR type: {}", ty)),
+                },
                 _ => Err(format!("Cannot convert to MIR type: {}", ty)),
-            },
-            _ => Err(format!("Cannot convert to MIR type: {}", ty)),
-        },
+            }
+        }
         Ty::Arrow(_, _) => {
             // Function types can't be represented in WGSL. This is only
             // reached for higher-order values that haven't been applied yet.
@@ -386,6 +700,13 @@ fn lower_hir_entry_point(ep: &HirEntryPoint, ctx: &LowerCtx) -> Result<MirEntryP
 
     // Compute shaders always have void return type in WGSL
     let return_ty = if stage == ShaderStage::Compute {
+        let orig_ty = ty_to_mir_type_with_ctx(&ep.return_ty, Some(ctx)).unwrap_or(MirType::Unit);
+        if orig_ty != MirType::Unit {
+            eprintln!(
+                "warning: compute entry point '{}' has return type '{}' but WGSL compute shaders must return void; the return expression will be discarded",
+                ep.name, orig_ty
+            );
+        }
         MirType::Unit
     } else {
         ty_to_mir_type_with_ctx(&ep.return_ty, Some(ctx)).unwrap_or(MirType::Unit)
@@ -620,11 +941,12 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
             if let Some((dt_name, tag, _fields)) = ctx.constructors.get(name.as_str()) {
                 if ctx.is_sum_type(dt_name) && ctx.has_fields(dt_name) {
                     // Emit as DataType struct: DataType(tag, field0, ...)
+                    let struct_name = ctx.resolve_struct_name(dt_name, _ty);
                     let mut all_args = vec![MirExpr::Lit(MirLit::U32(*tag))];
                     for arg in args {
                         all_args.push(lower_hir_expr(arg, ctx)?);
                     }
-                    return Ok(MirExpr::ConstructStruct(dt_name.clone(), all_args));
+                    return Ok(MirExpr::ConstructStruct(struct_name, all_args));
                 }
             }
             if args.is_empty() {
@@ -632,9 +954,14 @@ fn lower_hir_expr(expr: &HirExpr, ctx: &LowerCtx) -> Result<MirExpr, String> {
                 Ok(MirExpr::Lit(MirLit::U32(*_tag)))
             } else {
                 // Record constructor: emit as struct construction
+                let struct_name = if let Some((dt_name, _, _)) = ctx.constructors.get(name.as_str()) {
+                    ctx.resolve_struct_name(dt_name, _ty)
+                } else {
+                    name.clone()
+                };
                 let mir_args: Result<Vec<MirExpr>, String> =
                     args.iter().map(|a| lower_hir_expr(a, ctx)).collect();
-                Ok(MirExpr::ConstructStruct(name.clone(), mir_args?))
+                Ok(MirExpr::ConstructStruct(struct_name, mir_args?))
             }
         }
 
@@ -1085,12 +1412,21 @@ fn lower_app_with_args(
             mir_ty,
         )),
         _ => {
-            // Check if this is a constructor call for a sum type with fields
+            // Check if this is a constructor call for a data type with fields
             if let Some((dt_name, tag, _fields)) = ctx.constructors.get(func_name) {
+                // Use the monomorphized struct name from the result type if available
+                let struct_name = if let MirType::Struct(name) = &mir_ty {
+                    name.clone()
+                } else {
+                    dt_name.clone()
+                };
                 if ctx.is_sum_type(dt_name) && ctx.has_fields(dt_name) {
                     let mut all_args = vec![MirExpr::Lit(MirLit::U32(*tag))];
                     all_args.extend(mir_args);
-                    return Ok(MirExpr::ConstructStruct(dt_name.clone(), all_args));
+                    return Ok(MirExpr::ConstructStruct(struct_name, all_args));
+                } else if ctx.has_fields(dt_name) {
+                    // Single-constructor type with fields
+                    return Ok(MirExpr::ConstructStruct(struct_name, mir_args));
                 }
             }
             Ok(MirExpr::Call(func_name.to_string(), mir_args, mir_ty))
@@ -1286,9 +1622,15 @@ fn lower_case_arms(
             HirPattern::Constructor(con_name, tag, sub_pats) => {
                 // Bind pattern variables from the scrutinee's fields
                 let mut bindings = Vec::new();
+                let is_single_con = if let Some((dt_name, _, _)) = ctx.constructors.get(con_name.as_str()) {
+                    !ctx.is_sum_type(dt_name)
+                } else {
+                    false
+                };
+
                 if let Some((dt_name, _, con_fields)) = ctx.constructors.get(con_name.as_str()) {
-                    if ctx.is_sum_type(dt_name) && ctx.has_fields(dt_name) {
-                        // Sum type with fields: extract from struct fields
+                    if ctx.has_fields(dt_name) {
+                        // Extract fields from struct (works for both sum and single-con types)
                         for (i, pat) in sub_pats.iter().enumerate() {
                             if let HirPattern::Var(var_name, var_ty) = pat {
                                 let field_name = if i < con_fields.len() {
@@ -1311,40 +1653,43 @@ fn lower_case_arms(
                     }
                 }
 
-                // Match on tag: if (scrut.tag == tag) { ... }
-                let scrut_tag = if scrut_ty == &MirType::U32 {
-                    MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())
-                } else {
-                    MirExpr::FieldAccess(
-                        Box::new(MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())),
-                        "tag".to_string(),
-                        MirType::U32,
-                    )
-                };
-                let cond = MirExpr::BinOp(
-                    MirBinOp::Eq,
-                    Box::new(scrut_tag),
-                    Box::new(MirExpr::Lit(MirLit::U32(*tag))),
-                    MirType::Bool,
-                );
-
-                // Build body: bindings, then guard check (if any), then body.
-                // When a guard is present, both guard-failure and tag-mismatch
-                // must fall through to the remaining arms, so clone the fallthrough.
-                let mut full_body = bindings;
-                if guard_mir.is_some() {
-                    let fallthrough_clone = result.clone();
+                if is_single_con {
+                    // Single-constructor type: no tag check needed, just emit bindings + body
                     let guarded_body = apply_guard(guard_mir, body_stmts, &mut result);
-                    full_body.extend(guarded_body);
-                    // Restore result for the outer tag-mismatch else
-                    result = fallthrough_clone;
+                    let mut full = bindings;
+                    full.extend(guarded_body);
+                    result = Some(MirStmt::Block(full));
                 } else {
-                    full_body.extend(body_stmts);
+                    // Sum type: match on tag
+                    let scrut_tag = if scrut_ty == &MirType::U32 {
+                        MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())
+                    } else {
+                        MirExpr::FieldAccess(
+                            Box::new(MirExpr::Var(scrut_name.to_string(), scrut_ty.clone())),
+                            "tag".to_string(),
+                            MirType::U32,
+                        )
+                    };
+                    let cond = MirExpr::BinOp(
+                        MirBinOp::Eq,
+                        Box::new(scrut_tag),
+                        Box::new(MirExpr::Lit(MirLit::U32(*tag))),
+                        MirType::Bool,
+                    );
+
+                    let mut full_body = bindings;
+                    if guard_mir.is_some() {
+                        let fallthrough_clone = result.clone();
+                        let guarded_body = apply_guard(guard_mir, body_stmts, &mut result);
+                        full_body.extend(guarded_body);
+                        result = fallthrough_clone;
+                    } else {
+                        full_body.extend(body_stmts);
+                    }
+
+                    let else_stmts = take_else_stmts(&mut result);
+                    result = Some(MirStmt::If(cond, full_body, else_stmts));
                 }
-
-                let else_stmts = take_else_stmts(&mut result);
-
-                result = Some(MirStmt::If(cond, full_body, else_stmts));
             }
 
             HirPattern::Lit(hir_lit) => {
