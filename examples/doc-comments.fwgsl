@@ -5,9 +5,23 @@
 --   `-- ^` attaches docs to the preceding item (backward/trailing)
 
 -- | A 2D point with floating-point coordinates.
+-- Trailing doc style (`-- ^`) on each field:
 data Point = Point {
   x : F32, -- ^ The x coordinate.
   y : F32, -- ^ The y coordinate.
+}
+
+-- | A particle with position and velocity.
+-- Forward doc style (`-- |`) on each field:
+data Particle = Particle {
+  -- | Horizontal position.
+  px : F32,
+  -- | Vertical position.
+  py : F32,
+  -- | Horizontal velocity.
+  vx : F32,
+  -- | Vertical velocity.
+  vy : F32,
 }
 
 -- | A color represented as RGBA channels.

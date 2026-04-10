@@ -31,6 +31,7 @@ pub fn format(source: &str, config: &FormatConfig) -> String {
     let tokens = lex(source);
     let mut engine = FormatEngine::new(source, &tokens, config);
     engine.run();
+    align_record_fields(&mut engine.output);
     engine.output
 }
 
@@ -56,6 +57,8 @@ struct FormatEngine<'a> {
     at_line_start: bool,
     /// Number of consecutive blank lines emitted.
     blank_lines: usize,
+    /// Nesting depth of type-parameter angle brackets (`Vec<..>`).
+    type_angle_depth: usize,
 }
 
 impl<'a> FormatEngine<'a> {
@@ -69,6 +72,7 @@ impl<'a> FormatEngine<'a> {
             col: 0,
             at_line_start: true,
             blank_lines: 0,
+            type_angle_depth: 0,
         }
     }
 
@@ -213,6 +217,15 @@ impl<'a> FormatEngine<'a> {
                         self.emit_inter_token_space(tok);
                     }
 
+                    // Track type-parameter angle brackets (after spacing decision)
+                    if tok.kind == SyntaxKind::Less
+                        && self.last_emitted_kind() == Some(SyntaxKind::UpperIdent)
+                    {
+                        self.type_angle_depth += 1;
+                    } else if tok.kind == SyntaxKind::Greater && self.type_angle_depth > 0 {
+                        self.type_angle_depth -= 1;
+                    }
+
                     let text = self.text(tok);
                     self.advance();
                     self.emit_str(text);
@@ -241,7 +254,6 @@ impl<'a> FormatEngine<'a> {
             kind,
             SyntaxKind::RParen
                 | SyntaxKind::RBracket
-                | SyntaxKind::RBrace
                 | SyntaxKind::Comma
                 | SyntaxKind::Semicolon
         ) {
@@ -251,7 +263,6 @@ impl<'a> FormatEngine<'a> {
         // No space after opening brackets (already handled since we're looking at 'next')
         if self.last_emitted_kind() == Some(SyntaxKind::LParen)
             || self.last_emitted_kind() == Some(SyntaxKind::LBracket)
-            || self.last_emitted_kind() == Some(SyntaxKind::LBrace)
         {
             return;
         }
@@ -266,6 +277,20 @@ impl<'a> FormatEngine<'a> {
             return;
         }
 
+        // Type parameter angle brackets: no space around `<`, `>`, or after `,`
+        // when inside `Type<...>`.
+        if kind == SyntaxKind::Less
+            && self.last_emitted_kind() == Some(SyntaxKind::UpperIdent)
+        {
+            return; // no space before `<` in `Vec<`
+        }
+        if kind == SyntaxKind::Greater && self.type_angle_depth > 0 {
+            return; // no space before `>` in `...>`
+        }
+        if self.last_emitted_kind() == Some(SyntaxKind::Less) && self.type_angle_depth > 0 {
+            return; // no space after `<` in `<4, ...`
+        }
+
         // Single space for everything else
         self.ensure_single_space();
     }
@@ -273,10 +298,10 @@ impl<'a> FormatEngine<'a> {
     /// Look back at the last non-whitespace character to determine the previous token kind.
     fn last_emitted_kind(&self) -> Option<SyntaxKind> {
         // Walk backwards from the current position to find the last emitted real token.
-        if self.pos < 2 {
+        if self.pos == 0 {
             return None;
         }
-        for i in (0..self.pos - 1).rev() {
+        for i in (0..self.pos).rev() {
             let k = self.tokens[i].kind;
             if !k.is_trivia() {
                 return Some(k);
@@ -308,6 +333,144 @@ impl<'a> FormatEngine<'a> {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Post-processing: align `:` in record field blocks
+// ---------------------------------------------------------------------------
+
+/// Align colons in consecutive record field lines that share the same indentation.
+///
+/// A "field line" matches the pattern: `<indent><name> : <type>...`
+/// Groups of consecutive field lines with identical indent get their `:`
+/// aligned to the longest name in the group.
+fn align_record_fields(output: &mut String) {
+    let lines: Vec<&str> = output.split('\n').collect();
+    let mut result = Vec::with_capacity(lines.len());
+    let mut i = 0;
+
+    while i < lines.len() {
+        // Try to start a group of field lines
+        if let Some((indent, _name_end)) = parse_field_line(lines[i]) {
+            let mut group_indices = vec![i];
+            i += 1;
+            // Collect consecutive field lines with the same indent
+            while i < lines.len() {
+                if let Some((ind2, _)) = parse_field_line(lines[i]) {
+                    if ind2 == indent {
+                        group_indices.push(i);
+                        i += 1;
+                        continue;
+                    }
+                }
+                break;
+            }
+            if group_indices.len() > 1 {
+                // Find max name_end column in the group
+                let max_name_end = group_indices
+                    .iter()
+                    .map(|&idx| parse_field_line(lines[idx]).unwrap().1)
+                    .max()
+                    .unwrap();
+                // Rewrite each line with aligned colon
+                for &idx in &group_indices {
+                    let (_, name_end) = parse_field_line(lines[idx]).unwrap();
+                    let line = lines[idx];
+                    // Everything up to end of field name
+                    let before = &line[..name_end];
+                    // Find `: <rest>` after the name
+                    let after_name = &line[name_end..];
+                    let colon_rel = after_name.find(':').unwrap();
+                    let from_colon = &after_name[colon_rel..]; // ": <type>,..."
+                    let padding = max_name_end - name_end + 1; // +1 for the space before `:`
+                    let mut aligned = String::with_capacity(line.len() + padding);
+                    aligned.push_str(before);
+                    for _ in 0..padding {
+                        aligned.push(' ');
+                    }
+                    aligned.push_str(from_colon);
+                    result.push(aligned);
+                }
+            } else {
+                // Single field line — no alignment needed
+                for &idx in &group_indices {
+                    result.push(lines[idx].to_string());
+                }
+            }
+        } else {
+            result.push(lines[i].to_string());
+            i += 1;
+        }
+    }
+
+    *output = result.join("\n");
+}
+
+/// Parse a line as a record field declaration.
+/// Returns `(indent_len, name_end_col)` where `name_end_col` is the column
+/// (from line start) where the field name ends. The caller pads between
+/// `name_end_col` and `:` to align colons across a group.
+/// Matches: `<indent>[<@attr(...)> ]<ident> : ...`
+fn parse_field_line(line: &str) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    // Measure leading whitespace (must have some indent for a record field)
+    let indent = bytes.iter().take_while(|&&b| b == b' ' || b == b'\t').count();
+    if indent == 0 || indent >= bytes.len() {
+        return None;
+    }
+    // Work with byte offset from line start
+    let mut pos = indent;
+    // Skip optional attribute like @builtin(...) or @location(0)
+    if bytes.get(pos) == Some(&b'@') {
+        pos += 1;
+        // Skip ident
+        let ident_start = pos;
+        while pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
+            pos += 1;
+        }
+        if pos == ident_start {
+            return None;
+        }
+        // Optionally skip (...)
+        if pos < bytes.len() && bytes[pos] == b'(' {
+            let close = line[pos..].find(')')?;
+            pos += close + 1;
+        }
+        // Skip whitespace after attribute
+        while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+            pos += 1;
+        }
+    }
+    // Must start with an identifier character
+    if pos >= bytes.len() || !(bytes[pos].is_ascii_alphabetic() || bytes[pos] == b'_') {
+        return None;
+    }
+    // Measure name
+    let name_start = pos;
+    while pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
+        pos += 1;
+    }
+    if pos == name_start {
+        return None;
+    }
+    let name_end = pos;
+    // Must be followed by whitespace then `: `
+    if pos >= bytes.len() || bytes[pos] != b' ' {
+        return None;
+    }
+    // Skip whitespace to find `:`
+    while pos < bytes.len() && bytes[pos] == b' ' {
+        pos += 1;
+    }
+    if pos >= bytes.len() || bytes[pos] != b':' {
+        return None;
+    }
+    // `:` must be followed by ` `
+    if pos + 1 >= bytes.len() || bytes[pos + 1] != b' ' {
+        return None;
+    }
+    Some((indent, name_end))
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -391,6 +554,13 @@ mod tests {
     }
 
     #[test]
+    fn format_field_access_in_expr() {
+        let source = "f p = p.x + p.y\n";
+        let result = format_default(source);
+        assert_eq!(result, "f p = p.x + p.y\n");
+    }
+
+    #[test]
     fn format_attribute_no_space() {
         let source = "@ compute\n";
         let result = format_default(source);
@@ -416,7 +586,7 @@ mod tests {
     fn format_record() {
         let source = "p = Particle { x = 1.0 , y = 2.0 }\n";
         let result = format_default(source);
-        assert_eq!(result, "p = Particle {x = 1.0, y = 2.0}\n");
+        assert_eq!(result, "p = Particle { x = 1.0, y = 2.0 }\n");
     }
 
     #[test]
@@ -424,5 +594,50 @@ mod tests {
         let source = "-- Minimal end-to-end example.\n-- Demonstrates arithmetic, function calls, and let-bindings.\n\ndouble x = x * 2\n\nmain x =\n  let y = double x\n  in y + 1\n";
         let result = format_default(source);
         assert_eq!(result, source);
+    }
+
+    #[test]
+    fn format_aligns_record_field_colons() {
+        let source = "data Particle = Particle {\n  x : F32,\n  y : F32,\n  vx : F32,\n  vy : F32,\n}\n";
+        let expected = "data Particle = Particle {\n  x  : F32,\n  y  : F32,\n  vx : F32,\n  vy : F32,\n}\n";
+        let result = format_default(source);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn format_field_alignment_idempotent() {
+        let source = "data Particle = Particle {\n  x  : F32,\n  y  : F32,\n  vx : F32,\n  vy : F32,\n}\n";
+        let result = format_default(source);
+        let result2 = format_default(&result);
+        assert_eq!(result, result2, "field alignment is not idempotent");
+    }
+
+    #[test]
+    fn format_record_update_idempotent() {
+        let source = "nudgeX dx p = p { x = p.x + dx }\n";
+        let result = format_default(source);
+        assert_eq!(result, source);
+    }
+
+    #[test]
+    fn format_type_params_no_spaces() {
+        let source = "f : Vec < 4 , F32 > -> F32\n";
+        let result = format_default(source);
+        assert_eq!(result, "f : Vec<4, F32> -> F32\n");
+    }
+
+    #[test]
+    fn format_nested_type_params() {
+        let source = "f : Array < Vec < 3 , F32 > , 64 > -> F32\n";
+        let result = format_default(source);
+        assert_eq!(result, "f : Array<Vec<3, F32>, 64> -> F32\n");
+    }
+
+    #[test]
+    fn format_type_params_idempotent() {
+        let source = "f : Vec<4, F32> -> F32\n";
+        let result = format_default(source);
+        let result2 = format_default(&result);
+        assert_eq!(result, result2, "type params formatting is not idempotent");
     }
 }
