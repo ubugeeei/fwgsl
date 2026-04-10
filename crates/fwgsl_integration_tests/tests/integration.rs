@@ -1149,7 +1149,7 @@ mod codegen_tests {
             "WGSL: {}",
             wgsl
         );
-        assert!(wgsl.contains("return (x + y);"), "WGSL: {}", wgsl);
+        assert!(wgsl.contains("return x + y;"), "WGSL: {}", wgsl);
     }
 
     #[test]
@@ -1819,6 +1819,7 @@ mod full_pipeline_tests {
         }
 
         let mir = fwgsl_mir::lower::lower_hir_to_mir(&hir).map_err(|e| e.join(", "))?;
+        let mir = fwgsl_mir::reachability::eliminate_dead_code(&mir);
 
         Ok(emit_wgsl(&mir))
     }
@@ -1879,8 +1880,8 @@ mod full_pipeline_tests {
             wgsl
         );
         assert!(
-            wgsl.contains("if ("),
-            "WGSL should contain if statement, got: {}",
+            wgsl.contains("select("),
+            "WGSL should contain select call for simple if-then-else, got: {}",
             wgsl
         );
     }
@@ -2031,6 +2032,7 @@ mod trait_tests {
         }
 
         let mir = fwgsl_mir::lower::lower_hir_to_mir(&hir).map_err(|e| e.join(", "))?;
+        let mir = fwgsl_mir::reachability::eliminate_dead_code(&mir);
 
         Ok(fwgsl_wgsl_codegen::emit_wgsl(&mir))
     }

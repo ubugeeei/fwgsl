@@ -441,14 +441,28 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr, ctx: &LowerCtx) -> Result<(Vec<MirStm
             let cond_mir = lower_hir_expr(cond, ctx)?;
             let result_ty = ty_to_mir_type_with_ctx(ty, Some(ctx)).unwrap_or(MirType::I32);
 
-            // Flatten to: var tmp; if (cond) { tmp = then } else { tmp = else }; tmp
+            let (then_stmts, then_val) = lower_hir_expr_to_stmts(then_expr, ctx)?;
+            let (else_stmts, else_val) = lower_hir_expr_to_stmts(else_expr, ctx)?;
+
+            // Simple ternary: both branches are pure expressions with no statements.
+            // Emit select(false_val, true_val, condition) instead of var/if/assign.
+            if then_stmts.is_empty() && else_stmts.is_empty() {
+                let select_expr = MirExpr::Call(
+                    "select".to_string(),
+                    vec![else_val, then_val, cond_mir],
+                    result_ty,
+                );
+                return Ok((vec![], select_expr));
+            }
+
+            // Complex branches: fall back to var tmp; if (cond) { ... } else { ... }
             let tmp_name = format!("_if_tmp_{}", _span.start);
 
-            let (mut then_stmts, then_val) = lower_hir_expr_to_stmts(then_expr, ctx)?;
-            then_stmts.push(MirStmt::Assign(tmp_name.clone(), then_val));
+            let mut then_body = then_stmts;
+            then_body.push(MirStmt::Assign(tmp_name.clone(), then_val));
 
-            let (mut else_stmts, else_val) = lower_hir_expr_to_stmts(else_expr, ctx)?;
-            else_stmts.push(MirStmt::Assign(tmp_name.clone(), else_val));
+            let mut else_body = else_stmts;
+            else_body.push(MirStmt::Assign(tmp_name.clone(), else_val));
 
             let stmts = vec![
                 MirStmt::Var(
@@ -456,7 +470,7 @@ fn lower_hir_expr_to_stmts(expr: &HirExpr, ctx: &LowerCtx) -> Result<(Vec<MirStm
                     result_ty.clone(),
                     default_expr_for_type(&result_ty),
                 ),
-                MirStmt::If(cond_mir, then_stmts, else_stmts),
+                MirStmt::If(cond_mir, then_body, else_body),
             ];
 
             Ok((stmts, MirExpr::Var(tmp_name, result_ty)))
@@ -994,23 +1008,10 @@ fn lower_app_with_args(
             mir_ty,
         )),
         ("mod", [lhs, rhs]) => {
-            let div = MirExpr::BinOp(
-                MirBinOp::Div,
-                Box::new(lhs.clone()),
-                Box::new(rhs.clone()),
-                mir_ty.clone(),
-            );
-            let floored = MirExpr::Call("floor".to_string(), vec![div], mir_ty.clone());
-            let product = MirExpr::BinOp(
-                MirBinOp::Mul,
-                Box::new(rhs.clone()),
-                Box::new(floored),
-                mir_ty.clone(),
-            );
             Ok(MirExpr::BinOp(
-                MirBinOp::Sub,
+                MirBinOp::Mod,
                 Box::new(lhs.clone()),
-                Box::new(product),
+                Box::new(rhs.clone()),
                 mir_ty,
             ))
         }
@@ -1029,17 +1030,17 @@ fn lower_app_with_args(
         ("toBool", [arg]) => Ok(MirExpr::Cast(Box::new(arg.clone()), MirType::Bool)),
         ("splat2", [arg]) => Ok(MirExpr::Call(
             "vec2".to_string(),
-            vec![arg.clone(), arg.clone()],
+            vec![arg.clone()],
             mir_ty,
         )),
         ("splat3", [arg]) => Ok(MirExpr::Call(
             "vec3".to_string(),
-            vec![arg.clone(), arg.clone(), arg.clone()],
+            vec![arg.clone()],
             mir_ty,
         )),
         ("splat4", [arg]) => Ok(MirExpr::Call(
             "vec4".to_string(),
-            vec![arg.clone(), arg.clone(), arg.clone(), arg.clone()],
+            vec![arg.clone()],
             mir_ty,
         )),
         ("vecX", [arg]) => Ok(MirExpr::FieldAccess(
@@ -1518,8 +1519,12 @@ mod tests {
         let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
         assert_eq!(mir.functions.len(), 1);
         let f = &mir.functions[0];
-        // Should have a var declaration and an if statement
-        assert!(f.body.len() >= 2);
+        // Simple if-then-else with no side effects should lower to a select() call
+        // which becomes the return expression directly
+        assert!(
+            f.return_expr.is_some(),
+            "should have a return expression (select call)"
+        );
     }
 
     #[test]

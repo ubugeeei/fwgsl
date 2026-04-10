@@ -7,24 +7,36 @@
 use fwgsl_mir::*;
 
 fn sanitize_identifier(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for ch in name.chars() {
+    // Split into base name and count of trailing primes
+    let prime_count = name.chars().rev().take_while(|&c| c == '\'').count();
+    let base = &name[..name.len() - prime_count];
+
+    let mut out = String::with_capacity(base.len() + 4);
+    for ch in base.chars() {
         match ch {
             'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => out.push(ch),
-            '\'' => out.push_str("_prime"),
             _ => out.push('_'),
         }
     }
 
     if out.is_empty() {
-        "_".to_string()
+        out.push('_');
     } else if out.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
-        format!("_{}", out)
-    } else if is_reserved_identifier(&out) {
-        format!("fw_{}", out)
-    } else {
-        out
+        out.insert(0, '_');
     }
+
+    // Apply reserved-word escaping to the base name (before prime suffix)
+    if is_reserved_identifier(&out) {
+        out.insert_str(0, "fw_");
+    }
+
+    // Append numbered suffix for primes: x' -> x_1, x'' -> x_2, etc.
+    if prime_count > 0 {
+        out.push('_');
+        out.push_str(&prime_count.to_string());
+    }
+
+    out
 }
 
 fn is_reserved_identifier(name: &str) -> bool {
@@ -79,6 +91,36 @@ fn is_reserved_identifier(name: &str) -> bool {
             | "write"
             | "final"
     )
+}
+
+// WGSL operator precedence levels (higher = tighter binding).
+// See https://www.w3.org/TR/WGSL/#operator-precedence-associativity
+const PREC_OR: u8 = 1;
+const PREC_AND: u8 = 2;
+const PREC_BITOR: u8 = 3;
+const PREC_BITXOR: u8 = 4;
+const PREC_BITAND: u8 = 5;
+const PREC_EQ: u8 = 6;   // == !=
+const PREC_REL: u8 = 7;  // < > <= >=
+const PREC_SHIFT: u8 = 8; // << >>
+const PREC_ADD: u8 = 9;  // + -
+const PREC_MUL: u8 = 10; // * / %
+const PREC_UNARY: u8 = 11; // - ! ~
+const PREC_POSTFIX: u8 = 12; // . []
+
+fn binop_precedence(op: &MirBinOp) -> u8 {
+    match op {
+        MirBinOp::Or => PREC_OR,
+        MirBinOp::And => PREC_AND,
+        MirBinOp::BitOr => PREC_BITOR,
+        MirBinOp::BitXor => PREC_BITXOR,
+        MirBinOp::BitAnd => PREC_BITAND,
+        MirBinOp::Eq | MirBinOp::Neq => PREC_EQ,
+        MirBinOp::Lt | MirBinOp::Le | MirBinOp::Gt | MirBinOp::Ge => PREC_REL,
+        MirBinOp::Shl | MirBinOp::Shr => PREC_SHIFT,
+        MirBinOp::Add | MirBinOp::Sub => PREC_ADD,
+        MirBinOp::Mul | MirBinOp::Div | MirBinOp::Mod => PREC_MUL,
+    }
 }
 
 /// A tree-walk emitter that writes WGSL text into a `String` buffer.
@@ -342,13 +384,9 @@ impl WgslEmitter {
 
     fn emit_stmt(&mut self, stmt: &MirStmt) {
         match stmt {
-            MirStmt::Let(name, ty, expr) => {
+            MirStmt::Let(name, _ty, expr) => {
                 self.write_indent();
-                self.write(&format!(
-                    "let {}: {} = ",
-                    sanitize_identifier(name),
-                    self.format_type(ty)
-                ));
+                self.write(&format!("let {} = ", sanitize_identifier(name)));
                 self.emit_expr(expr);
                 self.write(";");
                 self.newline();
@@ -502,23 +540,37 @@ impl WgslEmitter {
     }
 
     // -----------------------------------------------------------------------
-    // Expression emission
+    // Expression emission (precedence-aware)
     // -----------------------------------------------------------------------
 
     fn emit_expr(&mut self, expr: &MirExpr) {
+        self.emit_expr_prec(expr, 0);
+    }
+
+    /// Emit an expression, inserting parentheses only when the expression's
+    /// precedence is lower than the surrounding context (`min_prec`).
+    fn emit_expr_prec(&mut self, expr: &MirExpr, min_prec: u8) {
         match expr {
             MirExpr::Lit(lit) => self.emit_lit(lit),
             MirExpr::Var(name, _) => self.write(&sanitize_identifier(name)),
             MirExpr::BinOp(op, lhs, rhs, _) => {
-                self.write("(");
-                self.emit_expr(lhs);
+                let prec = binop_precedence(op);
+                let need_parens = prec < min_prec;
+                if need_parens {
+                    self.write("(");
+                }
+                // Left-associative: left child uses same precedence,
+                // right child uses prec+1 to parenthesize same-precedence on the right.
+                self.emit_expr_prec(lhs, prec);
                 self.write(&format!(" {} ", op));
-                self.emit_expr(rhs);
-                self.write(")");
+                self.emit_expr_prec(rhs, prec + 1);
+                if need_parens {
+                    self.write(")");
+                }
             }
             MirExpr::UnaryOp(op, operand, _) => {
                 self.write(&format!("{}", op));
-                self.emit_expr(operand);
+                self.emit_expr_prec(operand, PREC_UNARY);
             }
             MirExpr::Call(name, args, ty) => {
                 if is_type_constructor_call(name, ty) {
@@ -531,7 +583,7 @@ impl WgslEmitter {
                     if i > 0 {
                         self.write(", ");
                     }
-                    self.emit_expr(arg);
+                    self.emit_expr_prec(arg, 0);
                 }
                 self.write(")");
             }
@@ -542,23 +594,23 @@ impl WgslEmitter {
                     if i > 0 {
                         self.write(", ");
                     }
-                    self.emit_expr(field);
+                    self.emit_expr_prec(field, 0);
                 }
                 self.write(")");
             }
-            MirExpr::FieldAccess(expr, field, _) => {
-                self.emit_expr(expr);
+            MirExpr::FieldAccess(base, field, _) => {
+                self.emit_expr_prec(base, PREC_POSTFIX);
                 self.write(&format!(".{}", sanitize_identifier(field)));
             }
             MirExpr::Index(array, index, _) => {
-                self.emit_expr(array);
+                self.emit_expr_prec(array, PREC_POSTFIX);
                 self.write("[");
-                self.emit_expr(index);
+                self.emit_expr_prec(index, 0);
                 self.write("]");
             }
-            MirExpr::Cast(expr, ty) => {
+            MirExpr::Cast(inner, ty) => {
                 self.write(&format!("{}(", self.format_type(ty)));
-                self.emit_expr(expr);
+                self.emit_expr_prec(inner, 0);
                 self.write(")");
             }
         }
@@ -681,7 +733,7 @@ mod tests {
 
         let wgsl = emit_wgsl(&program);
         assert!(wgsl.contains("fn add(x: i32, y: i32) -> i32"));
-        assert!(wgsl.contains("return (x + y)"));
+        assert!(wgsl.contains("return x + y;"));
     }
 
     #[test]
@@ -979,7 +1031,7 @@ mod tests {
         };
 
         let wgsl = emit_wgsl(&program);
-        assert!(wgsl.contains("let a: i32 = 42i;"));
+        assert!(wgsl.contains("let a = 42i;"));
         assert!(wgsl.contains("var b: f32 = 3.14;"));
     }
 
@@ -1200,7 +1252,7 @@ mod tests {
         };
 
         let wgsl = emit_wgsl(&program);
-        assert!(wgsl.contains("  {\n    let x: i32 = 1i;\n  }"));
+        assert!(wgsl.contains("  {\n    let x = 1i;\n  }"));
     }
 
     #[test]
