@@ -649,14 +649,17 @@ fn parse_field_line(line: &str) -> Option<(usize, usize)> {
 /// Lines that are the only binding in their group are left as flat declarations.
 /// Already-indented binding lines (inside `when` blocks) are handled by checking
 /// the leading indentation of the original `@group` line.
+///
+/// Also re-aligns existing group blocks where `@group(N)` is already on its own
+/// line followed by indented `@binding(N) ...` children.
 fn collapse_binding_group_blocks(output: &mut String, config: &FormatConfig) {
     let lines: Vec<&str> = output.split('\n').collect();
     let mut result: Vec<String> = Vec::with_capacity(lines.len());
     let mut i = 0;
 
     while i < lines.len() {
+        // Case 1: flat binding lines — collapse consecutive same-group lines
         if let Some((indent, group_val, binding_rest)) = parse_binding_line(lines[i]) {
-            // Start of a potential group: collect consecutive lines with same indent+group
             let mut group = vec![(indent, group_val, binding_rest, i)];
             let mut j = i + 1;
             while j < lines.len() {
@@ -671,18 +674,11 @@ fn collapse_binding_group_blocks(output: &mut String, config: &FormatConfig) {
             }
 
             if group.len() > 1 {
-                // Emit group block header
                 let indent_str = &lines[group[0].3][..indent];
                 result.push(format!("{}@group({})", indent_str, group_val));
-
-                // Find the max position of the name field for alignment.
-                // Each binding_rest looks like: `@binding(N) uniform/storage(...) name : Type`
-                // We want to align the `name : Type` part.
                 let child_indent = format!("{}{}", indent_str, " ".repeat(config.indent_width));
 
-                // Align the binding lines: find the longest prefix before ` name : `
-                // by locating the address space keyword end position.
-                let mut binding_parts: Vec<(&str, &str, &str)> = Vec::new(); // (before_name, name, after_name)
+                let mut binding_parts: Vec<(&str, &str, &str)> = Vec::new();
                 for &(_, _, rest, _) in &group {
                     if let Some((before, name, after)) = split_binding_at_name(rest) {
                         binding_parts.push((before, name, after));
@@ -691,34 +687,51 @@ fn collapse_binding_group_blocks(output: &mut String, config: &FormatConfig) {
                     }
                 }
 
-                // Find max length of prefix (before name) and name for alignment
-                let max_prefix = binding_parts.iter().map(|(b, _, _)| b.len()).max().unwrap_or(0);
-                let max_name = binding_parts.iter().map(|(_, n, _)| n.len()).max().unwrap_or(0);
+                emit_aligned_bindings(&binding_parts, &child_indent, &mut result);
+                i = j;
+            } else {
+                result.push(lines[i].to_string());
+                i += 1;
+            }
+        }
+        // Case 2: existing group block header — `@group(N)` on its own line
+        else if let Some((header_indent, _group_val)) = parse_group_header_line(lines[i]) {
+            let expected_child_indent = header_indent + config.indent_width;
+            result.push(lines[i].to_string());
+            i += 1;
 
-                for (before, name, after) in &binding_parts {
-                    if name.is_empty() {
-                        // Couldn't parse — emit as-is
-                        result.push(format!("{}{}", child_indent, before));
+            // Collect indented @binding children
+            let mut children: Vec<(usize, &str)> = Vec::new(); // (line_index, binding_rest)
+            while i < lines.len() {
+                if let Some((child_indent, rest)) = parse_child_binding_line(lines[i]) {
+                    if child_indent >= expected_child_indent {
+                        children.push((i, rest));
+                        i += 1;
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            if children.len() > 1 {
+                let child_indent_str =
+                    format!("{}{}", " ".repeat(header_indent), " ".repeat(config.indent_width));
+
+                let mut binding_parts: Vec<(&str, &str, &str)> = Vec::new();
+                for &(_, rest) in &children {
+                    if let Some((before, name, after)) = split_binding_at_name(rest) {
+                        binding_parts.push((before, name, after));
                     } else {
-                        let prefix_pad = max_prefix - before.len();
-                        let name_pad = max_name - name.len();
-                        result.push(format!(
-                            "{}{}{}{}{}{}",
-                            child_indent,
-                            before,
-                            " ".repeat(prefix_pad),
-                            name,
-                            " ".repeat(name_pad),
-                            after
-                        ));
+                        binding_parts.push((rest, "", ""));
                     }
                 }
 
-                i = j;
+                emit_aligned_bindings(&binding_parts, &child_indent_str, &mut result);
             } else {
-                // Single binding in group — leave as flat
-                result.push(lines[i].to_string());
-                i += 1;
+                // Single child — emit as-is
+                for &(idx, _) in &children {
+                    result.push(lines[idx].to_string());
+                }
             }
         } else {
             result.push(lines[i].to_string());
@@ -727,6 +740,84 @@ fn collapse_binding_group_blocks(output: &mut String, config: &FormatConfig) {
     }
 
     *output = result.join("\n");
+}
+
+/// Emit aligned binding lines given parsed `(prefix, name, suffix)` parts.
+/// The prefix is the canonical keyword portion (no trailing space); we add
+/// padding between prefix and name so that names align, then pad after names
+/// so that the `: Type` portion aligns. A single space is inserted before
+/// the suffix (which starts with `:`).
+fn emit_aligned_bindings(
+    binding_parts: &[(&str, &str, &str)],
+    child_indent: &str,
+    result: &mut Vec<String>,
+) {
+    let max_prefix = binding_parts.iter().map(|(b, _, _)| b.len()).max().unwrap_or(0);
+    let max_name = binding_parts.iter().map(|(_, n, _)| n.len()).max().unwrap_or(0);
+
+    for (before, name, after) in binding_parts {
+        if name.is_empty() {
+            result.push(format!("{}{}", child_indent, before));
+        } else {
+            // +1 ensures at least one space between the prefix and name
+            let prefix_pad = max_prefix - before.len() + 1;
+            // +1 ensures at least one space between name and `: Type`
+            let name_pad = max_name - name.len() + 1;
+            result.push(format!(
+                "{}{}{}{}{}{}",
+                child_indent,
+                before,
+                " ".repeat(prefix_pad),
+                name,
+                " ".repeat(name_pad),
+                after
+            ));
+        }
+    }
+}
+
+/// Parse a standalone group header line: `<indent>@group(N)` with nothing after it.
+/// Returns `(indent_len, group_value_str)`.
+fn parse_group_header_line(line: &str) -> Option<(usize, &str)> {
+    let bytes = line.as_bytes();
+    let indent = bytes.iter().take_while(|&&b| b == b' ' || b == b'\t').count();
+    let trimmed = line[indent..].trim_end();
+
+    if !trimmed.starts_with("@group(") {
+        return None;
+    }
+    let after_open = &trimmed[7..];
+    let close = after_open.find(')')?;
+    let group_val = &after_open[..close];
+    // Must be ONLY `@group(N)` — nothing else on the line
+    let remainder = after_open[close + 1..].trim();
+    if !remainder.is_empty() {
+        return None;
+    }
+    Some((indent, group_val))
+}
+
+/// Parse an indented child binding line: `<indent>@binding(N) uniform/storage ...`
+/// Returns `(indent_len, rest_from_at_binding)`.
+fn parse_child_binding_line(line: &str) -> Option<(usize, &str)> {
+    let bytes = line.as_bytes();
+    let indent = bytes.iter().take_while(|&&b| b == b' ' || b == b'\t').count();
+    if indent == 0 {
+        return None;
+    }
+    let trimmed = &line[indent..];
+    if !trimmed.starts_with("@binding(") {
+        return None;
+    }
+    // Verify it has uniform/storage after @binding(N)
+    let after_open = &trimmed[9..];
+    let close = after_open.find(')')?;
+    let after_binding = after_open[close + 1..].trim_start();
+    if after_binding.starts_with("uniform") || after_binding.starts_with("storage") {
+        Some((indent, trimmed))
+    } else {
+        None
+    }
 }
 
 /// Try to parse a line as a flat binding declaration.
@@ -763,36 +854,51 @@ fn parse_binding_line(line: &str) -> Option<(usize, &str, &str)> {
 }
 
 /// Split a binding rest string (`@binding(N) uniform name : Type`) at the name boundary.
-/// Returns `(prefix_with_space_kw, name, colon_and_type)`.
+/// Returns `(canonical_prefix, name, normalized_suffix)`.
+/// - `canonical_prefix`: everything up to and including the keyword (no trailing spaces)
+/// - `name`: the binding name
+/// - `normalized_suffix`: ` : Type...` with exactly one space before `:` (strips alignment padding)
 fn split_binding_at_name(rest: &str) -> Option<(&str, &str, &str)> {
-    // Find "uniform " or "storage" keyword, then the name after it
-    let kw_end;
-    if let Some(pos) = rest.find("uniform ") {
-        kw_end = pos + "uniform ".len();
+    // Find "uniform" or "storage" keyword end, then skip to the name
+    let kw_end; // byte offset right after the keyword (and any parens for storage(...))
+    if let Some(pos) = rest.find("uniform") {
+        kw_end = pos + "uniform".len();
     } else if let Some(pos) = rest.find("storage(") {
         // storage(read_write) or similar
         let paren_close = rest[pos..].find(')').map(|p| pos + p + 1)?;
-        // Skip whitespace after )
-        let after = &rest[paren_close..];
-        let ws = after.len() - after.trim_start().len();
-        kw_end = paren_close + ws;
-    } else if let Some(pos) = rest.find("storage ") {
-        kw_end = pos + "storage ".len();
+        kw_end = paren_close;
+    } else if let Some(pos) = rest.find("storage") {
+        kw_end = pos + "storage".len();
     } else {
         return None;
     }
 
+    // The canonical prefix is everything up to and including the keyword (no trailing spaces).
     let prefix = &rest[..kw_end];
-    let name_and_rest = &rest[kw_end..];
+
+    // Skip any whitespace between keyword and name
+    let after_kw = &rest[kw_end..];
+    let trimmed_after_kw = after_kw.trim_start();
+    if trimmed_after_kw.is_empty() {
+        return None;
+    }
 
     // Find where the name ends (at whitespace or `:`)
-    let name_end = name_and_rest
+    let name_end = trimmed_after_kw
         .find(|c: char| c == ' ' || c == ':' || c == '\t')
-        .unwrap_or(name_and_rest.len());
-    let name = &name_and_rest[..name_end];
-    let after = &name_and_rest[name_end..];
+        .unwrap_or(trimmed_after_kw.len());
+    let name = &trimmed_after_kw[..name_end];
 
-    Some((prefix, name, after))
+    // Normalize suffix: strip leading whitespace, find `: Type...` portion
+    let raw_after = &trimmed_after_kw[name_end..];
+    let trimmed_after = raw_after.trim_start();
+    // Return the suffix starting from `:` — emit_aligned_bindings adds padding before it
+    if trimmed_after.starts_with(':') {
+        Some((prefix, name, trimmed_after))
+    } else {
+        // No colon found — return raw
+        Some((prefix, name, raw_after))
+    }
 }
 
 #[cfg(test)]

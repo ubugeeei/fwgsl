@@ -15,3 +15,4 @@ fwgsl_wgsl_codegen = { workspace = true }
 fwgsl_diagnostics = { workspace = true }
 fwgsl_span = { workspace = true }
 fwgsl_syntax = { workspace = true }
+naga = { workspace = true }

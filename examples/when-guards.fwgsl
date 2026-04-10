@@ -62,7 +62,7 @@ absValue x = match x
 -- The wildcard arm with a guard fires only when the condition holds.
 colorWeight : Color -> F32 -> F32
 colorWeight c brightness = match c
-  | Red   when brightness > 0.5 -> 1.0
+  | Red when brightness > 0.5 -> 1.0
   | Red                         -> 0.5
   | Green when brightness > 0.5 -> 0.8
   | Green                       -> 0.4

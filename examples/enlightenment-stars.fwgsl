@@ -7,10 +7,10 @@ alias Color4 = Vec<4, F32>
 data Phase = Phase F32
 
 data FrameParams = FrameParams {
-  time : F32,
+  time       : F32,
   resolution : Vec<2, F32>,
-  tint : Vec<4, F32>,
-  basis : Mat<3, 3, F32>,
+  tint       : Vec<4, F32>,
+  basis      : Mat<3, 3, F32>,
 }
 
 data Motif
