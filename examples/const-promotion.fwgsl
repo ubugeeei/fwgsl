@@ -1,0 +1,54 @@
+-- const-promotion.fwgsl — Zero-parameter functions are automatically promoted to WGSL constants.
+--
+-- In fwgsl, a function with no parameters whose body is a const-evaluable
+-- expression is emitted as `const name: type = expr;` instead of a function.
+-- This produces leaner, more idiomatic WGSL.
+
+-- Simple literal values — promoted to `const`
+maxLights : I32
+maxLights = 64
+
+tileSize : U32
+tileSize = 16u
+
+pi : F32
+pi = 3.14159
+
+halfPi : F32
+halfPi = pi / 2.0
+
+-- Arithmetic on literals — still const-evaluable
+verticesPerQuad : I32
+verticesPerQuad = 6
+
+verticesPerInstance : I32
+verticesPerInstance = verticesPerQuad * 4
+
+-- Negation — const-evaluable
+minBound : I32
+minBound = -100
+
+-- Comparison — const-evaluable
+alwaysTrue : Bool
+alwaysTrue = 1 == 1
+
+-- A function WITH parameters stays a function (not promoted)
+clampToMax : I32 -> I32
+clampToMax x = if x > maxLights then maxLights else x
+
+-- Entry point that uses both promoted constants and regular functions
+extern resource results : Storage<ReadWrite, Array<Vec<4, F32>>> @group 0 @binding 0
+
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+main : ComputeInput -> ()
+@compute @workgroup_size(64, 1, 1)
+main input =
+  let idx    = toU32 input.gid.x
+      lights = clampToMax (toI32 idx + minBound)
+      tile   = toF32 tileSize
+      flag   = if alwaysTrue then 1.0 else 0.0
+      result = vec4 (toF32 lights + tile) pi halfPi (toF32 verticesPerInstance + flag)
+  in writeAt results idx result

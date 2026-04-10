@@ -517,19 +517,45 @@ pub fn lower_hir_to_mir(hir: &HirProgram) -> Result<MirProgram, Vec<String>> {
         }
     }
 
-    // Lower constants
+    // Lower explicit constants
     let mut constants = Vec::new();
+    let mut known_consts: HashSet<String> = HashSet::new();
     for c in &hir.constants {
         let mir_ty = ty_to_mir_type_with_ctx(&c.ty, Some(&ctx)).unwrap_or(MirType::I32);
         match lower_hir_expr(&c.value, &ctx) {
-            Ok(mir_expr) => constants.push(MirConst {
-                name: c.name.clone(),
-                ty: mir_ty,
-                value: mir_expr,
-            }),
+            Ok(mir_expr) => {
+                known_consts.insert(c.name.clone());
+                constants.push(MirConst {
+                    name: c.name.clone(),
+                    ty: mir_ty,
+                    value: mir_expr,
+                });
+            }
             Err(e) => errors.push(e),
         }
     }
+
+    // Promote zero-param functions with const-evaluable bodies to constants.
+    // This turns `maxLights = 64` into `const maxLights: i32 = 64i;` instead
+    // of `fn maxLights() -> i32 { return 64i; }`.
+    let mut promoted_functions = Vec::new();
+    for f in functions.drain(..) {
+        if f.params.is_empty()
+            && f.body.is_empty()
+            && f.return_ty != MirType::Unit
+            && f.return_expr.as_ref().is_some_and(|e| is_const_expr(e, &known_consts))
+        {
+            known_consts.insert(f.name.clone());
+            constants.push(MirConst {
+                name: f.name,
+                ty: f.return_ty,
+                value: f.return_expr.unwrap(),
+            });
+        } else {
+            promoted_functions.push(f);
+        }
+    }
+    let functions = promoted_functions;
 
     if errors.is_empty() {
         Ok(MirProgram {
@@ -1881,6 +1907,54 @@ fn default_expr_for_type(ty: &MirType) -> MirExpr {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Const-expression analysis for zero-param function promotion
+// ---------------------------------------------------------------------------
+
+/// WGSL built-in functions that are const-evaluable (can appear in `const` declarations).
+/// See WGSL spec §16.1 "Const-expressions".
+fn is_wgsl_const_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        // Type constructors
+        "vec2" | "vec3" | "vec4"
+        | "mat2x2" | "mat2x3" | "mat2x4"
+        | "mat3x2" | "mat3x3" | "mat3x4"
+        | "mat4x2" | "mat4x3" | "mat4x4"
+        | "array"
+        // Numeric builtins
+        | "abs" | "clamp" | "max" | "min" | "sign"
+        | "countLeadingZeros" | "countOneBits" | "countTrailingZeros"
+        | "extractBits" | "firstLeadingBit" | "firstTrailingBit"
+        | "insertBits" | "reverseBits"
+        // Logical
+        | "all" | "any" | "select"
+    )
+}
+
+/// Check whether a MIR expression is a valid WGSL const-expression.
+///
+/// `known_consts` contains names of other module-level constants that have
+/// already been emitted (or will be emitted) as `const` declarations.
+fn is_const_expr(expr: &MirExpr, known_consts: &HashSet<String>) -> bool {
+    match expr {
+        MirExpr::Lit(_) => true,
+        MirExpr::Var(name, _) => known_consts.contains(name.as_str()),
+        MirExpr::BinOp(_, lhs, rhs, _) => {
+            is_const_expr(lhs, known_consts) && is_const_expr(rhs, known_consts)
+        }
+        MirExpr::UnaryOp(_, operand, _) => is_const_expr(operand, known_consts),
+        MirExpr::Cast(inner, _) => is_const_expr(inner, known_consts),
+        MirExpr::Call(name, args, _) => {
+            is_wgsl_const_builtin(name) && args.iter().all(|a| is_const_expr(a, known_consts))
+        }
+        // Struct construction, field access, index — not const-evaluable in WGSL
+        MirExpr::ConstructStruct(_, _)
+        | MirExpr::FieldAccess(_, _, _)
+        | MirExpr::Index(_, _, _) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2040,5 +2114,175 @@ mod tests {
         let f = &mir.functions[0];
         // Should have a let statement for x
         assert!(!f.body.is_empty());
+    }
+
+    #[test]
+    fn test_zero_param_literal_promoted_to_const() {
+        // maxLights = 64  →  should become `const maxLights: i32 = 64i;`
+        let hir = HirProgram {
+            functions: vec![HirFunction {
+                name: "maxLights".into(),
+                params: vec![],
+                return_ty: Ty::i32(),
+                body: HirExpr::Lit(HirLit::Int(64), Ty::i32(), span()),
+                span: span(),
+                comments: vec![],
+            }],
+            data_types: vec![],
+            entry_points: vec![],
+            resources: vec![],
+            bitfields: vec![],
+            constants: vec![],
+        };
+
+        let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
+        assert_eq!(mir.functions.len(), 0, "zero-param literal function should be promoted");
+        assert_eq!(mir.constants.len(), 1);
+        assert_eq!(mir.constants[0].name, "maxLights");
+        assert_eq!(mir.constants[0].ty, MirType::I32);
+        assert_eq!(mir.constants[0].value, MirExpr::Lit(MirLit::I32(64)));
+    }
+
+    #[test]
+    fn test_zero_param_arithmetic_promoted_to_const() {
+        // stride = 4 * 3  →  should become `const stride: i32 = (4i * 3i);`
+        let hir = HirProgram {
+            functions: vec![HirFunction {
+                name: "stride".into(),
+                params: vec![],
+                return_ty: Ty::i32(),
+                body: HirExpr::BinOp(
+                    BinOp::Add,
+                    Box::new(HirExpr::Lit(HirLit::Int(4), Ty::i32(), span())),
+                    Box::new(HirExpr::Lit(HirLit::Int(3), Ty::i32(), span())),
+                    Ty::i32(),
+                    span(),
+                ),
+                span: span(),
+                comments: vec![],
+            }],
+            data_types: vec![],
+            entry_points: vec![],
+            resources: vec![],
+            bitfields: vec![],
+            constants: vec![],
+        };
+
+        let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
+        assert_eq!(mir.functions.len(), 0, "zero-param arithmetic function should be promoted");
+        assert_eq!(mir.constants.len(), 1);
+        assert_eq!(mir.constants[0].name, "stride");
+    }
+
+    #[test]
+    fn test_zero_param_with_let_body_not_promoted() {
+        // f = let x = 42 in x + 1  →  should stay as function (has statements)
+        let hir = HirProgram {
+            functions: vec![HirFunction {
+                name: "f".into(),
+                params: vec![],
+                return_ty: Ty::i32(),
+                body: HirExpr::Let(
+                    vec![("x".into(), HirExpr::Lit(HirLit::Int(42), Ty::i32(), span()))],
+                    Box::new(HirExpr::BinOp(
+                        BinOp::Add,
+                        Box::new(HirExpr::Var("x".into(), Ty::i32(), span())),
+                        Box::new(HirExpr::Lit(HirLit::Int(1), Ty::i32(), span())),
+                        Ty::i32(),
+                        span(),
+                    )),
+                    Ty::i32(),
+                    span(),
+                ),
+                span: span(),
+                comments: vec![],
+            }],
+            data_types: vec![],
+            entry_points: vec![],
+            resources: vec![],
+            bitfields: vec![],
+            constants: vec![],
+        };
+
+        let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
+        assert_eq!(mir.functions.len(), 1, "let-body function should NOT be promoted");
+        assert_eq!(mir.constants.len(), 0);
+    }
+
+    #[test]
+    fn test_function_with_params_not_promoted() {
+        // f x = x  →  should stay as function
+        let hir = HirProgram {
+            functions: vec![HirFunction {
+                name: "f".into(),
+                params: vec![("x".into(), Ty::i32())],
+                return_ty: Ty::i32(),
+                body: HirExpr::Var("x".into(), Ty::i32(), span()),
+                span: span(),
+                comments: vec![],
+            }],
+            data_types: vec![],
+            entry_points: vec![],
+            resources: vec![],
+            bitfields: vec![],
+            constants: vec![],
+        };
+
+        let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
+        assert_eq!(mir.functions.len(), 1, "function with params should NOT be promoted");
+        assert_eq!(mir.constants.len(), 0);
+    }
+
+    #[test]
+    fn test_zero_param_negation_promoted_to_const() {
+        // neg1 = -1  →  should become `const neg1: i32 = -(1i);`
+        let hir = HirProgram {
+            functions: vec![HirFunction {
+                name: "neg1".into(),
+                params: vec![],
+                return_ty: Ty::i32(),
+                body: HirExpr::UnaryNeg(
+                    Box::new(HirExpr::Lit(HirLit::Int(1), Ty::i32(), span())),
+                    Ty::i32(),
+                    span(),
+                ),
+                span: span(),
+                comments: vec![],
+            }],
+            data_types: vec![],
+            entry_points: vec![],
+            resources: vec![],
+            bitfields: vec![],
+            constants: vec![],
+        };
+
+        let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
+        assert_eq!(mir.functions.len(), 0, "zero-param negation should be promoted");
+        assert_eq!(mir.constants.len(), 1);
+        assert_eq!(mir.constants[0].name, "neg1");
+    }
+
+    #[test]
+    fn test_zero_param_unit_return_not_promoted() {
+        // sideEffect = ()  →  should stay as function (Unit return type)
+        let hir = HirProgram {
+            functions: vec![HirFunction {
+                name: "sideEffect".into(),
+                params: vec![],
+                return_ty: Ty::unit(),
+                body: HirExpr::Lit(HirLit::Int(0), Ty::unit(), span()),
+                span: span(),
+                comments: vec![],
+            }],
+            data_types: vec![],
+            entry_points: vec![],
+            resources: vec![],
+            bitfields: vec![],
+            constants: vec![],
+        };
+
+        let mir = lower_hir_to_mir(&hir).expect("lowering should succeed");
+        assert_eq!(mir.functions.len(), 1, "Unit-returning function should NOT be promoted");
+        assert_eq!(mir.constants.len(), 0);
     }
 }

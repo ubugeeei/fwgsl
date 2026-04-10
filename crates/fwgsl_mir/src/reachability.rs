@@ -116,8 +116,8 @@ pub fn filter_reachable(program: &MirProgram, reachable: &ReachableSet) -> MirPr
 
 /// Compute reachable declarations in library mode (no entry points).
 ///
-/// Seeds reachability from ALL functions, keeping all functions but only
-/// structs/globals/constants that those functions actually reference.
+/// Seeds reachability from ALL functions and ALL constants, keeping all
+/// functions and constants but only structs/globals that they actually reference.
 pub fn compute_reachable_library(program: &MirProgram) -> ReachableSet {
     let mut reachable = ReachableSet::default();
 
@@ -132,13 +132,12 @@ pub fn compute_reachable_library(program: &MirProgram) -> ReachableSet {
         }
     }
 
-    // Constants can reference other things too
-    let reachable_consts: Vec<String> = reachable.constants.iter().cloned().collect();
-    for name in reachable_consts {
-        if let Some(c) = program.constants.iter().find(|c| c.name == name) {
-            walk_type(&c.ty, &mut reachable);
-            walk_expr(&c.value, &mut reachable);
-        }
+    // Seed: keep all constants in library mode (they may have been promoted
+    // from zero-param functions and are part of the module's public API).
+    for c in &program.constants {
+        reachable.constants.insert(c.name.clone());
+        walk_type(&c.ty, &mut reachable);
+        walk_expr(&c.value, &mut reachable);
     }
 
     // Transitively resolve struct dependencies
@@ -164,8 +163,8 @@ pub fn compute_reachable_library(program: &MirProgram) -> ReachableSet {
     reachable
 }
 
-/// Filter a MIR program in library mode: keep all functions, but only
-/// reachable structs/globals/constants.
+/// Filter a MIR program in library mode: keep all functions and constants,
+/// but only reachable structs/globals.
 pub fn filter_reachable_library(program: &MirProgram, reachable: &ReachableSet) -> MirProgram {
     MirProgram {
         structs: program
@@ -182,12 +181,7 @@ pub fn filter_reachable_library(program: &MirProgram, reachable: &ReachableSet) 
             .collect(),
         functions: program.functions.clone(), // keep all functions in library mode
         entry_points: program.entry_points.clone(),
-        constants: program
-            .constants
-            .iter()
-            .filter(|c| reachable.constants.contains(&c.name))
-            .cloned()
-            .collect(),
+        constants: program.constants.clone(), // keep all constants in library mode
     }
 }
 

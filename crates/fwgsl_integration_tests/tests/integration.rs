@@ -2273,3 +2273,160 @@ main idx =
         assert!(wgsl.contains("0u |"), "WGSL should start accumulator from 0u, got: {}", wgsl);
     }
 }
+
+// =========================================================================
+// 11. Zero-param function to const promotion
+// =========================================================================
+
+mod const_promotion_tests {
+    use super::*;
+
+    fn compile_to_wgsl(source: &str) -> Result<String, String> {
+        let mut parser = Parser::new(source);
+        let mut program = parser.parse_program();
+
+        if parser.diagnostics().has_errors() {
+            return Err("parse error".into());
+        }
+
+        with_prelude(&mut program);
+
+        let mut sa = SemanticAnalyzer::new();
+        sa.analyze(&program);
+
+        if sa.has_errors() {
+            return Err("semantic error".into());
+        }
+
+        let mut lowering = AstLowering::new(&sa);
+        let hir = lowering.lower_program(&program);
+
+        if lowering.has_errors() {
+            return Err("HIR lowering error".into());
+        }
+
+        let mir = fwgsl_mir::lower::lower_hir_to_mir(&hir).map_err(|e| e.join(", "))?;
+        let mir = fwgsl_mir::reachability::eliminate_dead_code(&mir);
+
+        Ok(fwgsl_wgsl_codegen::emit_wgsl(&mir))
+    }
+
+    #[test]
+    fn zero_param_literal_becomes_const() {
+        let source = "maxLights : I32\nmaxLights = 64";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("const maxLights: i32 = 64i;"),
+            "should emit const declaration, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("fn maxLights"),
+            "should NOT emit function declaration, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn zero_param_float_literal_becomes_const() {
+        let source = "pi : F32\npi = 3.14159";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("const pi: f32 ="),
+            "should emit const for float literal, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("fn pi"),
+            "should NOT emit function, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn zero_param_arithmetic_becomes_const() {
+        let source = "stride : I32\nstride = 4 + 3";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("const stride: i32 ="),
+            "should emit const for arithmetic, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("fn stride"),
+            "should NOT emit function, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn function_with_params_stays_function() {
+        let source = "double : I32 -> I32\ndouble x = x * 2";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("fn double("),
+            "function with params should stay a function, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn zero_param_negation_becomes_const() {
+        let source = "neg1 : I32\nneg1 = -1";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("const neg1: i32 ="),
+            "negation should be promoted to const, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn zero_param_bool_expr_becomes_const() {
+        let source = "enabled : Bool\nenabled = 1 == 1";
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("const enabled: bool ="),
+            "bool expression should be promoted to const, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("fn enabled"),
+            "should NOT emit function, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn const_used_in_entry_point() {
+        // Ensure promoted constants are usable from entry points and produce valid WGSL
+        let source = r#"
+extern resource results : Storage<ReadWrite, Array<Vec<4, F32>>> @group 0 @binding 0
+
+data ComputeInput = ComputeInput {
+  @builtin(global_invocation_id) gid : Vec<3, U32>
+}
+
+maxLights : I32
+maxLights = 64
+
+main : ComputeInput -> ()
+@compute @workgroup_size(64, 1, 1)
+main input =
+  let idx = toU32 input.gid.x
+      result = vec4 (toF32 maxLights) 0.0 0.0 1.0
+  in writeAt results idx result
+"#;
+        let wgsl = compile_to_wgsl(source).expect("should compile");
+        assert!(
+            wgsl.contains("const maxLights: i32 = 64i;"),
+            "should emit const declaration, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("fn maxLights"),
+            "should NOT emit function, got: {}",
+            wgsl
+        );
+    }
+}

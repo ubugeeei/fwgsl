@@ -1124,17 +1124,21 @@ pub fn build_references(
 
 fn build_ide_state(source: &str) -> IdeState<'_> {
     let mut parser = Parser::new(source);
-    let mut program = parser.parse_program();
+    let user_program = parser.parse_program();
 
-    // Prepend prelude declarations for type environment
+    // Prepend prelude declarations for type environment (semantic analysis only)
     let prelude = fwgsl_parser::prelude_program();
     let mut combined = prelude.decls.clone();
-    combined.append(&mut program.decls);
-    program.decls = combined;
+    combined.extend(user_program.decls.iter().cloned());
+    let full_program = Program { decls: combined };
 
     let mut analyzer = SemanticAnalyzer::new();
-    analyzer.analyze(&program);
-    let index = IndexBuilder::new(source).build(&program);
+    analyzer.analyze(&full_program);
+
+    // Build the document index from user declarations only — prelude spans
+    // don't correspond to positions in the user's source and would cause
+    // symbol_at_offset to return wrong results.
+    let index = IndexBuilder::new(source).build(&user_program);
 
     IdeState {
         source,
@@ -1560,5 +1564,62 @@ mod tests {
         assert_eq!(references[1].range.start.line, 1);
         assert_eq!(references[2].range.start.line, 2);
         assert_eq!(references[3].range.start.line, 2);
+    }
+
+    #[test]
+    fn goto_definition_for_function_ref_in_let_body() {
+        let source = r#"data Particle = Particle {
+  x  : F32,
+  y  : F32,
+  vx : F32,
+  vy : F32,
+}
+
+applyVelocity : F32 -> Particle -> Particle
+applyVelocity dt p = p { x = p.x + p.vx * dt, y = p.y + p.vy * dt }
+
+nudgeX : F32 -> Particle -> Particle
+nudgeX dx p = p { x = p.x + dx }
+
+step : F32 -> F32 -> Particle -> Particle
+step dt dx p =
+  let p2 = applyVelocity dt p
+  in nudgeX dx p2"#;
+        let uri = Url::parse("file:///test.fwgsl").unwrap();
+        // line 15 (0-indexed): "  let p2 = applyVelocity dt p"
+        let result = build_goto_definition(&uri, source, Position::new(15, 12));
+        assert!(result.is_some(), "goto-def for applyVelocity should return a result");
+        match result.unwrap() {
+            GotoDefinitionResponse::Array(locs) => {
+                assert!(locs.iter().any(|l| l.range.start.line == 7), "should include type sig line");
+                assert!(locs.iter().any(|l| l.range.start.line == 8), "should include fun decl line");
+            }
+            GotoDefinitionResponse::Scalar(loc) => {
+                assert!(
+                    loc.range.start.line == 7 || loc.range.start.line == 8,
+                    "expected line 7 or 8, got line {}",
+                    loc.range.start.line
+                );
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn goto_definition_for_constructor_in_match() {
+        let source = "data Color = Red | Green | Blue\n\ndescribe : Color -> I32\ndescribe c =\n  match c\n    | Red -> 1\n    | Green -> 2\n    | Blue -> 3";
+        let uri = Url::parse("file:///test.fwgsl").unwrap();
+        // line 5 (0-indexed): "    | Red -> 1", cursor on "Red" at col 6
+        let result = build_goto_definition(&uri, source, Position::new(5, 6));
+        assert!(result.is_some(), "goto-def for Red constructor in match should return a result");
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(loc) => {
+                assert_eq!(loc.range.start.line, 0, "Red should point to data decl line");
+            }
+            GotoDefinitionResponse::Array(locs) => {
+                assert!(locs.iter().any(|l| l.range.start.line == 0), "should include data decl line");
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
     }
 }
