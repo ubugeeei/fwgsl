@@ -14,10 +14,10 @@ bitfield MaterialFlags : U32 = {
 
 -- Per-object visibility / render state.
 bitfield ObjectFlags : U32 = {
-  visible     : 1,
-  castShadow  : 1,
-  layer       : 4,
-  stencilRef  : 8,
+  visible    : 1,
+  castShadow : 1,
+  layer      : 4,
+  stencilRef : 8,
 }
 
 -- Enum: blend mode selector (pure enum -> u32 tag)
