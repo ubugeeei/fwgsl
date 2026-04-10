@@ -636,7 +636,37 @@ sumTo n = loop go (acc = 0) (i = 0) in
 
 Compiles to WGSL `loop { ... break; }` with `var` bindings and `continue`.
 
-### 5.12 Record Construction
+### 5.12 Fold Over Range
+
+```
+foldRange start end init (\acc i -> body)
+```
+
+Folds a function over an integer range `[start, end)`, threading an accumulator. This is a compiler-recognized function (declared in the prelude) that desugars to an efficient WGSL `for`-style loop:
+
+```
+-- Sum integers 0..n
+sumTo : I32 -> I32
+sumTo n = foldRange 0 n 0 (\acc i -> acc + i)
+
+-- Accumulate 20 particles
+color = foldRange 0 20 (vec3 0.0 0.0 0.0) (\acc i ->
+  acc + particle uv (toF32 i) time aspect)
+```
+
+The function argument can also be a named top-level function:
+
+```
+addToAcc : I32 -> I32 -> I32
+addToAcc acc i = acc + i
+
+sumNamed : I32 -> I32
+sumNamed n = foldRange 0 n 0 addToAcc
+```
+
+Prelude signature: `foldRange : I32 -> I32 -> a -> (a -> I32 -> a) -> a`
+
+### 5.13 Record Construction
 
 ```
 Point { x = 1.0, y = 2.0 }
@@ -644,7 +674,7 @@ Point { x = 1.0, y = 2.0 }
 
 Named record construction. The type is determined by the constructor name (uppercase identifier before `{`).
 
-### 5.13 Record / Bitfield Functional Update
+### 5.14 Record / Bitfield Functional Update
 
 ```
 point { x = 3.0 }          -- copies point, overriding x
@@ -653,7 +683,7 @@ flags { capArrow = 1 }     -- bitfield update
 
 Postfix `{ field = expr, ... }` after an expression creates a copy with the specified fields overridden.
 
-### 5.14 Field Access
+### 5.15 Field Access
 
 ```
 point.x
@@ -664,7 +694,7 @@ Dot syntax for record field access. Also used for:
 - **Vec swizzle**: `v.xy`, `v.xyz`, `v.rgba`, `v.x`
 - **Method-call sugar**: `v.normalize` → `normalize v`
 
-### 5.15 Vec Swizzle
+### 5.16 Vec Swizzle
 
 Swizzle patterns use `xyzw` or `rgba` component names (1–4 characters):
 
@@ -679,7 +709,7 @@ The swizzle length determines the result type:
 - 1 component → scalar
 - 2+ components → vector of that length
 
-### 5.16 Method-Call Syntax Sugar
+### 5.17 Method-Call Syntax Sugar
 
 ```
 x.method y      -- desugars to: method x y
@@ -688,21 +718,21 @@ a.collapse      -- desugars to: collapse a
 
 Priority: **swizzle** > **method call** (if name is in scope) > **struct field access**.
 
-### 5.17 Index Access
+### 5.18 Index Access
 
 ```
 arr[i]
 buffer[toU32 idx]
 ```
 
-### 5.18 Vec Literals
+### 5.19 Vec Literals
 
 ```
 [1.0, 2.0, 3.0]    -- desugars to: vec3 1.0 2.0 3.0
 [x, y]              -- desugars to: vec2 x y
 ```
 
-### 5.19 Parenthesized Expressions
+### 5.20 Parenthesized Expressions
 
 ```
 (x + y)
@@ -1367,7 +1397,15 @@ extern shr  : a -> a -> a   -- shift right (>> works as infix with no space)
 
 Prefix bitwise NOT (`~x`) is a built-in prefix operator; no `extern` needed.
 
-### 14.7 Math Functions (Unary)
+### 14.7 Loop Combinators
+
+```
+extern foldRange : I32 -> I32 -> a -> (a -> I32 -> a) -> a
+```
+
+`foldRange start end init f` folds `f` over the integer range `[start, end)`, threading an accumulator. Compiles to an efficient WGSL `loop` with mutable variables.
+
+### 14.8 Math Functions (Unary)
 
 ```
 sin  cos  abs  fract  floor  sign  sqrt  log  log2  exp  ceil  round  trunc  negate
@@ -1375,7 +1413,7 @@ sin  cos  abs  fract  floor  sign  sqrt  log  log2  exp  ceil  round  trunc  neg
 
 All have type `a -> a`.
 
-### 14.7 Math Functions (Binary)
+### 14.9 Math Functions (Binary)
 
 ```
 max  min  step  mod  pow  reflect  atan  atan2
@@ -1383,7 +1421,7 @@ max  min  step  mod  pow  reflect  atan  atan2
 
 All have type `a -> a -> a`.
 
-### 14.8 Math Functions (Ternary)
+### 14.10 Math Functions (Ternary)
 
 ```
 clamp     : a -> a -> a -> a
@@ -1391,7 +1429,7 @@ mix       : a -> a -> b -> a
 smoothstep : a -> a -> b -> a
 ```
 
-### 14.9 Vector Operations
+### 14.11 Vector Operations
 
 ```
 normalize : Vec<n, a> -> Vec<n, a>
@@ -1402,14 +1440,14 @@ cross     : Vec<3, a> -> Vec<3, a> -> Vec<3, a>
 select    : a -> a -> Bool -> a
 ```
 
-### 14.10 Packing / Unpacking
+### 14.12 Packing / Unpacking
 
 ```
 unpack4x8unorm : U32 -> Vec<4, F32>
 pack4x8unorm   : Vec<4, F32> -> U32
 ```
 
-### 14.11 Vector Constructors
+### 14.13 Vector Constructors
 
 ```
 vec2 : a -> a -> Vec<2, a>
@@ -1420,7 +1458,7 @@ splat3 : a -> Vec<3, a>
 splat4 : a -> Vec<4, a>
 ```
 
-### 14.12 Fragment Shader Derivatives
+### 14.14 Fragment Shader Derivatives
 
 ```
 dpdx  dpdy  dpdxCoarse  dpdxFine  dpdyCoarse  dpdyFine  fwidth  fwidthCoarse  fwidthFine
@@ -1428,7 +1466,7 @@ dpdx  dpdy  dpdxCoarse  dpdxFine  dpdyCoarse  dpdyFine  fwidth  fwidthCoarse  fw
 
 All have type `a -> a`.
 
-### 14.13 Type Cast Builtins
+### 14.15 Type Cast Builtins
 
 | fwgsl | WGSL | Type |
 |-------|------|------|
@@ -1437,7 +1475,7 @@ All have type `a -> a`.
 | `toU32 x` | `u32(x)` | `a -> U32` |
 | `toBool x` | `bool(x)` | `a -> Bool` |
 
-### 14.14 Resource Operations
+### 14.16 Resource Operations
 
 | fwgsl | Behavior |
 |-------|----------|

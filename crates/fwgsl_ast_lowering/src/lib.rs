@@ -666,6 +666,12 @@ impl AstLowering {
             }
 
             Expr::App(func, arg, span) => {
+                // Desugar foldRange: foldRange start end init (\acc i -> body)
+                // → loop _fr (i = start) (acc = init) in if i >= end then acc else let acc = body in _fr (i + 1) acc
+                if let Some(result) = self.try_lower_fold_range(func, arg, *span, env) {
+                    return result;
+                }
+
                 // Beta-reduce: App(Lambda([p], body), arg) → Let([(p, arg)], body)
                 // Unwrap Paren wrappers to find the underlying Lambda
                 let unwrapped_func = {
@@ -1705,6 +1711,177 @@ impl AstLowering {
             HirExpr::BitfieldUpdate(type_name.to_string(), Box::new(hir_base), hir_fields, ty.clone(), span),
             ty,
         )
+    }
+
+    /// Try to desugar `foldRange start end init (\acc i -> body)` into a Loop.
+    /// Returns Some((hir_expr, ty)) if the pattern matches, None otherwise.
+    fn try_lower_fold_range(
+        &mut self,
+        func: &Expr,
+        arg: &Expr,
+        span: Span,
+        env: &mut TypeEnv,
+    ) -> Option<(HirExpr, Ty)> {
+        // Flatten: App(App(App(App(Var("foldRange"), start), end), init), lambda)
+        // The outermost App has func=App(App(App(Var("foldRange"), start), end), init), arg=lambda
+        // We need to peel 3 layers of App to find Var("foldRange") at the core.
+        let (f3, init) = match func {
+            Expr::App(f, a, _) => (f.as_ref(), a.as_ref()),
+            _ => return None,
+        };
+        let (f2, end_expr) = match f3 {
+            Expr::App(f, a, _) => (f.as_ref(), a.as_ref()),
+            _ => return None,
+        };
+        let (f1, start_expr) = match f2 {
+            Expr::App(f, a, _) => (f.as_ref(), a.as_ref()),
+            _ => return None,
+        };
+        // Unwrap parens around the function name
+        let mut head = f1;
+        while let Expr::Paren(inner, _) = head {
+            head = inner.as_ref();
+        }
+        match head {
+            Expr::Var(name, _) if name == "foldRange" => {}
+            _ => return None,
+        }
+
+        // arg must be a Lambda with exactly 2 params, or a named function
+        let mut lambda = arg;
+        while let Expr::Paren(inner, _) = lambda {
+            lambda = inner.as_ref();
+        }
+
+        // Extract acc/idx names from lambda, or use defaults for named function case
+        let (acc_name, idx_name, is_lambda) = match lambda {
+            Expr::Lambda(pats, _, _) if pats.len() == 2 => {
+                let an = match &pats[0] {
+                    Pat::Var(name, _) => name.clone(),
+                    _ => "_fold_acc".to_string(),
+                };
+                let in_ = match &pats[1] {
+                    Pat::Var(name, _) => name.clone(),
+                    _ => "_fold_i".to_string(),
+                };
+                (an, in_, true)
+            }
+            // Named function or other expression — we'll build App(App(f, acc), i)
+            _ => ("_fold_acc".to_string(), "_fold_i".to_string(), false),
+        };
+
+        // Lower start, end, init
+        let (hir_start, start_ty) = self.lower_expr(start_expr, env);
+        let (hir_end, end_ty) = self.lower_expr(end_expr, env);
+        let (hir_init, init_ty) = self.lower_expr(init, env);
+
+        // Unify start and end with I32
+        self.engine.unify(&start_ty, &Ty::i32(), span);
+        self.engine.unify(&end_ty, &Ty::i32(), span);
+
+        // Set up loop environment with acc and i bound
+        let mut loop_env = env.clone();
+        loop_env.insert(idx_name.clone(), Scheme::mono(Ty::i32()));
+        loop_env.insert(acc_name.clone(), Scheme::mono(init_ty.clone()));
+
+        // The result type is the accumulator type
+        let result_ty = init_ty.clone();
+
+        // Build the loop name function type: I32 -> acc_ty -> result_ty
+        let loop_name = "_foldRange".to_string();
+        let loop_fn_ty = Ty::arrow(Ty::i32(), Ty::arrow(init_ty.clone(), result_ty.clone()));
+        loop_env.insert(loop_name.clone(), Scheme::mono(loop_fn_ty));
+
+        // Lower the fold body in the loop environment
+        let (hir_body, body_ty) = if is_lambda {
+            // Lambda case: lower the lambda body directly (params already bound in loop_env)
+            let lambda_body = match lambda {
+                Expr::Lambda(_, body, _) => body.as_ref(),
+                _ => unreachable!(),
+            };
+            self.lower_expr(lambda_body, &mut loop_env)
+        } else {
+            // Named function case: lower as App(App(f, acc), i)
+            let (hir_f, f_ty) = self.lower_expr(lambda, &mut loop_env);
+            let ret1_ty = self.engine.fresh_var();
+            let expected_f = Ty::arrow(init_ty.clone(), Ty::arrow(Ty::i32(), ret1_ty.clone()));
+            self.engine.unify(&f_ty, &expected_f, span);
+            let app1 = HirExpr::App(
+                Box::new(hir_f),
+                Box::new(HirExpr::Var(acc_name.clone(), init_ty.clone(), span)),
+                Ty::arrow(Ty::i32(), ret1_ty.clone()),
+                span,
+            );
+            let app2 = HirExpr::App(
+                Box::new(app1),
+                Box::new(HirExpr::Var(idx_name.clone(), Ty::i32(), span)),
+                ret1_ty.clone(),
+                span,
+            );
+            (app2, ret1_ty)
+        };
+        self.engine.unify(&result_ty, &body_ty, span);
+
+        // Build: if i >= end then acc else _foldRange (i + 1) (body)
+        // Condition: i >= end
+        let cond = HirExpr::BinOp(
+            BinOp::Ge,
+            Box::new(HirExpr::Var(idx_name.clone(), Ty::i32(), span)),
+            Box::new(hir_end),
+            Ty::bool(),
+            span,
+        );
+
+        // Then branch: acc (return the accumulator)
+        let then_branch = HirExpr::Var(acc_name.clone(), init_ty.clone(), span);
+
+        // Else branch: _foldRange (i + 1) (body)
+        let i_plus_1 = HirExpr::BinOp(
+            BinOp::Add,
+            Box::new(HirExpr::Var(idx_name.clone(), Ty::i32(), span)),
+            Box::new(HirExpr::Lit(HirLit::Int(1), Ty::i32(), span)),
+            Ty::i32(),
+            span,
+        );
+        let loop_var = HirExpr::Var(
+            loop_name.clone(),
+            Ty::arrow(Ty::i32(), Ty::arrow(init_ty.clone(), result_ty.clone())),
+            span,
+        );
+        let app1 = HirExpr::App(
+            Box::new(loop_var),
+            Box::new(i_plus_1),
+            Ty::arrow(init_ty.clone(), result_ty.clone()),
+            span,
+        );
+        let else_branch = HirExpr::App(
+            Box::new(app1),
+            Box::new(hir_body),
+            result_ty.clone(),
+            span,
+        );
+
+        let loop_body = HirExpr::If(
+            Box::new(cond),
+            Box::new(then_branch),
+            Box::new(else_branch),
+            result_ty.clone(),
+            span,
+        );
+
+        // Build HirExpr::Loop
+        let hir_loop = HirExpr::Loop(
+            loop_name,
+            vec![
+                (idx_name, hir_start),
+                (acc_name, hir_init),
+            ],
+            Box::new(loop_body),
+            result_ty.clone(),
+            span,
+        );
+
+        Some((hir_loop, result_ty))
     }
 
     fn finalize_expr(&self, expr: HirExpr) -> HirExpr {

@@ -123,6 +123,10 @@ extern cross     : Vec<3, a> -> Vec<3, a> -> Vec<3, a>
 
 extern select : a -> a -> Bool -> a
 
+-- Loop combinators (compiler-recognized, emit WGSL for-loops)
+
+extern foldRange : I32 -> I32 -> a -> (a -> I32 -> a) -> a
+
 -- WGSL packing/unpacking
 
 extern unpack4x8unorm : U32 -> Vec<4, F32>
