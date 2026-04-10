@@ -316,13 +316,24 @@ impl<'a> FormatEngine<'a> {
             return;
         }
 
-        // No space after unary `-` or `!` when they appear as prefix operators.
-        // Detect prefix context: the `-` or `!` follows `(`, `=`, `let`, `in`,
+        // No space after unary `-`, `!`, or `~` when they appear as prefix operators.
+        // Detect prefix context: the operator follows `(`, `=`, `let`, `in`,
         // `then`, `else`, `->`, a comma, or is at statement start.
-        if (prev == Some(SyntaxKind::Minus) || prev == Some(SyntaxKind::Bang))
+        if (prev == Some(SyntaxKind::Minus)
+            || prev == Some(SyntaxKind::Bang)
+            || prev == Some(SyntaxKind::Tilde))
             && self.is_prev_unary_context()
         {
             return;
+        }
+
+        // No space between two adjacent `>` tokens that form `>>` (shift right).
+        // The lexer emits two separate `Greater` tokens; we detect adjacency
+        // via source byte offsets.
+        if kind == SyntaxKind::Greater && prev == Some(SyntaxKind::Greater) {
+            if self.are_prev_and_current_adjacent(next) {
+                return;
+            }
         }
 
         // Type parameter angle brackets: no space around `<`, `>`, or after `,`
@@ -429,6 +440,19 @@ impl<'a> FormatEngine<'a> {
             );
         }
         true
+    }
+
+    /// Check whether the previous non-trivia token and `next` are adjacent in source
+    /// (no whitespace between them). Used to detect `>>` as two glued `>` tokens.
+    fn are_prev_and_current_adjacent(&self, next: &Token) -> bool {
+        for i in (0..self.pos).rev() {
+            let k = self.tokens[i].kind;
+            if k.is_trivia() {
+                continue;
+            }
+            return self.tokens[i].span.end == next.span.start;
+        }
+        false
     }
 
     /// Look back at the last non-whitespace character to determine the previous token kind.
@@ -1237,5 +1261,33 @@ mod tests {
         let first = format_default(source);
         let second = format_default(&first);
         assert_eq!(first, second, "let binding alignment is not idempotent");
+    }
+
+    #[test]
+    fn format_bitwise_not_no_space() {
+        let source = "f x = ~x\n";
+        let result = format_default(source);
+        assert_eq!(result, "f x = ~x\n");
+    }
+
+    #[test]
+    fn format_bitwise_not_in_parens() {
+        let source = "f x m = (x & (~m))\n";
+        let result = format_default(source);
+        assert_eq!(result, "f x m = (x & (~m))\n");
+    }
+
+    #[test]
+    fn format_shift_right_no_space() {
+        let source = "f x y = x >> y\n";
+        let result = format_default(source);
+        assert_eq!(result, "f x y = x >> y\n");
+    }
+
+    #[test]
+    fn format_shift_right_in_parens() {
+        let source = "f v o m = (v >> o) & m\n";
+        let result = format_default(source);
+        assert_eq!(result, "f v o m = (v >> o) & m\n");
     }
 }
