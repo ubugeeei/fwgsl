@@ -201,7 +201,8 @@ impl<'a> IndexBuilder<'a> {
     }
 
     fn collect_top_level(&mut self, program: &Program, whole_file: Span) {
-        for decl in &program.decls {
+        let all_decls = Decl::flatten_cfg_decls(&program.decls);
+        for decl in &all_decls {
             match decl {
                 Decl::TypeSig { name, span, .. } => {
                     let name_span = self.first_name_span(name, *span).unwrap_or(*span);
@@ -406,8 +407,11 @@ impl<'a> IndexBuilder<'a> {
                     // Extern declarations are type-level only.
                     // No separate top-level symbols needed.
                 }
-                Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } | Decl::CfgDecl { .. } => {
-                    // Module/import/cfg declarations don't define symbols.
+                Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {
+                    // Module/import declarations don't define symbols.
+                }
+                Decl::CfgDecl { .. } => {
+                    // CfgDecl nodes are flattened above — unreachable here.
                 }
             }
         }
@@ -418,7 +422,8 @@ impl<'a> IndexBuilder<'a> {
         frames[0].value_defs = self.top_level_values.clone();
         frames[0].type_defs = self.top_level_types.clone();
 
-        for decl in &program.decls {
+        let all_decls = Decl::flatten_cfg_decls(&program.decls);
+        for decl in &all_decls {
             self.walk_decl(decl, &mut frames);
         }
     }
@@ -547,7 +552,10 @@ impl<'a> IndexBuilder<'a> {
             Decl::ExternDecl { ty, .. } => {
                 self.walk_type(ty, frames);
             }
-            Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } | Decl::CfgDecl { .. } => {}
+            Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {}
+            Decl::CfgDecl { .. } => {
+                // CfgDecl nodes are flattened by walk_program — unreachable here.
+            }
         }
     }
 

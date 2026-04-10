@@ -70,8 +70,13 @@ impl SemanticAnalyzer {
 
     /// Analyze a full program.
     pub fn analyze(&mut self, program: &Program) {
+        // Flatten CfgDecl nodes so we see declarations from both branches.
+        // This ensures the semantic analyzer registers names from all conditional
+        // compilation paths (the compiler narrows later via evaluate_features).
+        let all_decls = Decl::flatten_cfg_decls(&program.decls);
+
         // Pass 1: collect data types and constructors
-        for decl in &program.decls {
+        for decl in &all_decls {
             if let Decl::DataDecl {
                 name,
                 type_params,
@@ -85,7 +90,7 @@ impl SemanticAnalyzer {
         }
 
         // Pass 1b: collect type aliases (treated as synonyms for semantic purposes)
-        for decl in &program.decls {
+        for decl in &all_decls {
             if let Decl::TypeAlias { name, ty, .. } = decl {
                 let alias_ty = self.convert_syntax_type(ty);
                 // Store the expanded type for alias resolution during type conversion
@@ -99,7 +104,7 @@ impl SemanticAnalyzer {
         }
 
         // Pass 2: collect type signatures
-        for decl in &program.decls {
+        for decl in &all_decls {
             if let Decl::TypeSig { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type(ty);
                 // Flatten tuple args: (A, B) -> R becomes A -> B -> R
@@ -131,7 +136,7 @@ impl SemanticAnalyzer {
         }
 
         // Pass 2b: collect trait declarations
-        for decl in &program.decls {
+        for decl in &all_decls {
             if let Decl::TraitDecl {
                 name,
                 var,
@@ -164,7 +169,7 @@ impl SemanticAnalyzer {
         }
 
         // Pass 2c: collect impl declarations — generate mangled function names
-        for decl in &program.decls {
+        for decl in &all_decls {
             if let Decl::ImplDecl {
                 trait_name,
                 ty,
@@ -227,7 +232,7 @@ impl SemanticAnalyzer {
         }
 
         // Pass 3: type check function bodies
-        for decl in &program.decls {
+        for decl in &all_decls {
             match decl {
                 Decl::FunDecl {
                     name,
@@ -623,8 +628,8 @@ impl SemanticAnalyzer {
             Expr::Infix(lhs, op, rhs, span) => {
                 let op_ty = if let Some(scheme) = env.lookup(op) {
                     self.engine.instantiate(scheme)
-                } else if fwgsl_hir::BinOp::parse(op).is_some() {
-                    // Built-in operator not in prelude (e.g. `>>`) —
+                } else if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%" | "&" | "^" | "|" | "<<" | ">>") {
+                    // Built-in operator not declared in prelude (e.g. `>>`) —
                     // give it the generic type `a -> a -> a`
                     let a = self.engine.fresh_var();
                     Ty::arrow(a.clone(), Ty::arrow(a.clone(), a))

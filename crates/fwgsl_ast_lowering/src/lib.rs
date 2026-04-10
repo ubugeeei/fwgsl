@@ -56,8 +56,11 @@ impl AstLowering {
 
     /// Lower the entire program.
     pub fn lower_program(&mut self, program: &Program) -> HirProgram {
+        // Flatten CfgDecl nodes so we see declarations from both branches.
+        let all_decls = Decl::flatten_cfg_decls(&program.decls);
+
         // Pass 1: register data types (re-populate env with constructor types)
-        for decl in &program.decls {
+        for decl in &all_decls {
             if let Decl::DataDecl {
                 name,
                 type_params,
@@ -98,7 +101,7 @@ impl AstLowering {
         }
 
         // Pass 2: collect type signatures
-        for decl in &program.decls {
+        for decl in &all_decls {
             if let Decl::TypeSig { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type_scheme(ty);
                 let flattened = Scheme {
@@ -124,7 +127,7 @@ impl AstLowering {
         // Collect comments from TypeSig decls so they can be attached to the
         // corresponding FunDecl (type signatures don't produce output themselves).
         let mut sig_comments: HashMap<String, Vec<String>> = HashMap::new();
-        for decl in &program.decls {
+        for decl in &all_decls {
             if let Decl::TypeSig { name, comments, .. } = decl {
                 if !comments.is_empty() {
                     sig_comments.insert(name.clone(), comments.clone());
@@ -139,7 +142,7 @@ impl AstLowering {
         let mut bitfields = Vec::new();
         let mut constants = Vec::new();
 
-        for decl in &program.decls {
+        for decl in &all_decls {
             match decl {
                 Decl::FunDecl {
                     name,
@@ -273,8 +276,11 @@ impl AstLowering {
                     });
                 }
                 Decl::TypeSig { .. } | Decl::TypeAlias { .. } | Decl::ExternDecl { .. } => {}
-                Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } | Decl::CfgDecl { .. } => {
-                    // Module/import/cfg declarations are handled at the module resolution level.
+                Decl::ModuleDecl { .. } | Decl::ImportDecl { .. } => {
+                    // Module/import declarations are handled at the module resolution level.
+                }
+                Decl::CfgDecl { .. } => {
+                    // CfgDecl nodes are flattened by flatten_cfg_decls above — unreachable here.
                 }
                 Decl::TraitDecl { .. } => {
                     // Trait declarations are type-level only — no HIR output.

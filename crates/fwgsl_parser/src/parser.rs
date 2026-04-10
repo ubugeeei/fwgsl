@@ -65,6 +65,24 @@ impl Decl {
         }
     }
 
+    /// Recursively collect all declarations from a slice, flattening `CfgDecl`
+    /// nodes by including declarations from *both* branches. This is used by
+    /// the semantic analyzer, AST lowering, and IDE so they see all names
+    /// regardless of which feature flags are active.
+    pub fn flatten_cfg_decls(decls: &[Decl]) -> Vec<&Decl> {
+        let mut result = Vec::new();
+        for decl in decls {
+            match decl {
+                Decl::CfgDecl { then_decls, else_decls, .. } => {
+                    result.extend(Decl::flatten_cfg_decls(then_decls));
+                    result.extend(Decl::flatten_cfg_decls(else_decls));
+                }
+                _ => result.push(decl),
+            }
+        }
+        result
+    }
+
     /// Get the source span of this declaration.
     pub fn span(&self) -> Span {
         match self {
