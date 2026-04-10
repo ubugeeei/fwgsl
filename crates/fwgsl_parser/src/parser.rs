@@ -157,6 +157,7 @@ pub enum Decl {
     BitfieldDecl {
         name: String,
         base_ty: Type,
+        constructor_name: String,
         fields: Vec<BitfieldField>,
         span: Span,
         comments: Vec<String>,
@@ -276,18 +277,29 @@ pub struct ImplMethod {
     pub span: Span,
 }
 
+/// The type and bit-width specification for a bitfield field.
+///
+/// Supported forms:
+/// - `name : Type : N` — typed field with explicit bit width
+/// - `name : Bool`     — Bool is always 1 bit (width implicit)
+/// - `name : EnumType` — width inferred from enum variant count
+/// - `name : N`        — bare integer width, accessor returns base type (U32)
 #[derive(Debug, Clone)]
-pub enum BitfieldWidth {
-    /// An integer literal width (e.g. `field : 3`)
-    Literal(u32),
-    /// A type reference whose bit width is derived from the type (e.g. `field : CapStyle`)
-    TypeRef(String),
+pub enum BitfieldFieldKind {
+    /// Bare integer width (e.g. `selected : 1`). Accessor returns the base type.
+    Bare(u32),
+    /// Typed field with explicit width (e.g. `capStart : CapStyle : 2` or `roughness : U32 : 5`).
+    Typed { ty: String, width: u32 },
+    /// Bool field — always 1 bit (e.g. `visible : Bool`).
+    Bool,
+    /// Enum-typed field with width inferred from variant count (e.g. `capStart : CapStyle`).
+    EnumInferred(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct BitfieldField {
     pub name: String,
-    pub width: BitfieldWidth,
+    pub kind: BitfieldFieldKind,
     pub span: Span,
     /// Doc comments attached to this bitfield field.
     pub doc: Option<String>,
@@ -1778,10 +1790,14 @@ impl Parser {
         let base_ty = self.parse_type_atom();
         self.skip_trivia();
 
+        // `= ConstructorName`
         self.expect(SyntaxKind::Equals);
         self.skip_trivia();
+        let constructor_tok = self.expect(SyntaxKind::UpperIdent);
+        let constructor_name = self.text_of(&constructor_tok).to_owned();
+        self.skip_trivia();
 
-        // `{ field : width, ... }`
+        // `{ field : kind, ... }`
         self.expect(SyntaxKind::LBrace);
         let mut fields = Vec::new();
         loop {
@@ -1795,28 +1811,51 @@ impl Parser {
             self.skip_trivia();
             self.expect(SyntaxKind::Colon);
             self.skip_trivia();
-            // Width can be an integer literal or a type name (UpperIdent)
-            let width = if self.at(SyntaxKind::IntLiteral) {
+
+            // Parse field kind:
+            //   name : N              → Bare(N)
+            //   name : Bool           → Bool
+            //   name : Type : N       → Typed { ty, width }
+            //   name : Type           → EnumInferred(type_name)
+            let kind = if self.at(SyntaxKind::IntLiteral) {
+                // Bare integer width
                 let width_tok = self.bump();
-                BitfieldWidth::Literal(parse_int_literal(self.text_of(&width_tok)).max(0) as u32)
+                BitfieldFieldKind::Bare(
+                    parse_int_literal(self.text_of(&width_tok)).max(0) as u32,
+                )
             } else if self.at(SyntaxKind::UpperIdent) {
                 let type_tok = self.bump();
                 let type_name = self.text_of(&type_tok).to_owned();
-                // Handle Bool as 1-bit
+                self.skip_trivia();
                 if type_name == "Bool" {
-                    BitfieldWidth::Literal(1)
+                    // Bool — always 1 bit
+                    BitfieldFieldKind::Bool
+                } else if self.at(SyntaxKind::Colon) {
+                    // Typed field with explicit width: `Type : N`
+                    self.bump(); // consume ':'
+                    self.skip_trivia();
+                    let width_tok = self.expect(SyntaxKind::IntLiteral);
+                    let width =
+                        parse_int_literal(self.text_of(&width_tok)).max(0) as u32;
+                    BitfieldFieldKind::Typed {
+                        ty: type_name,
+                        width,
+                    }
                 } else {
-                    BitfieldWidth::TypeRef(type_name)
+                    // Enum-inferred width
+                    BitfieldFieldKind::EnumInferred(type_name)
                 }
             } else {
                 // Fallback: expect an int literal (will error)
                 let width_tok = self.expect(SyntaxKind::IntLiteral);
-                BitfieldWidth::Literal(parse_int_literal(self.text_of(&width_tok)).max(0) as u32)
+                BitfieldFieldKind::Bare(
+                    parse_int_literal(self.text_of(&width_tok)).max(0) as u32,
+                )
             };
             let field_span = self.span_from(field_start);
             fields.push(BitfieldField {
                 name: field_name,
-                width,
+                kind,
                 span: field_span,
                 doc: None,
             });
@@ -1831,6 +1870,7 @@ impl Parser {
         Decl::BitfieldDecl {
             name,
             base_ty,
+            constructor_name,
             fields,
             span,
             comments: vec![],

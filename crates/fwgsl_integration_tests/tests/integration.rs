@@ -2189,9 +2189,9 @@ impl Nonexistent F32 where
     #[test]
     fn bitfield_construction_produces_shift_or_chain() {
         let source = r#"
-bitfield Flags : U32 = {
-  layer   : 4,
-  stencil : 8,
+bitfield Flags : U32 = Flags {
+  layer   : U32 : 4,
+  stencil : U32 : 8,
 }
 
 makeFlags : I32 -> I32 -> Flags
@@ -2230,9 +2230,9 @@ makeFlags l s = Flags { layer = l, stencil = s }
     #[test]
     fn bitfield_construction_bool_field_uses_select() {
         let source = r#"
-bitfield Flags : U32 = {
-  visible : 1,
-  layer   : 4,
+bitfield Flags : U32 = Flags {
+  visible : Bool,
+  layer   : U32 : 4,
 }
 
 makeFlags : Bool -> I32 -> Flags
@@ -2250,10 +2250,10 @@ makeFlags v l = Flags { visible = v, layer = l }
     #[test]
     fn bitfield_functional_update_clears_and_sets_field() {
         let source = r#"
-bitfield Flags : U32 = {
-  visible : 1,
-  layer   : 4,
-  stencil : 8,
+bitfield Flags : U32 = Flags {
+  visible : Bool,
+  layer   : U32 : 4,
+  stencil : U32 : 8,
 }
 
 updateLayer : Flags -> I32 -> Flags
@@ -2281,7 +2281,7 @@ updateLayer f newLayer = f { layer = newLayer }
     #[test]
     fn bitfield_width_validation_error() {
         let source = r#"
-bitfield TooWide : U32 = {
+bitfield TooWide : U32 = TooWide {
   a : 16,
   b : 16,
   c : 1,
@@ -2306,9 +2306,9 @@ test x = x
     #[test]
     fn bitfield_construction_in_entry_point() {
         let source = r#"
-bitfield Flags : U32 = {
-  layer   : 4,
-  stencil : 8,
+bitfield Flags : U32 = Flags {
+  layer   : U32 : 4,
+  stencil : U32 : 8,
 }
 
 extern resource output : Storage<ReadWrite, Array<U32, 64>> @group 0 @binding 0

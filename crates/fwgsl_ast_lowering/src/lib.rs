@@ -221,11 +221,35 @@ impl AstLowering {
                     let hir_fields: Vec<fwgsl_hir::HirBitfieldField> = fields
                         .iter()
                         .map(|f| {
-                            let (width, enum_type) = match &f.width {
-                                BitfieldWidth::Literal(w) => (*w, None),
-                                BitfieldWidth::TypeRef(type_name) => {
+                            use fwgsl_parser::parser::BitfieldFieldKind;
+                            let (width, field_type) = match &f.kind {
+                                BitfieldFieldKind::Bare(w) => (*w, None),
+                                BitfieldFieldKind::Bool => (1, Some("Bool".to_string())),
+                                BitfieldFieldKind::Typed { ty, width } => {
+                                    // Validate width against type if it's an enum
+                                    if let Some(dt_info) = self.data_types.get(ty.as_str()) {
+                                        let count = dt_info.constructors.len() as u32;
+                                        let min_bits = if count <= 1 {
+                                            1
+                                        } else {
+                                            (count as f64).log2().ceil() as u32
+                                        };
+                                        if *width < min_bits {
+                                            self.engine.diagnostics.push(
+                                                fwgsl_diagnostics::Diagnostic::error(format!(
+                                                    "bitfield field '{}' needs at least {} bits for type '{}' ({} variants), but only {} specified",
+                                                    f.name, min_bits, ty, count, width
+                                                ))
+                                                .with_label(fwgsl_diagnostics::Label::primary(f.span, "insufficient bit width"))
+                                                .with_help(format!("use at least {} bits", min_bits)),
+                                            );
+                                        }
+                                    }
+                                    (*width, Some(ty.clone()))
+                                }
+                                BitfieldFieldKind::EnumInferred(type_name) => {
                                     // Look up the enum type to determine bit width
-                                    if let Some(dt_info) = self.data_types.get(type_name) {
+                                    if let Some(dt_info) = self.data_types.get(type_name.as_str()) {
                                         let count = dt_info.constructors.len() as u32;
                                         let bits = if count <= 1 {
                                             1
@@ -235,6 +259,13 @@ impl AstLowering {
                                         (bits, Some(type_name.clone()))
                                     } else {
                                         // Unknown type — default to 1 bit
+                                        self.engine.diagnostics.push(
+                                            fwgsl_diagnostics::Diagnostic::error(format!(
+                                                "unknown type '{}' in bitfield field '{}'",
+                                                type_name, f.name
+                                            ))
+                                            .with_label(fwgsl_diagnostics::Label::primary(f.span, "unknown type")),
+                                        );
                                         (1, None)
                                     }
                                 }
@@ -244,7 +275,7 @@ impl AstLowering {
                                 name: f.name.clone(),
                                 offset,
                                 width,
-                                enum_type,
+                                field_type,
                             };
                             offset += width;
                             hf

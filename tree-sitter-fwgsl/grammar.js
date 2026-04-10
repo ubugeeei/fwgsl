@@ -142,6 +142,7 @@ module.exports = grammar({
         ":",
         field("backing", $._type),
         "=",
+        field("constructor", $.upper_identifier),
         "{",
         commaSep1($.bitfield_field),
         optional(","),
@@ -152,7 +153,18 @@ module.exports = grammar({
       seq(
         field("name", $.identifier),
         ":",
-        field("bits", $.integer_literal),
+        choice(
+          // Bare integer width: `name : 5`
+          field("bits", $.integer_literal),
+          // Typed with explicit width: `name : Type : 5`
+          seq(
+            field("type", $.upper_identifier),
+            ":",
+            field("bits", $.integer_literal),
+          ),
+          // Bool or enum-inferred: `name : Bool` or `name : CapStyle`
+          field("type", $.upper_identifier),
+        ),
       ),
 
     // -- Const ---------------------------------------------------------------

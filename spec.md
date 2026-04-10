@@ -142,7 +142,7 @@ On each newline, the resolver compares the next token's column to the top of the
 
 ### 2.3 Explicit Braces
 
-Within explicit `{ }` braces (records, bitfields), virtual layout tokens are suppressed. The resolver tracks `explicit_brace_depth` and only generates layout tokens at depth 0.
+Within explicit `{ }` braces (records, bitfield declarations), virtual layout tokens are suppressed. The resolver tracks `explicit_brace_depth` and only generates layout tokens at depth 0.
 
 ---
 
@@ -1191,41 +1191,59 @@ Bitfields provide packed integer flag words with named fields.
 ### 12.1 Declaration
 
 ```
-bitfield Name : BaseType = {
-  field1 : width1,
-  field2 : width2,
+bitfield Name : BaseType = ConstructorName {
+  field1 : kind1,
+  field2 : kind2,
   ...
 }
 ```
 
+The constructor name appears after `=`, mirroring `data` record syntax. Fields support four forms:
+
+| Syntax | Meaning | Accessor returns |
+|---|---|---|
+| `name : Type : N` | Typed field with explicit bit width | `Type` |
+| `name : Bool` | Boolean field, always 1 bit | `Bool` |
+| `name : EnumType` | Enum-typed, width inferred from variant count | `EnumType` |
+| `name : N` | Bare integer width | base type (U32) |
+
 Example:
 
 ```
-bitfield CapFlags : U32 = {
-  endCap   : 1,
-  startCap : 1,
-  capButt  : 1,
-  capRound : 1,
-  capArrow : 1,
+bitfield CapFlags : U32 = CapFlags {
+  endCap   : Bool,
+  startCap : Bool,
+  capButt  : Bool,
+  capRound : Bool,
+  capArrow : Bool,
 }
 ```
 
 ### 12.2 Typed Fields
 
-Fields can reference enum types; the bit width is auto-computed as `ceil(log2(constructor_count))`:
+Fields can specify an explicit type and bit width:
 
 ```
-bitfield StyleFlags : U32 = {
-  capStyle : CapStyle,     -- auto-computes width from CapStyle constructors
-  visible  : 1,
+bitfield LineFlags : U32 = LineFlags {
+  capStart  : CapStyle : 2,    -- CapStyle enum stored in 2 bits
+  capEnd    : CapStyle : 2,
+  roughness : U32 : 5,         -- 5-bit unsigned integer
+  visible   : Bool,            -- 1 bit (width implicit)
+  mode      : BlendMode,       -- width inferred from enum variant count
 }
 ```
 
-`Bool` maps to width 1.
+For `Type : N` fields where `Type` is an enum, the compiler validates that `N >= ceil(log2(variant_count))`.
+
+`Bool` always maps to width 1.
+
+Bare integer widths (`name : N`) remain supported for quick prototyping.
 
 ### 12.3 Width Validation
 
-The compiler checks at compile time that the total bit width of all fields does not exceed the base type width (32 bits for U32).
+The compiler checks at compile time that:
+- The total bit width of all fields does not exceed the base type width (32 bits for U32)
+- Typed fields have sufficient bits for their declared type
 
 ### 12.4 Field Access
 
@@ -1256,6 +1274,7 @@ Compiles to: `(base & ~combined_mask) | ((new_val & field_mask) << offset)`.
 - Bitfields are **not** registered as type aliases — they remain opaque so `FieldAccess` preserves the type name
 - No WGSL structs are emitted for bitfields — they lower to plain integer operations
 - Bitfield info is threaded through `LowerCtx` in HIR→MIR lowering
+- `impl` blocks work on bitfield types (they are `Ty::Con("Name")` in the type system)
 
 ---
 

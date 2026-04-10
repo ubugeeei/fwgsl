@@ -1268,7 +1268,7 @@ fn build_document_symbols(source: &str) -> Vec<DocumentSymbol> {
                     .iter()
                     .map(|f| DocumentSymbol {
                         name: f.name.clone(),
-                        detail: Some(format!("{:?}", f.width)),
+                        detail: Some(format!("{:?}", f.kind)),
                         kind: SymbolKind::FIELD,
                         tags: None,
                         deprecated: None,

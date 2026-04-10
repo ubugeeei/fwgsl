@@ -41,9 +41,9 @@ pub struct HirBitfieldField {
     pub name: String,
     pub offset: u32,
     pub width: u32,
-    /// If this field references an enum type (e.g. `capStyle : CapStyle`),
-    /// the enum type name is stored here for downstream codegen.
-    pub enum_type: Option<String>,
+    /// The declared type of this field, if any (e.g. `Bool`, `CapStyle`, `U32`).
+    /// Used for downstream codegen to emit appropriate casts/types on field access.
+    pub field_type: Option<String>,
 }
 
 /// A resource binding declaration (uniform / storage).

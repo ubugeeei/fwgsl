@@ -11,11 +11,11 @@ data CapStyle = NoCap = 0 | Arrow = 1 | Round = 2 | Butt = 3
 data JoinStyle = Miter = 0 | Bevel = 1 | RoundJoin = 2
 
 -- Bitfield with typed fields referencing enums
-bitfield LineFlags : U32 = {
-  capStart  : CapStyle,
-  capEnd    : CapStyle,
-  joinStyle : JoinStyle,
-  visible   : 1,
+bitfield LineFlags : U32 = LineFlags {
+  capStart  : CapStyle : 2,
+  capEnd    : CapStyle : 2,
+  joinStyle : JoinStyle : 2,
+  visible   : Bool,
   selected  : Bool,
 }
 

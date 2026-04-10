@@ -1,23 +1,25 @@
 -- Bitfield example: GPU-side material and render state packed into u32 words.
 --
 -- Demonstrates bitfields alongside enums, record types, helper functions,
--- resources, pattern matching, and the compute entry-point convention.
+-- resources, pattern matching, impl methods on bitfields, method-call
+-- syntax (mat.isShiny), bitfield functional update, and the compute
+-- entry-point convention.
 
 -- Material properties packed into a single u32.
-bitfield MaterialFlags : U32 = {
-  metallic    : 1,
-  emissive    : 1,
-  transparent : 1,
-  roughness   : 5,
-  ior         : 8,
+bitfield MaterialFlags : U32 = MaterialFlags {
+  metallic    : Bool,
+  emissive    : Bool,
+  transparent : Bool,
+  roughness   : U32 : 5,
+  ior         : U32 : 8,
 }
 
 -- Per-object visibility / render state.
-bitfield ObjectFlags : U32 = {
-  visible    : 1,
-  castShadow : 1,
-  layer      : 4,
-  stencilRef : 8,
+bitfield ObjectFlags : U32 = ObjectFlags {
+  visible    : Bool,
+  castShadow : Bool,
+  layer      : U32 : 4,
+  stencilRef : U32 : 8,
 }
 
 -- Enum: blend mode selector (pure enum -> u32 tag)
@@ -41,6 +43,11 @@ extern resource matFlags : Uniform<MaterialFlags>                    @group 0 @b
 extern resource objFlags : Uniform<ObjectFlags>                      @group 0 @binding 1
 extern resource params   : Uniform<DrawParams>                       @group 0 @binding 2
 extern resource output   : Storage<ReadWrite, Array<Vec<4, F32>, 64>> @group 0 @binding 3
+
+-- Impl methods on bitfield types — dispatched via method-call syntax.
+-- Compiles to a standalone function with mangled name (isShiny_MaterialFlags).
+impl MaterialFlags where
+  isShiny flags = flags.metallic && flags.roughness < 10u
 
 -- Decode IOR from 8-bit integer encoding: stored as (ior - 1.0) * 100
 decodeIor : U32 -> F32
@@ -79,11 +86,20 @@ main input =
       mat    = load matFlags
       obj    = load objFlags
       p      = load params
-      rough  = decodeRoughness mat.roughness
+
+      -- Method-call syntax on bitfield: mat.isShiny → isShiny_MaterialFlags(mat)
+      shiny  = mat.isShiny
+
+      -- Bitfield functional update: override roughness while preserving other fields
+      mat2   = mat { roughness = 16 }
+
+      rough  = decodeRoughness mat2.roughness
       ior    = decodeIor mat.ior
       metalF = if mat.metallic then 1.0 else 0.0
       layerF = toF32 obj.layer
       bf     = blendFactor Opaque
       base   = metallicColor metalF p.tint
-      color  = vec4 (base.r * rough) (base.g * ior * 0.1) (base.b * bf) (base.a * layerF * 0.0625)
+      color  = if shiny
+               then vec4 1.0 (base.g * ior * 0.1) 0.0 1.0
+               else vec4 (base.r * rough) (base.g * ior * 0.1) (base.b * bf) (base.a * layerF * 0.0625)
   in writeAt output idx color
