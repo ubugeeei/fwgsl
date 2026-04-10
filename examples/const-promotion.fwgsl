@@ -37,7 +37,7 @@ clampToMax : I32 -> I32
 clampToMax x = if x > maxLights then maxLights else x
 
 -- Entry point that uses both promoted constants and regular functions
-extern resource results : Storage<ReadWrite, Array<Vec<4, F32>>> @group 0 @binding 0
+@group(0) @binding(0) storage(read_write) results : Array<Vec<4, F32>>
 
 data ComputeInput = ComputeInput {
   @builtin(global_invocation_id) gid : Vec<3, U32>

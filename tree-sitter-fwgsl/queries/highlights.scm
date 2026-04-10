@@ -4,7 +4,7 @@
 ["if" "then" "else" "case" "of" "match" "loop"] @keyword.control
 
 ; Keywords — storage/declaration
-["let" "in" "const" "data" "alias" "extern" "resource"] @keyword.storage
+["let" "in" "const" "data" "alias" "extern" "uniform" "storage"] @keyword.storage
 
 ; Keywords — other
 ["module" "import" "where" "trait" "impl" "bitfield"
@@ -27,6 +27,9 @@
 ; Function definitions
 (function_declaration name: (identifier) @function)
 (type_signature name: (identifier) @function)
+
+; Binding declarations (GPU resources)
+(binding_declaration name: (identifier) @variable)
 
 ; Builtin function calls ($prefixed)
 (builtin_identifier) @function.builtin

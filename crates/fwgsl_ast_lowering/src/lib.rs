@@ -192,9 +192,10 @@ impl AstLowering {
                 } => {
                     data_types.push(self.lower_data_decl(name, type_params, constructors));
                 }
-                Decl::ResourceDecl {
+                Decl::BindingDecl {
                     name,
                     ty,
+                    address_space,
                     group,
                     binding,
                     ..
@@ -203,7 +204,11 @@ impl AstLowering {
                     resources.push(fwgsl_hir::HirResource {
                         name: name.clone(),
                         ty: scheme.ty,
-                        address_space: self.extract_address_space(ty),
+                        address_space: match address_space {
+                            fwgsl_parser::parser::BindingAddressSpace::Uniform => "Uniform".to_string(),
+                            fwgsl_parser::parser::BindingAddressSpace::StorageRead => "Storage".to_string(),
+                            fwgsl_parser::parser::BindingAddressSpace::StorageReadWrite => "Storage".to_string(),
+                        },
                         group: *group,
                         binding: *binding,
                     });
@@ -1722,15 +1727,7 @@ impl AstLowering {
         normalize_type_aliases(&ty)
     }
 
-    /// Extract the address space hint from a resource type syntax node.
-    fn extract_address_space(&self, ty: &Type) -> String {
-        match ty {
-            Type::Con(name, _) => name.clone(),
-            Type::App(f, _, _) => self.extract_address_space(f),
-            Type::Paren(inner, _) => self.extract_address_space(inner),
-            _ => ty_name::UNIFORM.to_string(),
-        }
-    }
+
 
     pub fn has_errors(&self) -> bool {
         self.engine.diagnostics.has_errors()

@@ -295,6 +295,11 @@ impl<'a> FormatEngine<'a> {
             return;
         }
 
+        // No space between `storage` keyword and `(` for `storage(read_write)`
+        if kind == SyntaxKind::LParen && prev == Some(SyntaxKind::KwStorage) {
+            return;
+        }
+
         // No space before `[` when preceded by an identifier or `)` (array indexing)
         if kind == SyntaxKind::LBracket
             && matches!(
@@ -333,7 +338,7 @@ impl<'a> FormatEngine<'a> {
 
         // Preserve original multi-space padding before alignment-sensitive tokens.
         // This keeps author-intentional column alignment in let/where `=`, record `:`,
-        // match `->`, const `:`, and extern resource `:` / `@group`.
+        // match `->`, const `:`, and binding `:` / `@group`.
         if let Some(ws) = self.last_skipped_ws {
             if ws.len() > 1 {
                 let is_alignment_target = match kind {
@@ -891,10 +896,10 @@ mod tests {
     }
 
     #[test]
-    fn format_preserves_extern_resource_alignment() {
-        let source = "extern resource buf     : Uniform<F32>          @group 0 @binding 0\nextern resource bigBuf  : Storage<ReadWrite, F32> @group 1 @binding 0\n";
+    fn format_preserves_binding_decl_alignment() {
+        let source = "@group(0) @binding(0) uniform frame      : FrameData\n@group(0) @binding(1) uniform capFlags   : CapFlags\n@group(1) @binding(0) storage prims      : Array<Prim>\n";
         let result = format_default(source);
-        assert_eq!(result, "extern resource buf     : Uniform<F32>          @group 0 @binding 0\nextern resource bigBuf  : Storage<ReadWrite, F32> @group 1 @binding 0\n");
+        assert_eq!(result, "@group(0) @binding(0) uniform frame      : FrameData\n@group(0) @binding(1) uniform capFlags   : CapFlags\n@group(1) @binding(0) storage prims      : Array<Prim>\n");
     }
 
     #[test]

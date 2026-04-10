@@ -244,15 +244,17 @@ identity : a -> a
 identity x = x
 ```
 
-### 3.10 Resource Wrapper Types
+### 3.10 Binding Address Spaces
+
+Binding declarations use `uniform` or `storage` keywords to specify the address space:
 
 ```
-Uniform<T>                      -- Uniform buffer
-Storage<ReadWrite, T>           -- Read-write storage buffer
-Storage<Read, T>                -- Read-only storage buffer (StorageRead)
+uniform       -- Uniform buffer (read-only)
+storage       -- Storage buffer (read-only, default)
+storage(read_write) -- Storage buffer (read-write)
 ```
 
-These are used in `extern resource` declarations. The wrapper is unwrapped to the inner type `T` in the type environment.
+The inner type `T` is stored directly — no wrapper types are needed.
 
 ### 3.11 Dependent Dimensions (Nat)
 
@@ -417,17 +419,20 @@ extern sin : a -> a
 extern vec2 : a -> a -> Vec<2, a>
 ```
 
-### 4.8 Resource Declarations
+### 4.8 Binding Declarations
 
 ```
-extern resource name : WrapperType @group G @binding B
+@group(G) @binding(B) uniform name : T
+@group(G) @binding(B) storage name : T
+@group(G) @binding(B) storage(read_write) name : T
 ```
 
-Declares a GPU resource binding:
+Declares a GPU resource binding. The address space is specified by `uniform` or `storage` keywords.
+Bare `storage` defaults to read-only access (consistent with WGSL). Use `storage(read_write)` for read-write access.
 
 ```
-extern resource frame : Uniform<FrameData>                    @group 0 @binding 0
-extern resource particles : Storage<ReadWrite, Array<Particle>> @group 1 @binding 0
+@group(0) @binding(0) uniform             frame     : FrameData
+@group(1) @binding(0) storage(read_write) particles : Array<Particle>
 ```
 
 ### 4.9 Trait Declarations
@@ -1323,8 +1328,8 @@ fn fsMain(input: VertexOutput) -> @location(0) vec4<f32> { ... }
 ### 13.4 Resource Bindings
 
 ```
-extern resource name : Uniform<T>                      @group G @binding B
-extern resource name : Storage<ReadWrite, Array<T>>     @group G @binding B
+@group(G) @binding(B) uniform             name : T
+@group(G) @binding(B) storage(read_write) name : Array<T>
 ```
 
 Compiles to WGSL:
@@ -1780,8 +1785,8 @@ data ComputeInput = ComputeInput {
   @builtin(global_invocation_id) gid : Vec<3, U32>
 }
 
-extern resource input  : Storage<ReadWrite, Array<Vec<4, F32>>> @group 0 @binding 0
-extern resource output : Storage<ReadWrite, Array<Vec<4, F32>>> @group 0 @binding 1
+@group(0) @binding(0) storage(read_write) input  : Array<Vec<4, F32>>
+@group(0) @binding(1) storage(read_write) output : Array<Vec<4, F32>>
 
 const SCALE : F32 = 2.0
 

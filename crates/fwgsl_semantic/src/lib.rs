@@ -118,12 +118,10 @@ impl SemanticAnalyzer {
                 let inferred_ty = self.convert_syntax_type(ty);
                 self.env.insert(name.clone(), inferred_ty);
             }
-            if let Decl::ResourceDecl { name, ty, .. } = decl {
+            if let Decl::BindingDecl { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type(ty);
-                // Unwrap the resource wrapper (Uniform<T> → T, Storage<_, T> → T)
-                // so that in the body, the variable has the inner type.
-                let inner_ty = unwrap_resource_type(&inferred_ty.ty);
-                self.env.insert(name.clone(), Scheme::mono(inner_ty));
+                // The type is already the inner type (no Uniform/Storage wrappers).
+                self.env.insert(name.clone(), Scheme::mono(inferred_ty.ty));
             }
             if let Decl::ExternDecl { name, ty, .. } = decl {
                 let inferred_ty = self.convert_syntax_type(ty);
@@ -1085,26 +1083,6 @@ pub fn extract_vec_type(ty: &Ty) -> Option<(u8, Ty)> {
     None
 }
 
-/// Unwrap a resource wrapper type: Uniform<T> → T, Storage<_, T> → T.
-/// If the type is not a recognized wrapper, return it unchanged.
-fn unwrap_resource_type(ty: &Ty) -> Ty {
-    if let Ty::App(f, inner) = ty {
-        if let Ty::Con(name) = f.as_ref() {
-            if name == ty_name::UNIFORM {
-                return *inner.clone();
-            }
-        }
-        // Storage<mode, T> = App(App(Con("Storage"), mode), T)
-        if let Ty::App(ff, _mode) = f.as_ref() {
-            if let Ty::Con(name) = ff.as_ref() {
-                if name == ty_name::STORAGE {
-                    return *inner.clone();
-                }
-            }
-        }
-    }
-    ty.clone()
-}
 
 /// Flatten tuple arrows: `(A, B) -> R` becomes `A -> B -> R`.
 /// This allows tuple-parameter function signatures to be stored

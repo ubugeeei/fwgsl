@@ -4,7 +4,7 @@
 ["if" "then" "else" "case" "of" "match" "loop"] @keyword.control
 
 ; Keywords — storage/declaration
-["let" "in" "const" "data" "alias" "extern" "resource"] @keyword.storage
+["let" "in" "const" "data" "alias" "extern" "uniform" "storage"] @keyword.storage
 
 ; Keywords — other
 ["module" "import" "where" "trait" "impl" "bitfield"

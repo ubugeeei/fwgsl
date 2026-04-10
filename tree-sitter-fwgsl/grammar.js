@@ -31,6 +31,7 @@ module.exports = grammar({
         $.data_declaration,
         $.type_alias,
         $.extern_declaration,
+        $.binding_declaration,
         $.trait_declaration,
         $.impl_declaration,
         $.bitfield_declaration,
@@ -95,17 +96,27 @@ module.exports = grammar({
     type_alias: ($) =>
       seq("alias", field("name", $.upper_identifier), "=", $._type),
 
-    // -- Extern / resource ---------------------------------------------------
+    // -- Extern declarations --------------------------------------------------
 
     extern_declaration: ($) =>
       prec.right(seq(
         "extern",
-        "resource",
+        field("name", choice($.identifier, seq("(", /[+\-*/%=<>!&^|~]+/, ")"))),
+        ":",
+        field("type", $._type),
+      )),
+
+    // -- Binding declarations (GPU resources) ---------------------------------
+
+    binding_declaration: ($) =>
+      seq(
+        $.attribute,   // @group(N)
+        $.attribute,   // @binding(N)
+        field("space", choice("uniform", seq("storage", optional(seq("(", $.identifier, ")"))))),
         field("name", $.identifier),
         ":",
         field("type", $._type),
-        repeat($.attribute),
-      )),
+      ),
 
     // -- Trait / impl --------------------------------------------------------
 

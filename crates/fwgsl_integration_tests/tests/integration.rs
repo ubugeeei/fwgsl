@@ -2311,7 +2311,7 @@ bitfield Flags : U32 = Flags {
   stencil : U32 : 8,
 }
 
-extern resource output : Storage<ReadWrite, Array<U32, 64>> @group 0 @binding 0
+@group(0) @binding(0) storage(read_write) output : Array<U32, 64>
 
 @compute @workgroup_size(64, 1, 1)
 main idx =
@@ -2460,7 +2460,7 @@ mod const_promotion_tests {
     fn const_used_in_entry_point() {
         // Ensure promoted constants are usable from entry points and produce valid WGSL
         let source = r#"
-extern resource results : Storage<ReadWrite, Array<Vec<4, F32>>> @group 0 @binding 0
+@group(0) @binding(0) storage(read_write) results : Array<Vec<4, F32>>
 
 data ComputeInput = ComputeInput {
   @builtin(global_invocation_id) gid : Vec<3, U32>

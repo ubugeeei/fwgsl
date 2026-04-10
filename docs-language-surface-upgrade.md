@@ -8,9 +8,10 @@
   - `newtype Name = ...`
   - `type Name = { field : Ty, ... }` (lowered conservatively to a single-constructor record ADT)
 - Angle-bracket type args in type grammar: `Vec<3, F32>`, `Array<Vec<4, F32>, 8>`.
-- Resource declarations:
-  - `extern resource name : Ty @group N @binding M`
-  - `resource name : Ty @group N @binding M`
+- Binding declarations:
+  - `@group(N) @binding(M) uniform name : T`
+  - `@group(N) @binding(M) storage name : T`
+  - `@group(N) @binding(M) storage(read_write) name : T`
 - Index expressions: `m[0]`, `m[0][1]`.
 
 ## Desugaring rules
@@ -43,7 +44,7 @@
 
 - See `examples/enlightenment-stars.fwgsl` for a creative end-to-end sketch combining:
   - `alias`, `newtype`, record `type`, and `data` ADTs
-  - `extern resource` declarations
+  - binding declarations (`@group/@binding`)
   - pipeline `|>`
   - record field access + vector swizzles
   - matrix indexing (`m[0][1]`)

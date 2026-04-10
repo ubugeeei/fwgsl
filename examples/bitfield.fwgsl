@@ -39,15 +39,15 @@ data DrawParams = DrawParams {
 }
 
 -- Resources
-extern resource matFlags : Uniform<MaterialFlags>                    @group 0 @binding 0
-extern resource objFlags : Uniform<ObjectFlags>                      @group 0 @binding 1
-extern resource params   : Uniform<DrawParams>                       @group 0 @binding 2
-extern resource output   : Storage<ReadWrite, Array<Vec<4, F32>, 64>> @group 0 @binding 3
+@group(0) @binding(0) uniform             matFlags : MaterialFlags
+@group(0) @binding(1) uniform             objFlags : ObjectFlags
+@group(0) @binding(2) uniform             params   : DrawParams
+@group(0) @binding(3) storage(read_write) output   : Array<Vec<4, F32>, 64>
 
 -- Impl methods on bitfield types — dispatched via method-call syntax.
 -- Compiles to a standalone function with mangled name (isShiny_MaterialFlags).
 impl MaterialFlags where
-  isShiny flags = flags.metallic && flags.roughness < 10u
+  isShiny flags = flags.metallic && flags.rugness < 10u
 
 -- Decode IOR from 8-bit integer encoding: stored as (ior - 1.0) * 100
 decodeIor : U32 -> F32

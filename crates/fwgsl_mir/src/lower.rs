@@ -1961,12 +1961,17 @@ fn lower_hir_lit(lit: &HirLit, ty: &Ty) -> MirLit {
 }
 
 /// Lower a HIR resource declaration to a MIR global binding.
+/// The HIR type is already the inner type (no Uniform/Storage wrappers).
+/// The address space is determined from the `address_space` hint string.
 fn lower_hir_resource(res: &HirResource, ctx: &LowerCtx) -> Option<MirGlobal> {
-    // Parse the resource type: Uniform<T> or Storage<ReadWrite, T>
-    // The `ty` from the semantic analyzer is the full applied type.
-    // We need to extract the inner type and determine the address space.
-    let (address_space, inner_ty) = parse_resource_type(&res.ty, &res.address_space);
-    let mir_ty = ty_to_mir_type_with_ctx(&inner_ty, Some(ctx)).ok()?;
+    let mir_ty = ty_to_mir_type_with_ctx(&res.ty, Some(ctx)).ok()?;
+    let address_space = match res.address_space.as_str() {
+        "Uniform" => AddressSpace::Uniform,
+        "StorageRead" => AddressSpace::StorageRead,
+        "StorageReadWrite" => AddressSpace::StorageReadWrite,
+        s if s.contains("Storage") => AddressSpace::StorageReadWrite,
+        _ => AddressSpace::Uniform,
+    };
     Some(MirGlobal {
         name: res.name.clone(),
         address_space,
@@ -1974,33 +1979,6 @@ fn lower_hir_resource(res: &HirResource, ctx: &LowerCtx) -> Option<MirGlobal> {
         group: res.group,
         binding: res.binding,
     })
-}
-
-/// Parse a resource type to extract address space and inner type.
-fn parse_resource_type(ty: &Ty, hint: &str) -> (AddressSpace, Ty) {
-    // Try to extract inner type from App(Con("Uniform"), inner)
-    // or App(App(Con("Storage"), mode), inner)
-    if let Ty::App(f, inner) = ty {
-        if let Ty::Con(name) = f.as_ref() {
-            if name == ty_name::UNIFORM {
-                return (AddressSpace::Uniform, *inner.clone());
-            }
-        }
-        if let Ty::App(ff, _mode) = f.as_ref() {
-            if let Ty::Con(name) = ff.as_ref() {
-                if name == ty_name::STORAGE {
-                    return (AddressSpace::StorageReadWrite, *inner.clone());
-                }
-            }
-        }
-    }
-    // Fallback based on hint string
-    let space = if hint.contains(ty_name::UNIFORM) {
-        AddressSpace::Uniform
-    } else {
-        AddressSpace::StorageReadWrite
-    };
-    (space, ty.clone())
 }
 
 fn default_lit_for_type(ty: &MirType) -> MirLit {

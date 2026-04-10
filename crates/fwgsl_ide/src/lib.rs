@@ -328,7 +328,7 @@ impl<'a> IndexBuilder<'a> {
                     self.index.symbols[symbol_id].kind = SymbolKind::TypeAlias;
                     self.index.add_definition_span(symbol_id, name_span);
                 }
-                Decl::ResourceDecl { name, span, .. } => {
+                Decl::BindingDecl { name, span, .. } => {
                     let name_span = self.first_name_span(name, *span).unwrap_or(*span);
                     let symbol_id = self.top_level_values.get(name).copied().unwrap_or_else(|| {
                         let id = self.index.push_symbol(NewSymbol {
@@ -556,7 +556,7 @@ impl<'a> IndexBuilder<'a> {
                 self.walk_type(ty, frames);
                 frames.pop();
             }
-            Decl::ResourceDecl { ty, .. } => {
+            Decl::BindingDecl { ty, .. } => {
                 self.walk_type(ty, frames);
             }
             Decl::BitfieldDecl { base_ty, .. } => {
@@ -1234,7 +1234,7 @@ fn extract_doc_comments(program: &Program) -> HashMap<String, String> {
                 | Decl::DataDecl { name, .. }
                 | Decl::EntryPoint { name, .. }
                 | Decl::TypeAlias { name, .. }
-                | Decl::ResourceDecl { name, .. }
+                | Decl::BindingDecl { name, .. }
                 | Decl::BitfieldDecl { name, .. }
                 | Decl::ConstDecl { name, .. }
                 | Decl::TraitDecl { name, .. }

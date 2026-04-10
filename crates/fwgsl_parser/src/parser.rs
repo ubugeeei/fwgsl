@@ -28,7 +28,7 @@ impl Decl {
             | Decl::DataDecl { comments, .. }
             | Decl::EntryPoint { comments, .. }
             | Decl::TypeAlias { comments, .. }
-            | Decl::ResourceDecl { comments, .. }
+            | Decl::BindingDecl { comments, .. }
             | Decl::BitfieldDecl { comments, .. }
             | Decl::ConstDecl { comments, .. }
             | Decl::TraitDecl { comments, .. }
@@ -48,7 +48,7 @@ impl Decl {
             | Decl::DataDecl { comments, .. }
             | Decl::EntryPoint { comments, .. }
             | Decl::TypeAlias { comments, .. }
-            | Decl::ResourceDecl { comments, .. }
+            | Decl::BindingDecl { comments, .. }
             | Decl::BitfieldDecl { comments, .. }
             | Decl::ConstDecl { comments, .. }
             | Decl::TraitDecl { comments, .. }
@@ -95,7 +95,7 @@ impl Decl {
             | Decl::DataDecl { span, .. }
             | Decl::EntryPoint { span, .. }
             | Decl::TypeAlias { span, .. }
-            | Decl::ResourceDecl { span, .. }
+            | Decl::BindingDecl { span, .. }
             | Decl::BitfieldDecl { span, .. }
             | Decl::ConstDecl { span, .. }
             | Decl::TraitDecl { span, .. }
@@ -146,9 +146,14 @@ pub enum Decl {
         span: Span,
         comments: Vec<String>,
     },
-    ResourceDecl {
+    /// Binding declaration:
+    ///   `@group(N) @binding(N) uniform name : Type`
+    ///   `@group(N) @binding(N) storage name : Type`
+    ///   `@group(N) @binding(N) storage(read) name : Type`
+    BindingDecl {
         name: String,
         ty: Type,
+        address_space: BindingAddressSpace,
         group: u32,
         binding: u32,
         span: Span,
@@ -256,6 +261,17 @@ pub enum ImportKind {
     Qualified(String),
     /// `import Foo.*` — import all sub-modules under Foo/.
     Wildcard,
+}
+
+/// Address space for a binding declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingAddressSpace {
+    /// `uniform` — uniform buffer (read-only)
+    Uniform,
+    /// `storage` — storage buffer (default: read)
+    StorageRead,
+    /// `storage(read_write)` — storage buffer (read-write)
+    StorageReadWrite,
 }
 
 /// A method signature inside a `trait` declaration.
@@ -956,78 +972,88 @@ impl Parser {
         self.skip_trivia();
         match self.peek_non_trivia() {
             SyntaxKind::At => {
-                // Parse attributes, then the annotated declaration.
-                // Attributes may be followed by a type signature and/or
-                // a function definition on separate layout lines.
+                // Peek ahead to determine if this is a binding declaration
+                // (`@group(N) @binding(N) uniform/storage ...`) or an entry
+                // point (`@vertex`, `@compute`, etc.).
                 let start = self.current_span().start;
-                let mut attributes = Vec::new();
-                while self.peek_non_trivia() == SyntaxKind::At {
-                    self.skip_trivia();
-                    attributes.push(self.parse_attribute());
-                    self.skip_trivia();
-                }
 
-                // Consume LayoutSemicolon between attributes and the declaration
-                self.eat_layout_semi();
-                self.skip_trivia();
-
-                // Skip optional type signature (e.g. `main : ComputeInput -> ()`)
-                if self.at(SyntaxKind::Ident) {
-                    let saved = self.pos;
-                    let name_tok = self.bump();
-                    self.skip_trivia();
-                    if self.at(SyntaxKind::Colon) {
-                        // It's a type signature – parse and discard it, then
-                        // consume the LayoutSemicolon and continue to the fun decl.
-                        let name = self.text_of(&name_tok).to_owned();
-                        let _ty_sig = self.parse_type_sig(name, name_tok.span.start);
-                        self.eat_layout_semi();
+                // Check if the first attribute name is "group" — indicates a binding
+                let is_binding = self.is_binding_decl_ahead();
+                if is_binding {
+                    Some(self.parse_binding_decl(start))
+                } else {
+                    // Entry point: parse attributes, then annotated function declaration.
+                    let mut attributes = Vec::new();
+                    while self.peek_non_trivia() == SyntaxKind::At {
                         self.skip_trivia();
-                    } else {
-                        // Not a type sig – backtrack
-                        self.pos = saved;
+                        attributes.push(self.parse_attribute());
+                        self.skip_trivia();
                     }
-                }
 
-                // Now parse the actual function declaration
-                self.skip_trivia();
-                let name_tok = self.expect(SyntaxKind::Ident);
-                let name = self.text_of(&name_tok).to_owned();
-                self.skip_trivia();
-
-                let mut params = Vec::new();
-                while !self.at(SyntaxKind::Equals) && !self.at_end() && self.consume_fuel() {
-                    if matches!(
-                        self.peek_non_trivia(),
-                        SyntaxKind::LayoutSemicolon | SyntaxKind::LayoutBraceClose
-                    ) {
-                        break;
-                    }
-                    let p = self.parse_pat_atom();
-                    params.push(p);
+                    // Consume LayoutSemicolon between attributes and the declaration
+                    self.eat_layout_semi();
                     self.skip_trivia();
+
+                    // Skip optional type signature (e.g. `main : ComputeInput -> ()`)
+                    if self.at(SyntaxKind::Ident) {
+                        let saved = self.pos;
+                        let name_tok = self.bump();
+                        self.skip_trivia();
+                        if self.at(SyntaxKind::Colon) {
+                            let name = self.text_of(&name_tok).to_owned();
+                            let _ty_sig = self.parse_type_sig(name, name_tok.span.start);
+                            self.eat_layout_semi();
+                            self.skip_trivia();
+                        } else {
+                            self.pos = saved;
+                        }
+                    }
+
+                    // Now parse the actual function declaration
+                    self.skip_trivia();
+                    let name_tok = self.expect(SyntaxKind::Ident);
+                    let name = self.text_of(&name_tok).to_owned();
+                    self.skip_trivia();
+
+                    let mut params = Vec::new();
+                    while !self.at(SyntaxKind::Equals) && !self.at_end() && self.consume_fuel() {
+                        if matches!(
+                            self.peek_non_trivia(),
+                            SyntaxKind::LayoutSemicolon | SyntaxKind::LayoutBraceClose
+                        ) {
+                            break;
+                        }
+                        let p = self.parse_pat_atom();
+                        params.push(p);
+                        self.skip_trivia();
+                    }
+
+                    self.expect(SyntaxKind::Equals);
+                    self.skip_trivia();
+                    let body = self.parse_expr();
+
+                    let span = self.span_from(start);
+                    Some(Decl::EntryPoint {
+                        attributes,
+                        name,
+                        params,
+                        body,
+                        span,
+                        comments: vec![],
+                    })
                 }
-
-                self.expect(SyntaxKind::Equals);
-                self.skip_trivia();
-                let body = self.parse_expr();
-
-                let span = self.span_from(start);
-                Some(Decl::EntryPoint {
-                    attributes,
-                    name,
-                    params,
-                    body,
-                    span,
-                    comments: vec![],
-                })
             }
             SyntaxKind::KwModule => Some(self.parse_module_decl()),
             SyntaxKind::KwImport => Some(self.parse_import_decl()),
             SyntaxKind::KwData => Some(self.parse_data_decl()),
             SyntaxKind::KwAlias => Some(self.parse_alias_decl()),
             SyntaxKind::KwExtern => Some(self.parse_extern_decl()),
-            SyntaxKind::KwResource => Some(self.parse_resource_decl(false)),
+            SyntaxKind::KwUniform | SyntaxKind::KwStorage => {
+                // Bare `uniform`/`storage` without `@group(...)` — parse as binding
+                // with default group(0) binding(0). This supports shorthand usage.
+                let start = self.current_span().start;
+                Some(self.parse_binding_body(start, 0, 0))
+            }
             SyntaxKind::KwBitfield => Some(self.parse_bitfield_decl()),
             SyntaxKind::KwConst => Some(self.parse_const_decl()),
             SyntaxKind::KwTrait => Some(self.parse_trait_decl()),
@@ -1691,18 +1717,51 @@ impl Parser {
         }
     }
 
-    /// Parse `extern resource ...` or `extern name : type`.
+    /// Peek ahead (without consuming tokens) to check if the current `@`
+    /// starts a binding declaration (`@group(N) @binding(N) uniform/storage ...`).
+    fn is_binding_decl_ahead(&self) -> bool {
+        // We're positioned at `@`. Look ahead for `@` + `group`.
+        let mut i = self.pos;
+        // Skip trivia
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        // Expect `@`
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::At {
+            return false;
+        }
+        i += 1;
+        // Skip trivia
+        while i < self.tokens.len() && self.tokens[i].kind.is_trivia() {
+            i += 1;
+        }
+        // Check if the attribute name is `group`
+        if i >= self.tokens.len() || self.tokens[i].kind != SyntaxKind::Ident {
+            return false;
+        }
+        self.text_of(&self.tokens[i]) == "group"
+    }
+
+    /// Parse a binding declaration starting from `@group(N) @binding(N) uniform/storage name : Type`.
+    /// Also handles group blocks:
+    /// ```text
+    /// @group(N)
+    ///   @binding(0) uniform name1 : Type1
+    ///   @binding(1) storage name2 : Type2
+    /// ```
+    fn parse_binding_decl(&mut self, start: u32) -> Decl {
+        let (group, binding) = self.parse_group_binding_attrs();
+        self.skip_trivia();
+        self.parse_binding_body(start, group, binding)
+    }
+
+    /// Parse `extern name : type` or `extern (+) : type`.
+    /// Declares a built-in name with its type signature (no body).
     fn parse_extern_decl(&mut self) -> Decl {
         let start = self.current_span().start;
         self.expect(SyntaxKind::KwExtern);
         self.skip_trivia();
 
-        // Disambiguate: if next token is `resource`, delegate to resource parsing.
-        if self.at(SyntaxKind::KwResource) {
-            return self.parse_resource_decl(true);
-        }
-
-        // Otherwise: `extern name : type` or `extern (+) : type`
         let name = if self.at(SyntaxKind::LParen) {
             // Operator in parens: `(+)`, `(==)`, etc.
             self.bump(); // consume `(`
@@ -1729,49 +1788,119 @@ impl Parser {
         }
     }
 
-    fn parse_resource_decl(&mut self, extern_consumed: bool) -> Decl {
-        let start = if extern_consumed {
-            self.tokens[self.pos.saturating_sub(1)].span.start
+    /// Parse a single binding declaration after `@group(N) @binding(N)` have been consumed.
+    /// Expects: `uniform name : Type` or `storage name : Type` or `storage(read_write) name : Type`
+    fn parse_binding_body(&mut self, start: u32, group: u32, binding: u32) -> Decl {
+        let address_space = if self.at(SyntaxKind::KwUniform) {
+            self.bump();
+            BindingAddressSpace::Uniform
+        } else if self.at(SyntaxKind::KwStorage) {
+            self.bump();
+            self.skip_trivia();
+            // Check for optional access mode: `storage(read_write)` or `storage(read)`
+            if self.at(SyntaxKind::LParen) {
+                self.bump();
+                self.skip_trivia();
+                let mode_tok = self.expect(SyntaxKind::Ident);
+                let mode = self.text_of(&mode_tok).to_owned();
+                self.skip_trivia();
+                // Handle `read_write` which may be parsed as `read` `_` `write` or a single ident
+                let space = if mode == "read_write" {
+                    BindingAddressSpace::StorageReadWrite
+                } else if mode == "read" {
+                    // Check for `read_write` as two tokens: `read` then looking at next
+                    self.skip_trivia();
+                    BindingAddressSpace::StorageRead
+                } else {
+                    // Unknown mode, default to read
+                    BindingAddressSpace::StorageRead
+                };
+                self.expect(SyntaxKind::RParen);
+                space
+            } else {
+                // `storage` without parens — default is read (consistent with WGSL)
+                BindingAddressSpace::StorageRead
+            }
         } else {
-            self.current_span().start
+            // Fallback: emit an error and default to uniform
+            let tok = self.bump();
+            self.diagnostics.push(
+                Diagnostic::error(format!(
+                    "expected 'uniform' or 'storage', found '{}'",
+                    self.text_of(&tok)
+                ))
+                .with_label(Label::primary(tok.span, "expected 'uniform' or 'storage'")),
+            );
+            BindingAddressSpace::Uniform
         };
-        self.expect(SyntaxKind::KwResource);
         self.skip_trivia();
+
         let name_tok = self.expect(SyntaxKind::Ident);
         let name = self.text_of(&name_tok).to_owned();
         self.skip_trivia();
         self.expect(SyntaxKind::Colon);
         self.skip_trivia();
         let ty = self.parse_type();
-        self.skip_trivia();
-
-        let mut group = None;
-        let mut binding = None;
-        while self.at(SyntaxKind::At) {
-            self.bump();
-            self.skip_trivia();
-            let attr_tok = self.expect(SyntaxKind::Ident);
-            let attr = self.text_of(&attr_tok).to_owned();
-            self.skip_trivia();
-            let value_tok = self.expect(SyntaxKind::IntLiteral);
-            let value = parse_int_literal(self.text_of(&value_tok)).max(0) as u32;
-            match attr.as_str() {
-                "group" => group = Some(value),
-                "binding" => binding = Some(value),
-                _ => {}
-            }
-            self.skip_trivia();
-        }
 
         let span = self.span_from(start);
-        Decl::ResourceDecl {
+        Decl::BindingDecl {
             name,
             ty,
-            group: group.unwrap_or(0),
-            binding: binding.unwrap_or(0),
+            address_space,
+            group,
+            binding,
             span,
             comments: vec![],
         }
+    }
+
+    /// Parse `@group(N) @binding(N)` attributes for a binding declaration.
+    /// Returns (group, binding).
+    fn parse_group_binding_attrs(&mut self) -> (u32, u32) {
+        let group;
+        let binding;
+
+        // Parse `@group(N)`
+        self.expect(SyntaxKind::At);
+        self.skip_trivia();
+        let attr_tok = self.expect(SyntaxKind::Ident);
+        let attr = self.text_of(&attr_tok).to_owned();
+        if attr != "group" {
+            self.diagnostics.push(
+                Diagnostic::error(format!("expected 'group', found '{}'", attr))
+                    .with_label(Label::primary(attr_tok.span, "expected 'group'")),
+            );
+        }
+        self.skip_trivia();
+        self.expect(SyntaxKind::LParen);
+        self.skip_trivia();
+        let val_tok = self.expect(SyntaxKind::IntLiteral);
+        group = parse_int_literal(self.text_of(&val_tok)).max(0) as u32;
+        self.skip_trivia();
+        self.expect(SyntaxKind::RParen);
+        self.skip_trivia();
+
+        // Parse `@binding(N)`
+        self.expect(SyntaxKind::At);
+        self.skip_trivia();
+        let attr_tok2 = self.expect(SyntaxKind::Ident);
+        let attr2 = self.text_of(&attr_tok2).to_owned();
+        if attr2 != "binding" {
+            self.diagnostics.push(
+                Diagnostic::error(format!("expected 'binding', found '{}'", attr2))
+                    .with_label(Label::primary(attr_tok2.span, "expected 'binding'")),
+            );
+        }
+        self.skip_trivia();
+        self.expect(SyntaxKind::LParen);
+        self.skip_trivia();
+        let val_tok2 = self.expect(SyntaxKind::IntLiteral);
+        binding = parse_int_literal(self.text_of(&val_tok2)).max(0) as u32;
+        self.skip_trivia();
+        self.expect(SyntaxKind::RParen);
+        self.skip_trivia();
+
+        (group, binding)
     }
 
     /// Parse `bitfield Name : U32 = { field1 : width, field2 : width, ... }`

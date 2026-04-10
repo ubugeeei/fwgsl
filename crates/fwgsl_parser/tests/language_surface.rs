@@ -1,4 +1,4 @@
-use fwgsl_parser::parser::{Decl, Expr, Parser, Type};
+use fwgsl_parser::parser::{BindingAddressSpace, Decl, Expr, Parser, Type};
 
 #[test]
 fn pipeline_inserts_lhs_as_first_arg() {
@@ -42,23 +42,64 @@ fn parse_angle_type_arguments() {
 }
 
 #[test]
-fn parse_resource_decl() {
-    let mut p = Parser::new(
-        "extern resource output : Storage<ReadWrite, Array<F32, 1024>> @group 0 @binding 1",
-    );
+fn parse_binding_decl_uniform() {
+    let mut p = Parser::new("@group(0) @binding(1) uniform frame : FrameData");
     let program = p.parse_program();
-    let Decl::ResourceDecl {
+    let Decl::BindingDecl {
         name,
+        address_space,
         group,
         binding,
         ..
     } = &program.decls[0]
     else {
-        panic!("resource")
+        panic!("binding")
     };
-    assert_eq!(name, "output");
+    assert_eq!(name, "frame");
+    assert_eq!(*address_space, BindingAddressSpace::Uniform);
     assert_eq!(*group, 0);
     assert_eq!(*binding, 1);
+}
+
+#[test]
+fn parse_binding_decl_storage_default() {
+    let mut p = Parser::new("@group(1) @binding(0) storage output : Array<F32, 1024>");
+    let program = p.parse_program();
+    let Decl::BindingDecl {
+        name,
+        address_space,
+        group,
+        binding,
+        ..
+    } = &program.decls[0]
+    else {
+        panic!("binding")
+    };
+    assert_eq!(name, "output");
+    assert_eq!(*address_space, BindingAddressSpace::StorageRead);
+    assert_eq!(*group, 1);
+    assert_eq!(*binding, 0);
+}
+
+#[test]
+fn parse_binding_decl_storage_read_write() {
+    let mut p =
+        Parser::new("@group(0) @binding(3) storage(read_write) output : Array<Vec<4, F32>, 64>");
+    let program = p.parse_program();
+    let Decl::BindingDecl {
+        name,
+        address_space,
+        group,
+        binding,
+        ..
+    } = &program.decls[0]
+    else {
+        panic!("binding")
+    };
+    assert_eq!(name, "output");
+    assert_eq!(*address_space, BindingAddressSpace::StorageReadWrite);
+    assert_eq!(*group, 0);
+    assert_eq!(*binding, 3);
 }
 
 #[test]

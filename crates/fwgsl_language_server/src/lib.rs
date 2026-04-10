@@ -1249,10 +1249,10 @@ fn build_document_symbols(source: &str) -> Vec<DocumentSymbol> {
                     children: None,
                 });
             }
-            fwgsl_parser::parser::Decl::ResourceDecl { name, span, .. } => {
+            fwgsl_parser::parser::Decl::BindingDecl { name, span, .. } => {
                 symbols.push(DocumentSymbol {
                     name: name.clone(),
-                    detail: Some("resource".to_owned()),
+                    detail: Some("binding".to_owned()),
                     kind: SymbolKind::VARIABLE,
                     tags: None,
                     deprecated: None,
