@@ -1,0 +1,9 @@
+{
+  "name": "mir",
+  "import": [
+    "ubugeeei/fwgsl/typechecker"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/typechecker"
+  ]
+}
