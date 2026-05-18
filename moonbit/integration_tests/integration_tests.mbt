@@ -1,19 +1,36 @@
 ///|
 /// End-to-end compiler pipeline tests for fwgsl.
 ///
-/// Mirrors `crates/fwgsl_integration_tests/tests/integration.rs`. The
-/// Rust file drives the full parse -> semantic -> AST lowering ->
-/// MIR -> WGSL pipeline on a curated set of example programs.
-///
-/// Until the AST -> HIR lowering is fully ported, the integration tests
-/// land here as parse + semantic-registration checks against
-/// `examples/*.fwgsl` — the strongest signal we can give right now that
-/// the front-end still accepts the existing sample programs.
+/// Mirrors `crates/fwgsl_integration_tests/tests/integration.rs`. Drives
+/// the full parse -> semantic -> AST lowering -> MIR lowering ->
+/// WGSL codegen pipeline on a curated set of example programs.
 
 ///|
-/// Helper that runs parse + semantic registration and returns whether
-/// the pipeline produced any error-severity diagnostics.
+/// Run the full pipeline. Returns the `CompileResult` carrying the WGSL
+/// output (or `None` on error) along with the combined diagnostics.
+pub fn run_pipeline(source : String) -> @cli.CompileResult {
+  @cli.compile_source(source)
+}
+
+///|
+/// Whether the pipeline produced any error-severity diagnostic.
 pub fn pipeline_has_errors(source : String) -> Bool {
-  let (_, sink) = @cli.compile_source(source)
-  sink.has_errors()
+  run_pipeline(source).has_errors
+}
+
+///|
+/// Run the pipeline and require that it emit WGSL. Returns the emitted
+/// WGSL text, or fails with the joined diagnostic messages on error.
+pub fn compile_or_fail(source : String) -> String {
+  let r = run_pipeline(source)
+  match r.wgsl {
+    Some(wgsl) => wgsl
+    None => {
+      let mut msg = "pipeline failed:"
+      for d in r.diagnostics {
+        msg = msg + "\n  - " + d.message
+      }
+      abort(msg)
+    }
+  }
 }
