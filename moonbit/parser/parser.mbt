@@ -1358,16 +1358,16 @@ fn is_operator_token(kind : @syntax.SyntaxKind) -> Bool {
 ///|
 fn parse_int_literal(text : String) -> Int64 {
   if text.length() >= 2
-    && text.charcode_at(0) == 0x30
-    && (text.charcode_at(1) == 0x78 || text.charcode_at(1) == 0x58) {
+    && text.unsafe_charcode_at(0) == 0x30
+    && (text.unsafe_charcode_at(1) == 0x78 || text.unsafe_charcode_at(1) == 0x58) {
     parse_int_in_radix(text.substring(start=2, end=text.length()), 16)
   } else if text.length() >= 2
-    && text.charcode_at(0) == 0x30
-    && (text.charcode_at(1) == 0x6F || text.charcode_at(1) == 0x4F) {
+    && text.unsafe_charcode_at(0) == 0x30
+    && (text.unsafe_charcode_at(1) == 0x6F || text.unsafe_charcode_at(1) == 0x4F) {
     parse_int_in_radix(text.substring(start=2, end=text.length()), 8)
   } else if text.length() >= 2
-    && text.charcode_at(0) == 0x30
-    && (text.charcode_at(1) == 0x62 || text.charcode_at(1) == 0x42) {
+    && text.unsafe_charcode_at(0) == 0x30
+    && (text.unsafe_charcode_at(1) == 0x62 || text.unsafe_charcode_at(1) == 0x42) {
     parse_int_in_radix(text.substring(start=2, end=text.length()), 2)
   } else {
     parse_int_in_radix(text, 10)
@@ -1381,7 +1381,7 @@ fn parse_int_in_radix(text : String, radix : Int64) -> Int64 {
   let len = text.length()
   let r = radix
   while i < len {
-    let c = text.charcode_at(i)
+    let c = text.unsafe_charcode_at(i)
     let digit = if c >= 0x30 && c <= 0x39 {
       c - 0x30
     } else if c >= 0x61 && c <= 0x66 {
@@ -1407,15 +1407,15 @@ fn parse_float_literal(text : String) -> Double {
   let len = text.length()
   let mut i = 0
   let mut sign : Double = 1.0
-  if i < len && text.charcode_at(i) == 0x2D {
+  if i < len && text.unsafe_charcode_at(i) == 0x2D {
     sign = -1.0
     i = i + 1
-  } else if i < len && text.charcode_at(i) == 0x2B {
+  } else if i < len && text.unsafe_charcode_at(i) == 0x2B {
     i = i + 1
   }
   let mut int_part : Double = 0.0
   while i < len {
-    let c = text.charcode_at(i)
+    let c = text.unsafe_charcode_at(i)
     if c < 0x30 || c > 0x39 {
       break
     }
@@ -1424,10 +1424,10 @@ fn parse_float_literal(text : String) -> Double {
   }
   let mut frac : Double = 0.0
   let mut scale : Double = 1.0
-  if i < len && text.charcode_at(i) == 0x2E {
+  if i < len && text.unsafe_charcode_at(i) == 0x2E {
     i = i + 1
     while i < len {
-      let c = text.charcode_at(i)
+      let c = text.unsafe_charcode_at(i)
       if c < 0x30 || c > 0x39 {
         break
       }
@@ -1439,16 +1439,16 @@ fn parse_float_literal(text : String) -> Double {
   let mut mantissa : Double = int_part + frac / scale
   let mut exp_sign : Int = 1
   let mut exp_val : Int = 0
-  if i < len && (text.charcode_at(i) == 0x65 || text.charcode_at(i) == 0x45) {
+  if i < len && (text.unsafe_charcode_at(i) == 0x65 || text.unsafe_charcode_at(i) == 0x45) {
     i = i + 1
-    if i < len && text.charcode_at(i) == 0x2D {
+    if i < len && text.unsafe_charcode_at(i) == 0x2D {
       exp_sign = -1
       i = i + 1
-    } else if i < len && text.charcode_at(i) == 0x2B {
+    } else if i < len && text.unsafe_charcode_at(i) == 0x2B {
       i = i + 1
     }
     while i < len {
-      let c = text.charcode_at(i)
+      let c = text.unsafe_charcode_at(i)
       if c < 0x30 || c > 0x39 {
         break
       }
@@ -1477,9 +1477,9 @@ fn unescape_string(s : String) -> String {
   let mut out = ""
   let mut i = 0
   while i < len {
-    let c = s.charcode_at(i)
+    let c = s.unsafe_charcode_at(i)
     if c == 0x5C && i + 1 < len {
-      let nxt = s.charcode_at(i + 1)
+      let nxt = s.unsafe_charcode_at(i + 1)
       match nxt {
         0x6E => out = out + "\n"
         0x74 => out = out + "\t"
@@ -1504,9 +1504,9 @@ fn unescape_char(s : String) -> Char {
   if s.length() == 0 {
     return ' '
   }
-  let first = s.charcode_at(0)
+  let first = s.unsafe_charcode_at(0)
   if first == 0x5C && s.length() >= 2 {
-    let nxt = s.charcode_at(1)
+    let nxt = s.unsafe_charcode_at(1)
     match nxt {
       0x6E => '\n'
       0x74 => '\t'

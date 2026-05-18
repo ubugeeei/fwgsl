@@ -7,7 +7,7 @@
 
 ///|
 fn strip_builtin_prefix(name : String) -> String {
-  if name.length() > 0 && name.charcode_at(0) == 0x24 {
+  if name.length() > 0 && name.unsafe_charcode_at(0) == 0x24 {
     name.substring(start=1, end=name.length())
   } else {
     name
@@ -20,7 +20,7 @@ fn sanitize_identifier(name : String) -> String {
   let mut out = ""
   let mut i = 0
   while i < len {
-    let c = name.charcode_at(i)
+    let c = name.unsafe_charcode_at(i)
     let is_alnum = (c >= 0x30 && c <= 0x39)
       || (c >= 0x41 && c <= 0x5A)
       || (c >= 0x61 && c <= 0x7A)
@@ -37,7 +37,7 @@ fn sanitize_identifier(name : String) -> String {
   if out.length() == 0 {
     return "_"
   }
-  let first = out.charcode_at(0)
+  let first = out.unsafe_charcode_at(0)
   if first >= 0x30 && first <= 0x39 {
     "_" + out
   } else if is_reserved_identifier(out) {
@@ -137,7 +137,7 @@ fn WgslEmitter::newline(self : WgslEmitter) -> Unit {
 fn trim_trailing_whitespace(s : String) -> String {
   let mut end = s.length()
   while end > 0 {
-    let c = s.charcode_at(end - 1)
+    let c = s.unsafe_charcode_at(end - 1)
     if c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D {
       end = end - 1
     } else {

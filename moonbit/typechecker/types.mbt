@@ -235,6 +235,6 @@ pub fn Ty::display(self : Ty) -> String {
 }
 
 ///|
-impl Show for Ty with output(self : Ty, logger : &Logger) -> Unit {
+impl Show for Ty with output(self, logger) {
   logger.write_string(self.display())
 }
