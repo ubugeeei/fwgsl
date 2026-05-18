@@ -1,15 +1,16 @@
 ///|
 /// LSP server skeleton for fwgsl.
 ///
-/// The Rust `fwgsl_language_server` binary (~2500 lines including its
-/// builtin catalog) implements the full LSP transport plus
-/// diagnostics-on-change, completion, hover, goto-definition, and
-/// semantic-token computation.
-///
 /// MoonBit doesn't ship an `lsp-types` equivalent yet, so the port lands
-/// transport-agnostic helpers: a `DocumentStore`, a `compute_diagnostics`
-/// function, and shims that delegate to the `ide` library for the
-/// IDE-style analyses. A future PR will wire these into a JSON-RPC loop.
+/// transport-agnostic helpers a JSON-RPC loop can drive:
+///
+/// - `DocumentStore` tracks `did_open`/`did_change`/`did_close` state.
+/// - `compute_diagnostics` runs the parse + semantic pipeline and
+///   returns flat `LspDiagnostic` records ready for serialisation to a
+///   `textDocument/publishDiagnostics` notification.
+/// - `semantic_tokens_for` / `completions_at` / `hover_at` /
+///   `goto_definition_at` proxy through the `ide` library so a future
+///   transport layer only has to think about JSON-RPC framing.
 
 ///|
 pub(all) struct OpenDocument {
@@ -64,13 +65,201 @@ pub fn DocumentStore::get(self : DocumentStore, uri : String) -> OpenDocument? {
   self.docs.get(uri)
 }
 
+// ---------------------------------------------------------------------------
+// Diagnostics for publishDiagnostics
+// ---------------------------------------------------------------------------
+
 ///|
-/// Run the parser-level diagnostic pipeline on the document text.
-/// Suitable for "publish diagnostics" pushes on document change.
-pub fn compute_diagnostics(text : String) -> @diagnostics.DiagnosticSink {
-  let sink = @diagnostics.DiagnosticSink::new()
-  // Reuse the same lex+parse pipeline as the CLI.
-  let parser = @ide.semantic_tokens(text)
-  let _ = parser // semantic_tokens has the side-effect of lexing.
-  sink
+/// LSP-shaped diagnostic. Mirrors the relevant subset of the
+/// `lsp-types::Diagnostic` record so a transport layer can serialise
+/// without having to touch the lower-level `@diagnostics.Diagnostic`.
+pub(all) struct LspDiagnostic {
+  message : String
+  severity : LspSeverity
+  start_line : Int
+  start_character : Int
+  end_line : Int
+  end_character : Int
+  help : String?
+} derive(Show)
+
+///|
+pub(all) enum LspSeverity {
+  ErrorSev
+  WarningSev
+  InfoSev
+  HintSev
+} derive(Eq, Show)
+
+///|
+/// Compute publishDiagnostics payload for a document.
+pub fn compute_diagnostics(text : String) -> Array[LspDiagnostic] {
+  let parser = @parser.Parser::new(text)
+  let program = parser.parse_program()
+  let analyzer = @semantic.SemanticAnalyzer::new()
+  analyzer.analyze(program)
+  let out : Array[LspDiagnostic] = Array::new()
+  for d in parser.diagnostics().all() {
+    out.push(to_lsp_diagnostic(d, text))
+  }
+  for d in analyzer.diagnostics().all() {
+    out.push(to_lsp_diagnostic(d, text))
+  }
+  out
+}
+
+///|
+fn to_lsp_diagnostic(
+  d : @diagnostics.Diagnostic,
+  source : String
+) -> LspDiagnostic {
+  let severity : LspSeverity = match d.severity {
+    Error => ErrorSev
+    Warning => WarningSev
+    Info => InfoSev
+    Hint => HintSev
+  }
+  let (start_span, end_span) = if d.labels.length() > 0 {
+    let l = d.labels[0]
+    (l.span.start, l.span.end)
+  } else {
+    (0U, 0U)
+  }
+  let (sl, sc) = offset_to_line_col(source, start_span)
+  let (el, ec) = offset_to_line_col(source, end_span)
+  LspDiagnostic::{
+    message: d.message,
+    severity,
+    start_line: sl - 1,
+    start_character: sc - 1,
+    end_line: el - 1,
+    end_character: ec - 1,
+    help: d.help,
+  }
+}
+
+///|
+fn offset_to_line_col(source : String, offset : UInt) -> (Int, Int) {
+  let target = offset.reinterpret_as_int()
+  let mut line = 1
+  let mut col = 1
+  let mut i = 0
+  let len = source.length()
+  while i < len && i < target {
+    let c = source.charcode_at(i)
+    if c == 0x0A {
+      line = line + 1
+      col = 1
+    } else {
+      col = col + 1
+    }
+    i = i + 1
+  }
+  (line, col)
+}
+
+// ---------------------------------------------------------------------------
+// IDE proxies
+// ---------------------------------------------------------------------------
+
+///|
+pub fn semantic_tokens_for(text : String) -> Array[@ide.SemanticToken] {
+  @ide.semantic_tokens(text)
+}
+
+///|
+pub fn completions_at(text : String, offset : UInt) -> Array[@ide.CompletionItem] {
+  @ide.completions_at(text, offset)
+}
+
+///|
+pub fn hover_at(text : String, offset : UInt) -> @ide.HoverInfo? {
+  @ide.hover_at(text, offset)
+}
+
+///|
+pub fn goto_definition_at(text : String, offset : UInt) -> @ide.GotoTarget? {
+  @ide.goto_definition_at(text, offset)
+}
+
+// ---------------------------------------------------------------------------
+// JSON-RPC serialisation helpers
+// ---------------------------------------------------------------------------
+
+///|
+/// Serialise an LSP diagnostic as a JSON object body (without surrounding
+/// envelope). Good enough for the simple stdin/stdout transport layer
+/// that will land in a follow-up.
+pub fn diagnostic_to_json(d : LspDiagnostic) -> String {
+  let severity_n = match d.severity {
+    ErrorSev => 1
+    WarningSev => 2
+    InfoSev => 3
+    HintSev => 4
+  }
+  let mut out = "{\"message\":" + json_string(d.message) +
+    ",\"severity\":" + severity_n.to_string() +
+    ",\"range\":{" +
+    "\"start\":{\"line\":" + d.start_line.to_string() +
+    ",\"character\":" + d.start_character.to_string() + "}," +
+    "\"end\":{\"line\":" + d.end_line.to_string() +
+    ",\"character\":" + d.end_character.to_string() + "}}"
+  match d.help {
+    Some(h) => out = out + ",\"help\":" + json_string(h)
+    None => ()
+  }
+  out + "}"
+}
+
+///|
+fn json_string(s : String) -> String {
+  let len = s.length()
+  let mut out = "\""
+  let mut i = 0
+  while i < len {
+    let c = s.charcode_at(i)
+    if c == 0x22 {
+      out = out + "\\\""
+    } else if c == 0x5C {
+      out = out + "\\\\"
+    } else if c == 0x0A {
+      out = out + "\\n"
+    } else if c == 0x0D {
+      out = out + "\\r"
+    } else if c == 0x09 {
+      out = out + "\\t"
+    } else if c < 0x20 {
+      out = out + "\\u00" + hex_byte(c)
+    } else {
+      out = out + s.substring(start=i, end=i + 1)
+    }
+    i = i + 1
+  }
+  out + "\""
+}
+
+///|
+fn hex_byte(b : Int) -> String {
+  let hex = "0123456789abcdef"
+  let hi = (b / 16) % 16
+  let lo = b % 16
+  hex.substring(start=hi, end=hi + 1) + hex.substring(start=lo, end=lo + 1)
+}
+
+///|
+/// Render `compute_diagnostics(text)` as a JSON array of objects, ready
+/// to drop into the `params.diagnostics` field of a
+/// `textDocument/publishDiagnostics` notification.
+pub fn diagnostics_json_for(text : String) -> String {
+  let diags = compute_diagnostics(text)
+  let mut out = "["
+  let mut first = true
+  for d in diags {
+    if not(first) {
+      out = out + ","
+    }
+    first = false
+    out = out + diagnostic_to_json(d)
+  }
+  out + "]"
 }

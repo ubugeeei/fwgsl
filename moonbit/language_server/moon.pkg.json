@@ -2,6 +2,14 @@
   "name": "language_server",
   "import": [
     "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/parser",
+    "ubugeeei/fwgsl/semantic",
+    "ubugeeei/fwgsl/ide"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/parser",
+    "ubugeeei/fwgsl/semantic",
     "ubugeeei/fwgsl/ide"
   ]
 }
