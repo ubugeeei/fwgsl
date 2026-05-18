@@ -1,0 +1,11 @@
+{
+  "name": "typechecker",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics"
+  ]
+}
