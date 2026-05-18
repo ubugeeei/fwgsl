@@ -2,10 +2,14 @@
   "name": "parser",
   "import": [
     "ubugeeei/fwgsl/span",
-    "ubugeeei/fwgsl/syntax"
+    "ubugeeei/fwgsl/syntax",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast"
   ],
   "test-import": [
     "ubugeeei/fwgsl/span",
-    "ubugeeei/fwgsl/syntax"
+    "ubugeeei/fwgsl/syntax",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast"
   ]
 }
