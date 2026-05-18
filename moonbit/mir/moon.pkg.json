@@ -1,9 +1,11 @@
 {
   "name": "mir",
   "import": [
-    "ubugeeei/fwgsl/typechecker"
+    "ubugeeei/fwgsl/typechecker",
+    "ubugeeei/fwgsl/hir"
   ],
   "test-import": [
-    "ubugeeei/fwgsl/typechecker"
+    "ubugeeei/fwgsl/typechecker",
+    "ubugeeei/fwgsl/hir"
   ]
 }
