@@ -71,7 +71,5 @@ jobs:
         run: moon version
       - name: moon check
         run: moon check
-        continue-on-error: true
       - name: moon test
         run: moon test
-        continue-on-error: true
