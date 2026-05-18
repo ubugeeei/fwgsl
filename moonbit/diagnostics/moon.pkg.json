@@ -1,0 +1,9 @@
+{
+  "name": "diagnostics",
+  "import": [
+    "ubugeeei/fwgsl/span"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span"
+  ]
+}
