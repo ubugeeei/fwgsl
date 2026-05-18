@@ -1,0 +1,7 @@
+{
+  "name": "main",
+  "is-main": true,
+  "import": [
+    "ubugeeei/fwgsl/cli"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "cli",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/parser",
+    "ubugeeei/fwgsl/semantic"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/parser",
+    "ubugeeei/fwgsl/semantic"
+  ]
+}
