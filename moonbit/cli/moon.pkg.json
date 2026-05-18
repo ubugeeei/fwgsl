@@ -5,13 +5,19 @@
     "ubugeeei/fwgsl/diagnostics",
     "ubugeeei/fwgsl/ast",
     "ubugeeei/fwgsl/parser",
-    "ubugeeei/fwgsl/semantic"
+    "ubugeeei/fwgsl/semantic",
+    "ubugeeei/fwgsl/ast_lowering",
+    "ubugeeei/fwgsl/mir",
+    "ubugeeei/fwgsl/wgsl_codegen"
   ],
   "test-import": [
     "ubugeeei/fwgsl/span",
     "ubugeeei/fwgsl/diagnostics",
     "ubugeeei/fwgsl/ast",
     "ubugeeei/fwgsl/parser",
-    "ubugeeei/fwgsl/semantic"
+    "ubugeeei/fwgsl/semantic",
+    "ubugeeei/fwgsl/ast_lowering",
+    "ubugeeei/fwgsl/mir",
+    "ubugeeei/fwgsl/wgsl_codegen"
   ]
 }
