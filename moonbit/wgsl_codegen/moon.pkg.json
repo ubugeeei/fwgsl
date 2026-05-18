@@ -1,0 +1,9 @@
+{
+  "name": "wgsl_codegen",
+  "import": [
+    "ubugeeei/fwgsl/mir"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/mir"
+  ]
+}
