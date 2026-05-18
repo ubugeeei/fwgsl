@@ -30,7 +30,7 @@ pub fn WgslType::display(self : WgslType) -> String {
 }
 
 ///|
-impl Show for WgslType with output(self : WgslType, logger : &Logger) -> Unit {
+impl Show for WgslType with output(self, logger) {
   logger.write_string(self.display())
 }
 

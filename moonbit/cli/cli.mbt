@@ -161,7 +161,7 @@ fn offset_to_line_col(source : String, offset : UInt) -> (Int, Int) {
   let mut i = 0
   let len = source.length()
   while i < len && i < target {
-    let c = source.charcode_at(i)
+    let c = source.unsafe_charcode_at(i)
     if c == 0x0A {
       line = line + 1
       col = 1

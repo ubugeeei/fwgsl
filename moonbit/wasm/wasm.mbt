@@ -90,7 +90,7 @@ fn json_string(s : String) -> String {
   let mut out = "\""
   let mut i = 0
   while i < len {
-    let c = s.charcode_at(i)
+    let c = s.unsafe_charcode_at(i)
     if c == 0x22 {
       out = out + "\\\""
     } else if c == 0x5C {

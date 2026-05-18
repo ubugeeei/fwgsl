@@ -1336,7 +1336,7 @@ pub fn is_swizzle(field : String) -> Bool {
   let mut all_rgba = true
   let mut i = 0
   while i < len {
-    let c = field.charcode_at(i)
+    let c = field.unsafe_charcode_at(i)
     let xyzw = c == 0x78 || c == 0x79 || c == 0x7A || c == 0x77
     let rgba = c == 0x72 || c == 0x67 || c == 0x62 || c == 0x61
     if not(xyzw) {
@@ -1367,7 +1367,7 @@ pub fn validate_swizzle(field : String, n : UInt) -> Bool {
   let len = field.length()
   let mut i = 0
   while i < len {
-    let c = field.charcode_at(i)
+    let c = field.unsafe_charcode_at(i)
     if swizzle_index(c).reinterpret_as_uint() >= n {
       return false
     }

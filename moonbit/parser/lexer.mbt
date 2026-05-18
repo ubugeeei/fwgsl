@@ -73,7 +73,7 @@ fn Lexer::peek(self : Lexer) -> Int {
   if self.at_end() {
     0
   } else {
-    self.source.charcode_at(self.pos)
+    self.source.unsafe_charcode_at(self.pos)
   }
 }
 
@@ -83,13 +83,13 @@ fn Lexer::peek_at(self : Lexer, offset : Int) -> Int {
   if idx >= self.source_len {
     0
   } else {
-    self.source.charcode_at(idx)
+    self.source.unsafe_charcode_at(idx)
   }
 }
 
 ///|
 fn Lexer::advance(self : Lexer) -> Int {
-  let c = self.source.charcode_at(self.pos)
+  let c = self.source.unsafe_charcode_at(self.pos)
   self.pos = self.pos + 1
   c
 }
@@ -521,7 +521,7 @@ fn Lexer::advance_utf8_char(self : Lexer) -> Unit {
   if self.at_end() {
     return
   }
-  let c = self.source.charcode_at(self.pos)
+  let c = self.source.unsafe_charcode_at(self.pos)
   self.pos = self.pos + 1
   // High surrogate: consume the trailing low surrogate too.
   if c >= 0xD800 && c <= 0xDBFF && not(self.at_end()) {

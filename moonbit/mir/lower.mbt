@@ -260,7 +260,7 @@ fn parse_uint_or(text : String, default_value : UInt) -> UInt {
   let mut acc : UInt = 0
   let mut saw_digit = false
   while i < len {
-    let c = text.charcode_at(i)
+    let c = text.unsafe_charcode_at(i)
     if c < 0x30 || c > 0x39 {
       break
     }

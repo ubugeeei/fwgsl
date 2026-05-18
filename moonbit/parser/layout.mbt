@@ -38,7 +38,7 @@ fn LineMap::build(source : String) -> LineMap {
   let len = source.length()
   let mut i = 0
   while i < len {
-    if source.charcode_at(i) == 0x0A {
+    if source.unsafe_charcode_at(i) == 0x0A {
       starts.push(i + 1)
     }
     i = i + 1
