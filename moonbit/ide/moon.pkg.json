@@ -1,0 +1,10 @@
+{
+  "name": "ide",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/syntax",
+    "ubugeeei/fwgsl/parser",
+    "ubugeeei/fwgsl/semantic"
+  ]
+}

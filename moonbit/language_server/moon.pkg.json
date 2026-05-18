@@ -1,0 +1,7 @@
+{
+  "name": "language_server",
+  "import": [
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ide"
+  ]
+}
