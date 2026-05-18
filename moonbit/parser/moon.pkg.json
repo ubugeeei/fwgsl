@@ -1,0 +1,11 @@
+{
+  "name": "parser",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/syntax"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/syntax"
+  ]
+}
