@@ -1,0 +1,11 @@
+{
+  "name": "hir",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/typechecker"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/typechecker"
+  ]
+}
