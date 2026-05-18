@@ -258,3 +258,78 @@ test "type env basic" {
     Some(_) => fail("expected y to be absent")
   }
 }
+
+///|
+test "ty equality on App" {
+  let a = @typechecker.Ty::app(
+    @typechecker.Ty::Con("Vec"),
+    @typechecker.Ty::Nat(3UL),
+  )
+  let b = @typechecker.Ty::app(
+    @typechecker.Ty::Con("Vec"),
+    @typechecker.Ty::Nat(3UL),
+  )
+  let c = @typechecker.Ty::app(
+    @typechecker.Ty::Con("Vec"),
+    @typechecker.Ty::Nat(4UL),
+  )
+  assert_eq(a, b)
+  assert_true(a != c)
+}
+
+///|
+test "normalize_type_aliases applies Scalar collapse" {
+  let scalar_f32 = @typechecker.Ty::app(
+    @typechecker.Ty::Con("Scalar"),
+    @typechecker.Ty::f32(),
+  )
+  let n = @typechecker.normalize_type_aliases(scalar_f32)
+  assert_eq(n, @typechecker.Ty::f32())
+}
+
+///|
+test "normalize_type_aliases maps Array to Tensor constructor name" {
+  let array_8_f32 = @typechecker.Ty::app(
+    @typechecker.Ty::app(@typechecker.Ty::Con("Array"), @typechecker.Ty::Nat(8UL)),
+    @typechecker.Ty::f32(),
+  )
+  let tensor_8_f32 = @typechecker.tensor_ty(@typechecker.Ty::Nat(8UL), @typechecker.Ty::f32())
+  assert_eq(@typechecker.normalize_type_aliases(array_8_f32), tensor_8_f32)
+}
+
+///|
+test "vector_ty and matrix_ty helpers" {
+  let v3_f32 = @typechecker.vector_ty(3UL, @typechecker.Ty::f32())
+  let m4_f32 = @typechecker.matrix_ty(4UL, 4UL, @typechecker.Ty::f32())
+  assert_eq(
+    @typechecker.ty_to_wgsl(v3_f32),
+    Ok(@typechecker.WgslType::Vec(3, @typechecker.WgslType::F32)),
+  )
+  assert_eq(
+    @typechecker.ty_to_wgsl(m4_f32),
+    Ok(@typechecker.WgslType::Mat(4, 4, @typechecker.WgslType::F32)),
+  )
+}
+
+///|
+test "pair_ty and option_ty" {
+  let p = @typechecker.pair_ty(@typechecker.Ty::i32(), @typechecker.Ty::bool())
+  match p {
+    App(App(Con(name), _), _) => assert_eq(name, "Pair")
+    _ => fail("expected pair structure")
+  }
+  let o = @typechecker.option_ty(@typechecker.Ty::i32())
+  match o {
+    App(Con(name), _) => assert_eq(name, "Option")
+    _ => fail("expected option structure")
+  }
+}
+
+///|
+test "substitution lookup miss returns None" {
+  let s = @typechecker.Substitution::new()
+  match s.lookup(42) {
+    None => ()
+    Some(_) => fail("expected None")
+  }
+}
