@@ -1,0 +1,15 @@
+{
+  "name": "semantic",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/typechecker"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/typechecker"
+  ]
+}
