@@ -1,0 +1,16 @@
+{
+  "name": "ubugeeei/fwgsl",
+  "version": "0.1.0",
+  "readme": "moonbit/README.md",
+  "repository": "https://github.com/ubugeeei/fwgsl",
+  "license": "MIT",
+  "keywords": [
+    "compiler",
+    "wgsl",
+    "shader",
+    "webgpu",
+    "functional"
+  ],
+  "description": "Pure functional language for WebGPU that compiles to WGSL (MoonBit rewrite)",
+  "source": "moonbit"
+}
