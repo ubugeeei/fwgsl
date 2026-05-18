@@ -7,5 +7,13 @@
     "ubugeeei/fwgsl/typechecker",
     "ubugeeei/fwgsl/hir",
     "ubugeeei/fwgsl/semantic"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/typechecker",
+    "ubugeeei/fwgsl/hir",
+    "ubugeeei/fwgsl/semantic"
   ]
 }
