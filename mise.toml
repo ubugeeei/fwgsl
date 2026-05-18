@@ -58,6 +58,26 @@ python3 -m http.server 3000
 description = "Run all checks (fmt, lint, test)"
 depends = ["fmt:check", "lint", "test"]
 
+# -----------------------------------------------------------------------------
+# MoonBit tasks (work-in-progress rewrite tracked by issue #4)
+# -----------------------------------------------------------------------------
+
+[tasks."mb-check"]
+description = "Type-check the MoonBit workspace"
+run = "moon check"
+
+[tasks."mb-build"]
+description = "Build the MoonBit workspace"
+run = "moon build"
+
+[tasks."mb-test"]
+description = "Run MoonBit tests"
+run = "moon test"
+
+[tasks."mb-fmt"]
+description = "Format MoonBit sources"
+run = "moon fmt"
+
 [tasks."bump:alpha"]
 description = "Bump version to next alpha"
 run = """
