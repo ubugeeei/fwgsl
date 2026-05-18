@@ -1,0 +1,19 @@
+{
+  "name": "integration_tests",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/parser",
+    "ubugeeei/fwgsl/semantic",
+    "ubugeeei/fwgsl/cli"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/parser",
+    "ubugeeei/fwgsl/semantic",
+    "ubugeeei/fwgsl/cli"
+  ]
+}
