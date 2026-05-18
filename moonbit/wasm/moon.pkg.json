@@ -4,5 +4,10 @@
     "ubugeeei/fwgsl/diagnostics",
     "ubugeeei/fwgsl/parser",
     "ubugeeei/fwgsl/semantic"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/parser",
+    "ubugeeei/fwgsl/semantic"
   ]
 }
