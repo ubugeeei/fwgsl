@@ -113,7 +113,7 @@ fn any_error(diags : Array[@diagnostics.Diagnostic]) -> Bool {
 ///|
 fn diagnostics_to_json(
   diags : Array[@diagnostics.Diagnostic],
-  _source : String
+  source : String
 ) -> String {
   let mut out = "["
   let mut first = true
@@ -130,6 +130,18 @@ fn diagnostics_to_json(
     }
     out = out + "{\"severity\":\"" + severity + "\","
     out = out + "\"message\":" + json_string(diag.message)
+    // The playground reads `diagnostic.line` / `diagnostic.col` directly
+    // for Monaco markers. Derive them from the first label's start
+    // offset; both are 1-based to match the Monaco conventions.
+    if diag.labels.length() > 0 {
+      let primary = diag.labels[0]
+      let (line, col) = offset_to_line_col(source, primary.span.start)
+      out = out +
+        ",\"line\":" +
+        line.to_string() +
+        ",\"col\":" +
+        col.to_string()
+    }
     match diag.code {
       Some(c) => out = out + ",\"code\":" + json_string(c)
       None => ()
