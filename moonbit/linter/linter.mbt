@@ -70,14 +70,64 @@ fn lint_decl(
         let (_, w_body) = w
         lint_expr(w_body, diags)
       }
+      // Shadowed-binding rule: walk with the function params in scope.
+      // The `where` clauses are folded into a synthetic `Let` so the
+      // shadowing walk treats them the same as inline lets — the walk
+      // itself pushes / pops names, so we don't pre-push them here
+      // (doing so would make every `where` binding flag itself as a
+      // self-shadow when the walk re-pushes it).
+      let scope : Array[String] = Array::new()
+      for p in params {
+        collect_pattern_names(p, scope)
+      }
+      let body_with_wheres = if where_binds.length() == 0 {
+        body
+      } else {
+        @ast.Expr::Let(where_binds, body, body.span())
+      }
+      lint_shadowing(body_with_wheres, scope, diags)
     }
     EntryPoint(_, _, params, body, _) => {
       lint_expr(body, diags)
       for p in params {
         lint_pattern(p, diags)
       }
+      let scope : Array[String] = Array::new()
+      for p in params {
+        collect_pattern_names(p, scope)
+      }
+      lint_shadowing(body, scope, diags)
     }
     _ => ()
+  }
+}
+
+///|
+fn collect_pattern_names(pat : @ast.Pat, out : Array[String]) -> Unit {
+  match pat {
+    Var(name, _) => out.push(name)
+    Con(_, sub, _) =>
+      for p in sub {
+        collect_pattern_names(p, out)
+      }
+    Paren(p, _) => collect_pattern_names(p, out)
+    As(name, p, _) => {
+      out.push(name)
+      collect_pattern_names(p, out)
+    }
+    Tuple(ps, _) =>
+      for p in ps {
+        collect_pattern_names(p, out)
+      }
+    Record(_, fields, _) =>
+      for f in fields {
+        let (name, pat_opt) = f
+        match pat_opt {
+          Some(p) => collect_pattern_names(p, out)
+          None => out.push(name) // punning: `{ x }` binds `x`.
+        }
+      }
+    Wild(_) | Lit(_, _) => ()
   }
 }
 
@@ -397,6 +447,169 @@ fn same_expr(a : @ast.Expr, b : @ast.Expr) -> Bool {
   let sa = a.span()
   let sb = b.span()
   sa.start == sb.start && sa.end == sb.end
+}
+
+///|
+/// Walk `expr` with `scope` carrying the names already in scope. Pushes a
+/// `shadowed-binding` warning every time a `let` or `lambda` re-binds a
+/// name that's already in scope, then continues into the body with the
+/// new name added.
+fn lint_shadowing(
+  expr : @ast.Expr,
+  scope : Array[String],
+  diags : Array[@diagnostics.Diagnostic]
+) -> Unit {
+  match expr {
+    Let(binds, body, _) => {
+      let mut pushed = 0
+      for b in binds {
+        let (name, rhs) = b
+        if !is_ignored(name) && contains_name(scope, name) {
+          diags.push(
+            @diagnostics.Diagnostic::warning(
+              "Shadowed binding `" + name + "`",
+            )
+              .with_code(LintRuleId::ShadowedBinding.code())
+              .with_label(
+                @diagnostics.Label::primary(
+                  rhs.span(),
+                  "shadows an outer binding of the same name",
+                ),
+              )
+              .with_help(
+                "rename the inner binding, or rename the outer one if the shadow is intentional",
+              ),
+          )
+        }
+        lint_shadowing(rhs, scope, diags)
+        if !is_ignored(name) {
+          scope.push(name)
+          pushed = pushed + 1
+        }
+      }
+      lint_shadowing(body, scope, diags)
+      while pushed > 0 {
+        let _ = scope.pop()
+        pushed = pushed - 1
+      }
+    }
+    Lambda(params, body, _) => {
+      let pushed_names : Array[String] = Array::new()
+      for p in params {
+        let names : Array[String] = Array::new()
+        collect_pattern_names(p, names)
+        for n in names {
+          if !is_ignored(n) && contains_name(scope, n) {
+            diags.push(
+              @diagnostics.Diagnostic::warning(
+                "Shadowed binding `" + n + "`",
+              )
+                .with_code(LintRuleId::ShadowedBinding.code())
+                .with_label(
+                  @diagnostics.Label::primary(
+                    p.span(),
+                    "shadows an outer binding of the same name",
+                  ),
+                )
+                .with_help(
+                  "rename the lambda parameter or the outer binding",
+                ),
+            )
+          }
+          if !is_ignored(n) {
+            scope.push(n)
+            pushed_names.push(n)
+          }
+        }
+      }
+      lint_shadowing(body, scope, diags)
+      let mut i = pushed_names.length()
+      while i > 0 {
+        let _ = scope.pop()
+        i = i - 1
+      }
+    }
+    Case(scrut, arms, _) => {
+      lint_shadowing(scrut, scope, diags)
+      for a in arms {
+        let (pat, body) = a
+        let names : Array[String] = Array::new()
+        collect_pattern_names(pat, names)
+        let pushed : Array[String] = Array::new()
+        for n in names {
+          if !is_ignored(n) && contains_name(scope, n) {
+            diags.push(
+              @diagnostics.Diagnostic::warning(
+                "Shadowed binding `" + n + "`",
+              )
+                .with_code(LintRuleId::ShadowedBinding.code())
+                .with_label(
+                  @diagnostics.Label::primary(
+                    pat.span(),
+                    "shadows an outer binding of the same name",
+                  ),
+                )
+                .with_help(
+                  "rename the match-arm binding or the outer binding",
+                ),
+            )
+          }
+          if !is_ignored(n) {
+            scope.push(n)
+            pushed.push(n)
+          }
+        }
+        lint_shadowing(body, scope, diags)
+        let mut i = pushed.length()
+        while i > 0 {
+          let _ = scope.pop()
+          i = i - 1
+        }
+      }
+    }
+    If(c, t, e, _) => {
+      lint_shadowing(c, scope, diags)
+      lint_shadowing(t, scope, diags)
+      lint_shadowing(e, scope, diags)
+    }
+    App(f, a, _) => {
+      lint_shadowing(f, scope, diags)
+      lint_shadowing(a, scope, diags)
+    }
+    Infix(l, _, r, _) => {
+      lint_shadowing(l, scope, diags)
+      lint_shadowing(r, scope, diags)
+    }
+    Paren(inner, _) | Neg(inner, _) => lint_shadowing(inner, scope, diags)
+    FieldAccess(inner, _, _) => lint_shadowing(inner, scope, diags)
+    Tuple(es, _) | VecLit(es, _) =>
+      for e in es {
+        lint_shadowing(e, scope, diags)
+      }
+    Record(fields, _) =>
+      for f in fields {
+        let (_, e) = f
+        lint_shadowing(e, scope, diags)
+      }
+    Do(stmts, _) =>
+      for s in stmts {
+        match s {
+          Bind(_, e, _) | ExprStmt(e, _) | LetStmt(_, e, _) =>
+            lint_shadowing(e, scope, diags)
+        }
+      }
+    Lit(_, _) | Var(_, _) | Con(_, _) | OpSection(_, _) => ()
+  }
+}
+
+///|
+fn contains_name(scope : Array[String], name : String) -> Bool {
+  for n in scope {
+    if n == name {
+      return true
+    }
+  }
+  false
 }
 
 ///|
