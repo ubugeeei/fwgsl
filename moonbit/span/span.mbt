@@ -43,7 +43,7 @@ pub fn Span::contains(self : Span, offset : UInt) -> Bool {
 ///|
 /// Extract the source text covered by this span.
 pub fn Span::source_text(self : Span, source : String) -> String {
-  source.substring(start=self.start.reinterpret_as_int(), end=self.end.reinterpret_as_int())
+  source.unsafe_substring(start=self.start.reinterpret_as_int(), end=self.end.reinterpret_as_int())
 }
 
 ///|

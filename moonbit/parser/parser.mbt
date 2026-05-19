@@ -700,13 +700,13 @@ fn Parser::parse_atom(self : Parser) -> @ast.Expr {
     StringLiteral => {
       let tok = self.bump()
       let text = self.text_of(tok)
-      let inner = text.substring(start=1, end=text.length() - 1)
+      let inner = text.unsafe_substring(start=1, end=text.length() - 1)
       @ast.Expr::Lit(@ast.Lit::StringLit(unescape_string(inner)), tok.span)
     }
     CharLiteral => {
       let tok = self.bump()
       let text = self.text_of(tok)
-      let inner = text.substring(start=1, end=text.length() - 1)
+      let inner = text.unsafe_substring(start=1, end=text.length() - 1)
       let ch = unescape_char(inner)
       @ast.Expr::Lit(@ast.Lit::Char(ch), tok.span)
     }
@@ -1097,13 +1097,13 @@ fn Parser::parse_pat_atom(self : Parser) -> @ast.Pat {
     StringLiteral => {
       let tok = self.bump()
       let text = self.text_of(tok)
-      let inner = text.substring(start=1, end=text.length() - 1)
+      let inner = text.unsafe_substring(start=1, end=text.length() - 1)
       @ast.Pat::Lit(@ast.Lit::StringLit(unescape_string(inner)), tok.span)
     }
     CharLiteral => {
       let tok = self.bump()
       let text = self.text_of(tok)
-      let inner = text.substring(start=1, end=text.length() - 1)
+      let inner = text.unsafe_substring(start=1, end=text.length() - 1)
       @ast.Pat::Lit(@ast.Lit::Char(unescape_char(inner)), tok.span)
     }
     LParen => {
@@ -1360,15 +1360,15 @@ fn parse_int_literal(text : String) -> Int64 {
   if text.length() >= 2 &&
     text.unsafe_charcode_at(0) == 0x30 &&
     (text.unsafe_charcode_at(1) == 0x78 || text.unsafe_charcode_at(1) == 0x58) {
-    parse_int_in_radix(text.substring(start=2, end=text.length()), 16)
+    parse_int_in_radix(text.unsafe_substring(start=2, end=text.length()), 16)
   } else if text.length() >= 2 &&
     text.unsafe_charcode_at(0) == 0x30 &&
     (text.unsafe_charcode_at(1) == 0x6F || text.unsafe_charcode_at(1) == 0x4F) {
-    parse_int_in_radix(text.substring(start=2, end=text.length()), 8)
+    parse_int_in_radix(text.unsafe_substring(start=2, end=text.length()), 8)
   } else if text.length() >= 2 &&
     text.unsafe_charcode_at(0) == 0x30 &&
     (text.unsafe_charcode_at(1) == 0x62 || text.unsafe_charcode_at(1) == 0x42) {
-    parse_int_in_radix(text.substring(start=2, end=text.length()), 2)
+    parse_int_in_radix(text.unsafe_substring(start=2, end=text.length()), 2)
   } else {
     parse_int_in_radix(text, 10)
   }
@@ -1487,11 +1487,11 @@ fn unescape_string(s : String) -> String {
         0x5C => out = out + "\\"
         0x22 => out = out + "\""
         0x30 => out = out + "\u{0000}"
-        _ => out = out + "\\" + s.substring(start=i + 1, end=i + 2)
+        _ => out = out + "\\" + s.unsafe_substring(start=i + 1, end=i + 2)
       }
       i = i + 2
     } else {
-      out = out + s.substring(start=i, end=i + 1)
+      out = out + s.unsafe_substring(start=i, end=i + 1)
       i = i + 1
     }
   }
@@ -1525,7 +1525,7 @@ fn unescape_char(s : String) -> Char {
 /// Best-effort "first Char" of a substring. Used to materialise the body of a
 /// char literal without depending on a particular `Int -> Char` API.
 fn single_char_of(s : String, offset : Int) -> Char {
-  let one = s.substring(start=offset, end=offset + 1)
+  let one = s.unsafe_substring(start=offset, end=offset + 1)
   let mut out : Char = ' '
   for c in one {
     out = c

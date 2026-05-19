@@ -8,7 +8,7 @@
 ///|
 fn strip_builtin_prefix(name : String) -> String {
   if name.length() > 0 && name.unsafe_charcode_at(0) == 0x24 {
-    name.substring(start=1, end=name.length())
+    name.unsafe_substring(start=1, end=name.length())
   } else {
     name
   }
@@ -26,7 +26,7 @@ fn sanitize_identifier(name : String) -> String {
       (c >= 0x61 && c <= 0x7A) ||
       c == 0x5F
     if is_alnum {
-      out = out + name.substring(start=i, end=i + 1)
+      out = out + name.unsafe_substring(start=i, end=i + 1)
     } else if c == 0x27 {
       out = out + "_prime"
     } else {
@@ -144,7 +144,7 @@ fn trim_trailing_whitespace(s : String) -> String {
       break
     }
   }
-  s.substring(start=0, end=end)
+  s.unsafe_substring(start=0, end=end)
 }
 
 ///|
@@ -461,7 +461,7 @@ fn string_contains(haystack : String, needle : String) -> Bool {
   }
   let mut i = 0
   while i + nlen <= hlen {
-    if haystack.substring(start=i, end=i + nlen) == needle {
+    if haystack.unsafe_substring(start=i, end=i + nlen) == needle {
       return true
     }
     i = i + 1

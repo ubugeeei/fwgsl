@@ -499,7 +499,7 @@ fn Lexer::lex_ident(self : Lexer, start : Int) -> Unit {
   while !self.at_end() && is_ident_continue(self.peek()) {
     let _ = self.advance()
   }
-  let text = self.source.substring(start=start, end=self.pos)
+  let text = self.source.unsafe_substring(start=start, end=self.pos)
   match @syntax.keyword_from_str(text) {
     Some(kw) => self.emit(kw, start)
     None => self.emit(@syntax.SyntaxKind::Ident, start)

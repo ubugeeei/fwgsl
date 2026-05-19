@@ -291,7 +291,7 @@ fn json_string(s : String) -> String {
     } else if c < 0x20 {
       out = out + "\\u00" + hex_byte(c)
     } else {
-      out = out + s.substring(start=i, end=i + 1)
+      out = out + s.unsafe_substring(start=i, end=i + 1)
     }
     i = i + 1
   }
@@ -303,7 +303,7 @@ fn hex_byte(b : Int) -> String {
   let hex = "0123456789abcdef"
   let hi = (b / 16) % 16
   let lo = b % 16
-  hex.substring(start=hi, end=hi + 1) + hex.substring(start=lo, end=lo + 1)
+  hex.unsafe_substring(start=hi, end=hi + 1) + hex.unsafe_substring(start=lo, end=lo + 1)
 }
 
 ///|

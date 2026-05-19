@@ -340,7 +340,7 @@ fn TyVarNames::name_for(self : TyVarNames, v : UInt) -> String {
 fn letter_name(i : Int) -> String {
   if i < 26 {
     let letters = "abcdefghijklmnopqrstuvwxyz"
-    letters.substring(start=i, end=i + 1)
+    letters.unsafe_substring(start=i, end=i + 1)
   } else {
     "t" + i.to_string()
   }
@@ -590,7 +590,7 @@ fn leading_indent_for(offset : UInt, source : String) -> String {
     }
     i = i + 1
   }
-  source.substring(start=line_start, end=i)
+  source.unsafe_substring(start=line_start, end=i)
 }
 
 ///|

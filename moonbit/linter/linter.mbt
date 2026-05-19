@@ -190,7 +190,7 @@ fn lint_unused_let(
     if is_ignored(name) {
       continue
     }
-    if not(expr_references(body, name)) && not(any_binding_references(binds, name, e)) {
+    if !expr_references(body, name) && !any_binding_references(binds, name, e) {
       diags.push(
         @diagnostics.Diagnostic::warning(
           "Unused let binding `" + name + "`",
@@ -242,8 +242,8 @@ fn lint_unused_where(
     if is_ignored(name) {
       continue
     }
-    if not(expr_references(body, name)) &&
-      not(any_binding_references(where_binds, name, e)) {
+    if !expr_references(body, name) &&
+      !any_binding_references(where_binds, name, e) {
       diags.push(
         @diagnostics.Diagnostic::warning(
           "Unused where binding `" + name + "`",
