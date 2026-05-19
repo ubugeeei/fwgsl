@@ -185,14 +185,231 @@ fn offset_to_line_col(source : String, offset : UInt) -> (Int, Int) {
 ///|
 /// Print the CLI usage banner to stdout.
 pub fn print_help() -> Unit {
-  println("fwgsl " + VERSION)
-  println("USAGE:")
-  println("    fwgsl <COMMAND> [OPTIONS]")
-  println("")
-  println("COMMANDS:")
-  println("    compile, c  <file>    Compile .fwgsl to .wgsl")
-  println("    check       <file>    Type-check without emitting")
-  println("    fmt         <file>    Format source code (placeholder)")
-  println("    version               Print version")
-  println("    help                  Print this help")
+  println(help_text())
+}
+
+///|
+/// The CLI usage banner as a string. Returned by `fwgsl help` and used to
+/// keep `print_help` and the parsed `Help` command in sync.
+pub fn help_text() -> String {
+  let lines = [
+    "fwgsl " + VERSION,
+    "USAGE:",
+    "    fwgsl <COMMAND> [OPTIONS]",
+    "",
+    "COMMANDS:",
+    "    compile, c  <file>     Compile .fwgsl to .wgsl",
+    "    check       <file>     Type-check without emitting",
+    "    fmt         <file>     Format source code",
+    "    version                Print version",
+    "    help                   Print this help",
+    "",
+    "OPTIONS:",
+    "    --source <text>        Use <text> as the source instead of <file>",
+    "    --stdin                Read source from STDIN instead of <file>",
+    "    -h, --help             Print this help",
+    "    -V, --version          Print version",
+  ]
+  let mut out = ""
+  let mut first = true
+  for l in lines {
+    if not(first) {
+      out = out + "\n"
+    }
+    first = false
+    out = out + l
+  }
+  out
+}
+
+///|
+/// Parsed CLI command produced by `parse_args`.
+pub(all) enum CliCommand {
+  /// `fwgsl help` or `-h` / `--help` / no args at all.
+  Help
+  /// `fwgsl version` or `-V` / `--version`.
+  Version
+  /// `fwgsl compile <input>` or `fwgsl c <input>`.
+  Compile(CliInput)
+  /// `fwgsl check <input>`.
+  Check(CliInput)
+  /// `fwgsl fmt <input>`.
+  Fmt(CliInput)
+  /// `argv[0]` didn't match any known command, or `<input>` was missing.
+  Invalid(String)
+} derive(Show)
+
+///|
+/// Where a subcommand should pull its source from. The binary that wraps
+/// the CLI is in charge of turning `File(path)` into a string; the library
+/// stays decoupled from the host I/O surface.
+pub(all) enum CliInput {
+  File(String)
+  Inline(String)
+  Stdin
+} derive(Eq, Show)
+
+///|
+/// Parse `argv` (without the program name) into a `CliCommand`.
+///
+/// Recognised shapes (in addition to per-command flags):
+///
+/// - `[]`                              -> `Help`
+/// - `["-h" | "--help" | "help"]`      -> `Help`
+/// - `["-V" | "--version" | "version"]`-> `Version`
+/// - `["compile" | "c", <input>]`      -> `Compile`
+/// - `["check", <input>]`              -> `Check`
+/// - `["fmt", <input>]`                -> `Fmt`
+///
+/// `<input>` is one of:
+///
+/// - a positional file path (`foo.fwgsl`)
+/// - `--source <text>` (inline source for tests / one-liners)
+/// - `--stdin` (host wrapper feeds STDIN to the library)
+pub fn parse_args(argv : Array[String]) -> CliCommand {
+  if argv.length() == 0 {
+    return Help
+  }
+  let head = argv[0]
+  if head == "-h" || head == "--help" || head == "help" {
+    return Help
+  }
+  if head == "-V" || head == "--version" || head == "version" {
+    return Version
+  }
+  let rest = slice_from(argv, 1)
+  if head == "compile" || head == "c" {
+    return wrap_input(rest, "compile", fn(inp) { Compile(inp) })
+  }
+  if head == "check" {
+    return wrap_input(rest, "check", fn(inp) { Check(inp) })
+  }
+  if head == "fmt" {
+    return wrap_input(rest, "fmt", fn(inp) { Fmt(inp) })
+  }
+  Invalid("unknown command `" + head + "`")
+}
+
+///|
+fn slice_from(argv : Array[String], from : Int) -> Array[String] {
+  let out : Array[String] = Array::new()
+  let mut i = from
+  while i < argv.length() {
+    out.push(argv[i])
+    i = i + 1
+  }
+  out
+}
+
+///|
+fn wrap_input(
+  rest : Array[String],
+  command : String,
+  build : (CliInput) -> CliCommand
+) -> CliCommand {
+  match parse_input(rest) {
+    Ok(inp) => build(inp)
+    Err(msg) => Invalid(command + ": " + msg)
+  }
+}
+
+///|
+fn parse_input(rest : Array[String]) -> Result[CliInput, String] {
+  if rest.length() == 0 {
+    return Err("expected <file>, --source <text>, or --stdin")
+  }
+  let first = rest[0]
+  if first == "--stdin" {
+    if rest.length() > 1 {
+      return Err("`--stdin` does not take additional arguments")
+    }
+    return Ok(Stdin)
+  }
+  if first == "--source" {
+    if rest.length() < 2 {
+      return Err("`--source` requires a string argument")
+    }
+    if rest.length() > 2 {
+      return Err("`--source` takes a single string argument")
+    }
+    return Ok(Inline(rest[1]))
+  }
+  if first.length() >= 2 && first.unsafe_charcode_at(0) == 0x2D {
+    return Err("unrecognised flag `" + first + "`")
+  }
+  if rest.length() > 1 {
+    return Err("unexpected argument `" + rest[1] + "`")
+  }
+  Ok(File(first))
+}
+
+///|
+/// Run a `CliCommand` against a `source` string already pulled from the
+/// host (file, stdin, or `--source`). Returns the text that should be
+/// printed to stdout and an exit code (`0` on success, `1` if any
+/// diagnostic was an error).
+///
+/// The binary is responsible for turning `CliInput::File(path)` into a
+/// `String` before calling this; pure-library tests can bypass that step
+/// by passing the source directly.
+pub fn run_command(
+  command : CliCommand,
+  source : String,
+  file_label : String
+) -> (String, Int) {
+  match command {
+    Help => (help_text(), 0)
+    Version => ("fwgsl " + VERSION, 0)
+    Compile(_) => {
+      let result = compile_source(source)
+      run_compile_output(result, file_label, source)
+    }
+    Check(_) => {
+      let diags = check_source(source)
+      run_check_output(diags, file_label, source)
+    }
+    Fmt(_) => (format_source(source), 0)
+    Invalid(msg) => (msg + "\n\n" + help_text(), 2)
+  }
+}
+
+///|
+fn run_compile_output(
+  result : CompileResult,
+  file : String,
+  source : String
+) -> (String, Int) {
+  let diag_text = format_diagnostics(result.diagnostics, file, source)
+  match result.wgsl {
+    Some(wgsl) => {
+      let body = wrap_wgsl(file, wgsl)
+      if diag_text.length() == 0 {
+        (body, 0)
+      } else {
+        (diag_text + "\n" + body, 0)
+      }
+    }
+    None => (diag_text, 1)
+  }
+}
+
+///|
+fn run_check_output(
+  diags : Array[@diagnostics.Diagnostic],
+  file : String,
+  source : String
+) -> (String, Int) {
+  if diags.length() == 0 {
+    ("ok", 0)
+  } else {
+    let text = format_diagnostics(diags, file, source)
+    let mut code = 0
+    for d in diags {
+      if d.severity == @diagnostics.Severity::Error {
+        code = 1
+        break
+      }
+    }
+    (text, code)
+  }
 }
