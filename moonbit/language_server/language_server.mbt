@@ -182,6 +182,12 @@ pub fn goto_definition_at(text : String, offset : UInt) -> @ide.GotoTarget? {
   @ide.goto_definition_at(text, offset)
 }
 
+///|
+/// Format the document. Backs `textDocument/formatting`.
+pub fn format_document(text : String) -> String {
+  @formatter.format(text)
+}
+
 // ---------------------------------------------------------------------------
 // JSON-RPC serialisation helpers
 // ---------------------------------------------------------------------------
