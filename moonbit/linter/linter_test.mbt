@@ -129,3 +129,63 @@ test "lint_program: works on a parsed AST without re-parsing" {
   assert_eq(diags.length(), 1)
   assert_true(diags[0].message.contains("Unused let binding"))
 }
+
+///|
+test "shadowed-binding: let shadows a function parameter" {
+  let source = "f x = let x = 1 in x"
+  let diags = @linter.lint(source)
+  let mut found = false
+  for d in diags {
+    match d.code {
+      Some(c) =>
+        if c == "shadowed-binding" {
+          assert_true(d.message.contains("Shadowed binding"))
+          assert_true(d.message.contains("`x`"))
+          found = true
+        }
+      None => ()
+    }
+  }
+  assert_true(found)
+}
+
+///|
+test "shadowed-binding: inner let shadows outer let" {
+  let source = "f a = let x = a in let x = x + 1 in x"
+  let diags = @linter.lint(source)
+  let mut count = 0
+  for d in diags {
+    match d.code {
+      Some(c) =>
+        if c == "shadowed-binding" {
+          count = count + 1
+        }
+      None => ()
+    }
+  }
+  assert_eq(count, 1)
+}
+
+///|
+test "shadowed-binding: distinct names produce no warning" {
+  let source = "f x = let y = x in let z = y in z"
+  let diags = @linter.lint(source)
+  for d in diags {
+    match d.code {
+      Some(c) => assert_false(c == "shadowed-binding")
+      None => ()
+    }
+  }
+}
+
+///|
+test "shadowed-binding: leading-underscore names opt out" {
+  let source = "f _x = let _x = 1 in _x"
+  let diags = @linter.lint(source)
+  for d in diags {
+    match d.code {
+      Some(c) => assert_false(c == "shadowed-binding")
+      None => ()
+    }
+  }
+}
