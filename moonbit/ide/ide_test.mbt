@@ -307,6 +307,32 @@ test "references_at returns empty array for non-identifier tokens" {
 }
 
 ///|
+test "rename_at produces an edit per reference" {
+  // Two `scale` occurrences -> two replacement edits.
+  let source = "scale x = x + 1\nuse x = scale x"
+  let edits = @ide.rename_at(source, 24U, "scaled")
+  assert_eq(edits.length(), 2)
+  for e in edits {
+    assert_eq(e.new_text, "scaled")
+    // Replaced spans are 5 chars wide (the original `scale` token).
+    assert_eq(e.end - e.start, 5U)
+  }
+}
+
+///|
+test "rename_at returns empty array on non-identifier cursor" {
+  // Cursor on `=` -> not an identifier.
+  let edits = @ide.rename_at("f x = y", 4U, "z")
+  assert_eq(edits.length(), 0)
+}
+
+///|
+test "rename_at returns empty array when new_name is empty" {
+  let edits = @ide.rename_at("scale x = x + 1\nuse x = scale x", 0U, "")
+  assert_eq(edits.length(), 0)
+}
+
+///|
 test "token_at returns None for trivia" {
   // Offset 1 falls on whitespace.
   match @ide.token_at("a b", 1) {

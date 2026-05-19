@@ -314,6 +314,34 @@ pub fn editor_references(
 }
 
 ///|
+/// Editor rename refactor at `(line, column)`. Returns a JSON array
+/// of `{ range, newText }` edits — Monaco's
+/// `provideRenameEdits` shape. Each edit replaces a reference span
+/// with `new_name`. Returns `[]` when the cursor isn't on an
+/// identifier or `new_name` is empty.
+pub fn editor_rename(
+  source : String,
+  line : Int,
+  column : Int,
+  new_name : String
+) -> String {
+  let offset = line_col_to_offset(source, line, column)
+  let items : Array[String] = Array::new()
+  for edit in @ide.rename_at(source, offset, new_name) {
+    let span = @span.Span::new(edit.start, edit.end)
+    let range = span_to_monaco_range(source, span)
+    items.push(
+      "{\"range\":" +
+      range +
+      ",\"newText\":" +
+      json_string(edit.new_text) +
+      "}",
+    )
+  }
+  join_json_array(items)
+}
+
+///|
 /// Convert a 1-based `(line, column)` pair into a byte offset for use
 /// with the byte-offset-based IDE APIs.
 fn line_col_to_offset(source : String, line : Int, column : Int) -> UInt {

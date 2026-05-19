@@ -148,6 +148,32 @@ test "editor_references returns [] for non-identifier cursor positions" {
 }
 
 ///|
+test "editor_rename returns Monaco-shaped { range, newText } edits" {
+  let source = "scale x = x + 1\nuse x = scale x"
+  let json = @wasm.editor_rename(source, 2, 9, "scaled")
+  assert_eq(json.unsafe_charcode_at(0), 0x5B)
+  assert_true(json.contains("\"newText\":\"scaled\""))
+  assert_true(json.contains("\"range\":{"))
+  // Edits on line 1 and line 2.
+  assert_true(json.contains("\"startLineNumber\":1"))
+  assert_true(json.contains("\"startLineNumber\":2"))
+}
+
+///|
+test "editor_rename returns [] for non-identifier cursor positions" {
+  let source = "f x = y"
+  let json = @wasm.editor_rename(source, 1, 5, "z")
+  assert_eq(json, "[]")
+}
+
+///|
+test "editor_rename returns [] when the new name is empty" {
+  let source = "scale x = x + 1\nuse x = scale x"
+  let json = @wasm.editor_rename(source, 1, 1, "")
+  assert_eq(json, "[]")
+}
+
+///|
 test "wasm_check diagnostic JSON includes 1-based line / col" {
   // `y` lives at offset 6 of `f x = y` -> column 7 on line 1.
   let json = @wasm.wasm_check("f x = y")

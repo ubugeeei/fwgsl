@@ -511,6 +511,32 @@ pub fn references_at(
 }
 
 ///|
+/// Build a rename refactor: walk every reference of the identifier
+/// under `offset` and produce a `TextEdit` that replaces each span
+/// with `new_name`. Returns an empty array when the cursor isn't on
+/// an identifier or the new name is empty.
+pub fn rename_at(
+  source : String,
+  offset : UInt,
+  new_name : String
+) -> Array[TextEdit] {
+  let out : Array[TextEdit] = Array::new()
+  if new_name.length() == 0 {
+    return out
+  }
+  for target in references_at(source, offset, true) {
+    out.push(
+      TextEdit::{
+        start: target.span.start,
+        end: target.span.end,
+        new_text: new_name,
+      },
+    )
+  }
+  out
+}
+
+///|
 /// A single edit that an editor should apply to a source buffer.
 pub(all) struct TextEdit {
   /// Byte offset (inclusive) where the edit starts.

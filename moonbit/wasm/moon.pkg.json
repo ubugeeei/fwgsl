@@ -35,7 +35,8 @@
         "editor_completions",
         "editor_hover",
         "editor_definition",
-        "editor_references"
+        "editor_references",
+        "editor_rename"
       ],
       "use-js-builtin-string": true
     }
