@@ -11,44 +11,88 @@
 
 ///|
 /// Run parser + semantic diagnostics and return them as a JSON array.
+///
+/// Includes lint warnings alongside parser and semantic errors so the
+/// playground can surface unused-let / shadowed-binding / redundant-
+/// wildcard hints in the same panel as compile errors.
 pub fn wasm_check(source : String) -> String {
   let parser = @parser.Parser::new(source)
   let prog = parser.parse_program()
   let analyzer = @semantic.SemanticAnalyzer::new()
   analyzer.analyze(prog)
-  let combined = combine(parser.diagnostics(), analyzer.diagnostics())
-  diagnostics_to_json(combined, source)
+  let diags : Array[@diagnostics.Diagnostic] = Array::new()
+  for d in parser.diagnostics().all() {
+    diags.push(d)
+  }
+  for d in analyzer.diagnostics().all() {
+    diags.push(d)
+  }
+  for d in @linter.lint_program(prog) {
+    diags.push(d)
+  }
+  diagnostics_to_json(diags, source)
 }
 
 ///|
-/// Run parse + semantic analysis. Returns a JSON object with
-/// `diagnostics` (an array) and `wgsl` (a string or `null`). When any
-/// stage produces an error-severity diagnostic, `wgsl` is `null`.
+/// Run the full parse -> semantic -> AST lowering -> MIR -> WGSL
+/// pipeline. Returns a JSON object with `diagnostics` (parser +
+/// semantic + AST-lowering + MIR + lint diagnostics) and `wgsl` (the
+/// generated shader text, or `null` if any error-severity diagnostic
+/// was reported).
 pub fn wasm_compile(source : String) -> String {
   let parser = @parser.Parser::new(source)
   let prog = parser.parse_program()
   let analyzer = @semantic.SemanticAnalyzer::new()
   analyzer.analyze(prog)
-  let combined = combine(parser.diagnostics(), analyzer.diagnostics())
+  let diags : Array[@diagnostics.Diagnostic] = Array::new()
+  for d in parser.diagnostics().all() {
+    diags.push(d)
+  }
+  for d in analyzer.diagnostics().all() {
+    diags.push(d)
+  }
+  let lowering = @ast_lowering.AstLowering::new(analyzer)
+  let hir = lowering.lower_program(prog)
+  for d in lowering.diagnostics().all() {
+    diags.push(d)
+  }
+  let has_errors = any_error(diags)
+  let wgsl : String? = if has_errors {
+    None
+  } else {
+    match @mir.lower_hir_to_mir(hir) {
+      Ok(mir_program) => Some(@wgsl_codegen.emit_wgsl(mir_program))
+      Err(errs) => {
+        for e in errs {
+          diags.push(@diagnostics.Diagnostic::error(e))
+        }
+        None
+      }
+    }
+  }
+  // Lint warnings come after the compile diagnostics so an editor that
+  // groups by severity keeps the compile errors at the top.
+  for d in @linter.lint_program(prog) {
+    diags.push(d)
+  }
   let mut out = "{\"diagnostics\":"
-  out = out + diagnostics_to_json(combined, source)
-  out = out + ",\"wgsl\":null}"
-  out
+  out = out + diagnostics_to_json(diags, source)
+  out = out + ",\"wgsl\":"
+  match wgsl {
+    Some(w) => out = out + json_string(w)
+    None => out = out + "null"
+  }
+  out + "}"
 }
 
 ///|
-fn combine(
-  a : @diagnostics.DiagnosticSink,
-  b : @diagnostics.DiagnosticSink
-) -> Array[@diagnostics.Diagnostic] {
-  let out : Array[@diagnostics.Diagnostic] = Array::new()
-  for d in a.all() {
-    out.push(d)
+fn any_error(diags : Array[@diagnostics.Diagnostic]) -> Bool {
+  for d in diags {
+    if d.severity == @diagnostics.Severity::Error {
+      return true
+    }
   }
-  for d in b.all() {
-    out.push(d)
-  }
-  out
+  false
 }
 
 ///|
