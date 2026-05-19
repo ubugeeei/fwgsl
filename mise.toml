@@ -26,10 +26,6 @@ run = "cargo build --workspace"
 description = "Build in release mode"
 run = "cargo build --workspace --release"
 
-[tasks.cli]
-description = "Build and install CLI to PATH"
-run = "cargo install --path crates/fwgsl_cli"
-
 [tasks.wasm]
 description = "Build WASM for playground"
 run = """
