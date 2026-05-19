@@ -36,9 +36,13 @@ test "hover identifies kinds" {
 
 ///|
 test "hover falls back to kind label for unbound identifiers" {
-  // `xyz` is not declared and not a builtin, so the semantic env can't
-  // type it — we fall through to the kind-aware label.
-  match @ide.hover_at("xyz", 0) {
+  // `xyz` is referenced inside the body of `f` but never bound, so the
+  // semantic env can't type it — we fall through to the kind-aware
+  // label. (`xyz` alone as a top-level token would end up bound by the
+  // parser's error-recovery FunDecl, which would defeat the test.)
+  let source = "f x = xyz"
+  // Offset 6 lands on the `x` of `xyz`.
+  match @ide.hover_at(source, 6) {
     Some(h) => assert_true(h.contents.contains("identifier `xyz`"))
     None => fail("expected hover on `xyz`")
   }
