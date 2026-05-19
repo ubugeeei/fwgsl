@@ -469,18 +469,18 @@ fn Lexer::lex_number(self : Lexer, start : Int) -> Unit {
   while not(self.at_end()) && is_ascii_digit(self.peek()) {
     let _ = self.advance()
   }
-  if not(self.at_end())
-    && self.peek() == 0x2E
-    && is_ascii_digit(self.peek_at(1)) {
+  if not(self.at_end()) &&
+    self.peek() == 0x2E &&
+    is_ascii_digit(self.peek_at(1)) {
     let _ = self.advance() // '.'
     while not(self.at_end()) && is_ascii_digit(self.peek()) {
       let _ = self.advance()
     }
-    if not(self.at_end())
-      && (self.peek() == 0x65 || self.peek() == 0x45) {
+    if not(self.at_end()) &&
+      (self.peek() == 0x65 || self.peek() == 0x45) {
       let _ = self.advance()
-      if not(self.at_end())
-        && (self.peek() == 0x2B || self.peek() == 0x2D) {
+      if not(self.at_end()) &&
+        (self.peek() == 0x2B || self.peek() == 0x2D) {
         let _ = self.advance()
       }
       while not(self.at_end()) && is_ascii_digit(self.peek()) {
@@ -560,9 +560,9 @@ fn is_ascii_alnum(c : Int) -> Bool {
 
 ///|
 fn is_hex_digit(c : Int) -> Bool {
-  is_ascii_digit(c)
-  || (c >= 0x61 && c <= 0x66)
-  || (c >= 0x41 && c <= 0x46)
+  is_ascii_digit(c) ||
+  (c >= 0x61 && c <= 0x66) ||
+  (c >= 0x41 && c <= 0x46)
 }
 
 ///|

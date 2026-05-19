@@ -21,10 +21,10 @@ fn sanitize_identifier(name : String) -> String {
   let mut i = 0
   while i < len {
     let c = name.unsafe_charcode_at(i)
-    let is_alnum = (c >= 0x30 && c <= 0x39)
-      || (c >= 0x41 && c <= 0x5A)
-      || (c >= 0x61 && c <= 0x7A)
-      || c == 0x5F
+    let is_alnum = (c >= 0x30 && c <= 0x39) ||
+      (c >= 0x41 && c <= 0x5A) ||
+      (c >= 0x61 && c <= 0x7A) ||
+      c == 0x5F
     if is_alnum {
       out = out + name.substring(start=i, end=i + 1)
     } else if c == 0x27 {

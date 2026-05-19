@@ -5,6 +5,7 @@
     "ubugeeei/fwgsl/hir"
   ],
   "test-import": [
+    "ubugeeei/fwgsl/span",
     "ubugeeei/fwgsl/typechecker",
     "ubugeeei/fwgsl/hir"
   ]

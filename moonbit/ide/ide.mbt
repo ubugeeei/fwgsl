@@ -112,8 +112,8 @@ pub fn semantic_tokens(source : String) -> Array[SemanticToken] {
       Some(TokKeyword)
     } else if tok.kind.is_operator() {
       Some(TokOperator)
-    } else if tok.kind == @syntax.SyntaxKind::LineComment
-      || tok.kind == @syntax.SyntaxKind::BlockComment {
+    } else if tok.kind == @syntax.SyntaxKind::LineComment ||
+      tok.kind == @syntax.SyntaxKind::BlockComment {
       Some(TokComment)
     } else {
       None
