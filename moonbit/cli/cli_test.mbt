@@ -58,3 +58,9 @@ test "wrap_wgsl prepends a header" {
   assert_true(wgsl.contains("Source: foo.fwgsl"))
   assert_true(wgsl.contains("fn main()"))
 }
+
+///|
+test "format_source canonicalises whitespace" {
+  let out = format_source("f    x   =  x  +  1")
+  assert_eq(out, "f x = x + 1\n")
+}

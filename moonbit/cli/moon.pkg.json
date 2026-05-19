@@ -8,7 +8,8 @@
     "ubugeeei/fwgsl/semantic",
     "ubugeeei/fwgsl/ast_lowering",
     "ubugeeei/fwgsl/mir",
-    "ubugeeei/fwgsl/wgsl_codegen"
+    "ubugeeei/fwgsl/wgsl_codegen",
+    "ubugeeei/fwgsl/formatter"
   ],
   "test-import": [
     "ubugeeei/fwgsl/span",
@@ -18,6 +19,7 @@
     "ubugeeei/fwgsl/semantic",
     "ubugeeei/fwgsl/ast_lowering",
     "ubugeeei/fwgsl/mir",
-    "ubugeeei/fwgsl/wgsl_codegen"
+    "ubugeeei/fwgsl/wgsl_codegen",
+    "ubugeeei/fwgsl/formatter"
   ]
 }

@@ -154,6 +154,15 @@ pub fn wrap_wgsl(file : String, wgsl : String) -> String {
 }
 
 ///|
+/// Reformat an fwgsl source string using the token-stream formatter.
+///
+/// Used by `fwgsl fmt` and by the LSP's `textDocument/formatting`
+/// handler (which will land alongside the JSON-RPC transport).
+pub fn format_source(source : String) -> String {
+  @formatter.format(source)
+}
+
+///|
 fn offset_to_line_col(source : String, offset : UInt) -> (Int, Int) {
   let target = offset.reinterpret_as_int()
   let mut line = 1
