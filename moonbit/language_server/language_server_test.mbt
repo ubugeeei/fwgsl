@@ -82,3 +82,9 @@ test "semantic_tokens_for highlights keywords" {
   }
   assert_true(saw_keyword)
 }
+
+///|
+test "format_document canonicalises whitespace" {
+  let out = @language_server.format_document("f    x  =  x  +  1")
+  assert_eq(out, "f x = x + 1\n")
+}
