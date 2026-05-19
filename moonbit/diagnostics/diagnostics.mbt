@@ -135,10 +135,18 @@ pub fn DiagnosticSink::len(self : DiagnosticSink) -> Int {
 // ---------------------------------------------------------------------------
 
 ///|
-/// Render a single diagnostic against the source text as a multi-line string.
+/// Render a single diagnostic against the source text as a multi-line
+/// string with `miette` / `rustc`-style source-line excerpts:
 ///
-/// The format is intentionally close to what `miette` produces in the Rust
-/// crate so that downstream snapshot tests don't have to change much.
+/// ```text
+/// error: Unbound variable: y
+///  --> file.fwgsl:1:7
+///   |
+/// 1 | f x = y
+///   |       ^ not in scope
+///   |
+///   help: bind the name in a parameter, let, where, or import declaration
+/// ```
 pub fn render(
   diag : Diagnostic,
   source_name : String,
@@ -158,15 +166,36 @@ pub fn render(
   buf.write_string("\n")
   for label in diag.labels {
     let (line, col) = offset_to_line_col(source, label.span.start)
-    buf.write_string("  --> ")
+    let (_, end_col) = offset_to_line_col(source, label.span.end)
+    let line_num_str = line.to_string()
+    let gutter_width = line_num_str.length()
+    let gutter_pad = repeat_char(' ', gutter_width)
+    buf.write_string(" --> ")
     buf.write_string(source_name)
     buf.write_string(":")
-    buf.write_string(line.to_string())
+    buf.write_string(line_num_str)
     buf.write_string(":")
     buf.write_string(col.to_string())
-    buf.write_string(": ")
-    buf.write_string(label.message)
     buf.write_string("\n")
+    buf.write_string(gutter_pad)
+    buf.write_string(" |\n")
+    let snippet = extract_line(source, label.span.start)
+    buf.write_string(line_num_str)
+    buf.write_string(" | ")
+    buf.write_string(snippet)
+    buf.write_string("\n")
+    buf.write_string(gutter_pad)
+    buf.write_string(" | ")
+    buf.write_string(repeat_char(' ', col - 1))
+    let caret_len = if end_col > col { end_col - col } else { 1 }
+    buf.write_string(repeat_char('^', caret_len))
+    if label.message.length() > 0 {
+      buf.write_string(" ")
+      buf.write_string(label.message)
+    }
+    buf.write_string("\n")
+    buf.write_string(gutter_pad)
+    buf.write_string(" |\n")
   }
   match diag.help {
     Some(help) => {
@@ -177,6 +206,39 @@ pub fn render(
     None => ()
   }
   buf.to_string()
+}
+
+///|
+/// Repeat `c` `n` times. Returns an empty string when `n` <= 0.
+fn repeat_char(c : Char, n : Int) -> String {
+  if n <= 0 {
+    return ""
+  }
+  let buf = StringBuilder::new()
+  let mut i = 0
+  while i < n {
+    buf.write_char(c)
+    i = i + 1
+  }
+  buf.to_string()
+}
+
+///|
+/// Extract the source line containing `offset` (without the trailing
+/// newline).
+fn extract_line(source : String, offset : UInt) -> String {
+  let off = offset.reinterpret_as_int()
+  let len = source.length()
+  let safe_off = if off > len { len } else { off }
+  let mut start = safe_off
+  while start > 0 && source.unsafe_charcode_at(start - 1) != 0x0A {
+    start = start - 1
+  }
+  let mut end = safe_off
+  while end < len && source.unsafe_charcode_at(end) != 0x0A {
+    end = end + 1
+  }
+  source.unsafe_substring(start~, end~)
 }
 
 ///|

@@ -60,3 +60,34 @@ test "offset to line col across newlines" {
   let text = @diagnostics.render(diag, "x.fwgsl", "line1\nline2\nline3")
   assert_true(text.contains("x.fwgsl:2:3"))
 }
+
+///|
+test "render embeds the source line excerpt" {
+  let diag = @diagnostics.Diagnostic::error("Unbound variable: y")
+    .with_label(@diagnostics.Label::primary(@span.Span::new(6, 7), "not in scope"))
+  let text = @diagnostics.render(diag, "x.fwgsl", "f x = y")
+  // The line that contains `y` is included in the rendered output.
+  assert_true(text.contains("f x = y"))
+  // A caret points at the offending token.
+  assert_true(text.contains("^"))
+  // The label message follows the caret.
+  assert_true(text.contains("not in scope"))
+}
+
+///|
+test "render widens the caret to cover multi-char spans" {
+  let diag = @diagnostics.Diagnostic::error("type mismatch")
+    .with_label(@diagnostics.Label::primary(@span.Span::new(0, 5), "expected Int"))
+  let text = @diagnostics.render(diag, "x.fwgsl", "false")
+  // The caret should span 5 chars, not just one.
+  assert_true(text.contains("^^^^^"))
+}
+
+///|
+test "render works on the very last line of the source" {
+  // No trailing newline; the snippet extractor still grabs the full line.
+  let diag = @diagnostics.Diagnostic::error("oops")
+    .with_label(@diagnostics.Label::primary(@span.Span::new(12, 13), "x"))
+  let text = @diagnostics.render(diag, "x.fwgsl", "line1\nline2\nfoo")
+  assert_true(text.contains("foo"))
+}
