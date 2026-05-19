@@ -293,6 +293,88 @@ test "semantic_tokens classifies keyword + operator + comment" {
 }
 
 ///|
+test "semantic_tokens classifies number literals" {
+  let source = "f x = 42 + 3.14"
+  let tokens = @ide.semantic_tokens(source)
+  let mut nums = 0
+  for t in tokens {
+    if t.kind == @ide.SemanticTokenKind::TokNumber {
+      nums = nums + 1
+    }
+  }
+  assert_eq(nums, 2) // `42` and `3.14`
+}
+
+///|
+test "semantic_tokens classifies string literals" {
+  let source = "f x = \"hello\""
+  let tokens = @ide.semantic_tokens(source)
+  let mut strs = 0
+  for t in tokens {
+    if t.kind == @ide.SemanticTokenKind::TokString {
+      strs = strs + 1
+    }
+  }
+  assert_eq(strs, 1)
+}
+
+///|
+test "semantic_tokens classifies UpperIdent as TokType" {
+  let source = "data Color = Red"
+  let tokens = @ide.semantic_tokens(source)
+  let mut types = 0
+  for t in tokens {
+    if t.kind == @ide.SemanticTokenKind::TokType {
+      types = types + 1
+    }
+  }
+  // `Color` and `Red` are both UpperIdent.
+  assert_true(types >= 2)
+}
+
+///|
+test "semantic_tokens classifies arrow-typed bindings as TokFunction" {
+  // `add` is bound to `I32 -> I32 -> I32` -> Function. `x` and `y` are
+  // body-local Idents not in the env -> Variable.
+  let source = "add : I32 -> I32 -> I32\nadd x y = x + y"
+  let tokens = @ide.semantic_tokens(source)
+  let mut found_fn_add = false
+  for t in tokens {
+    if t.kind == @ide.SemanticTokenKind::TokFunction &&
+      t.span.source_text(source) == "add" {
+      found_fn_add = true
+    }
+  }
+  assert_true(found_fn_add)
+}
+
+///|
+test "semantic_tokens classifies decorator attributes" {
+  let source = "@compute\nmain x = x"
+  let tokens = @ide.semantic_tokens(source)
+  let mut decos = 0
+  for t in tokens {
+    if t.kind == @ide.SemanticTokenKind::TokDecorator {
+      decos = decos + 1
+    }
+  }
+  // `@` and `compute` should both be Decorator-classified.
+  assert_true(decos >= 2)
+}
+
+///|
+test "semantic_tokens skips raw whitespace and newlines" {
+  let source = "let\nx = 1"
+  let tokens = @ide.semantic_tokens(source)
+  for t in tokens {
+    // The classifier never emits a token for trivia.
+    let text = t.span.source_text(source)
+    assert_false(text == "\n")
+    assert_false(text == " ")
+  }
+}
+
+///|
 test "CompletionItem::new wires the label and kind" {
   let it = @ide.CompletionItem::new("foo", @ide.CompletionKind::Function)
   assert_eq(it.label, "foo")
