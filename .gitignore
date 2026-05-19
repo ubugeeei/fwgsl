@@ -6,3 +6,7 @@ _build/
 # Generated wasm binary lives under playground/pkg/ — built by CI from
 # moonbit/wasm. The hand-written JS shim (fwgsl_wasm.js) is tracked.
 playground/pkg/*.wasm
+# Nix dev shell artefacts.
+result
+result-*
+.direnv/

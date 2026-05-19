@@ -142,34 +142,39 @@ Current editor feedback includes:
 Run it locally with:
 
 ```sh
-mise run playground
+just playground
 ```
 
 ## Quick Start
 
 Requirements:
 
-- [MoonBit](https://www.moonbitlang.com/) — install with `curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash`
-- [mise](https://mise.jdx.dev/) (optional, for the wrapper tasks)
+- [Nix](https://nixos.org/) with flakes — `nix develop` drops you into a shell with Node 22, `just`, and the MoonBit installer auto-run on first entry.
+- (Without Nix) [MoonBit](https://www.moonbitlang.com/) installed manually with `curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash`, plus `just` from your package manager.
 
-Common commands:
+Common commands (every recipe is in `justfile`):
 
 ```sh
 # Type-check the whole MoonBit workspace
-moon check          # or: mise run check
+just check            # or: moon check
 
 # Build everything
-moon build          # or: mise run build
+just build            # or: moon build
 
 # Run the full test suite
-moon test           # or: mise run test
+just test             # or: moon test
 
 # Format MoonBit sources
-moon fmt            # or: mise run fmt
+just fmt              # or: moon fmt
 
-# Start the playground dev server (no rebuild)
-mise run dev
+# Build the playground wasm + serve it on :3000
+just playground
+
+# Serve the playground without rebuilding the wasm (HTML/JS iteration)
+just dev
 ```
+
+[direnv](https://direnv.net/) users can `direnv allow` so the dev shell loads automatically.
 
 ## Compiler Pipeline
 
@@ -289,7 +294,7 @@ A good starting point is usually one of:
 - WGSL lowering/codegen in `moonbit/mir` and `moonbit/wgsl_codegen`
 - Editor experience in `moonbit/ide`, `moonbit/language_server`, and `playground/`
 
-This repository uses `mise` for task entry points and keeps the workspace split into small MoonBit packages under `moonbit/`.
+This repository uses [Nix](https://nixos.org/) (`flake.nix` + `direnv`) for the dev shell and [just](https://github.com/casey/just) (`justfile`) for task entry points. The workspace stays split into small MoonBit packages under `moonbit/`.
 
 ## License
 
