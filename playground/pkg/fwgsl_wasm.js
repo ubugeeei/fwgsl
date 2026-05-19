@@ -108,13 +108,19 @@ export function editor_definition(source, line, column) {
     return _exports.editor_definition(source, line, column);
 }
 
-/**
- * Monaco-shaped reference locations. Aliased to definition until a
- * dedicated find-references walk lands.
- */
+/** Monaco-shaped reference locations from a real cross-decl walker. */
 export function editor_references(source, line, column, includeDeclaration) {
     _assertReady();
     return _exports.editor_references(source, line, column, !!includeDeclaration);
+}
+
+/**
+ * Monaco-shaped rename edits. Each entry has `range` (Monaco range)
+ * and `newText` (the replacement string).
+ */
+export function editor_rename(source, line, column, newName) {
+    _assertReady();
+    return _exports.editor_rename(source, line, column, newName);
 }
 
 /**
