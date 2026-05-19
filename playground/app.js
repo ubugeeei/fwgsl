@@ -1360,7 +1360,7 @@ function generateMockWgsl(source) {
 
     let output = '// Generated WGSL from fwgsl compiler\n';
     output += '// fwgsl compiler WASM module not loaded.\n';
-    output += '// Build with: mise run wasm\n';
+    output += '// Build with: just build-playground\n';
     output += `// Source: ${lines.length} lines\n\n`;
 
     for (const t of types) {

@@ -40,8 +40,10 @@ moon test      # run tests
 moon fmt       # format
 ```
 
-`mise` wrappers exist for the same commands: `mise run check`,
-`mise run build`, `mise run test`, `mise run fmt`.
+`just` wrappers exist for the same commands: `just check`,
+`just build`, `just test`, `just fmt`. The dev shell that bundles
+MoonBit + Node + `just` is defined in the repo-root `flake.nix`
+(`nix develop`).
 
 CI runs `moon check` + `moon test` as a required job on every PR
 (`.github/workflows/ci.yml` → `moonbit` job, `continue-on-error` off).
