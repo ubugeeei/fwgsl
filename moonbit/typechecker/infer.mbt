@@ -146,7 +146,7 @@ pub fn InferEngine::generalize(
   let ty_vars = ty.free_vars()
   let gen_vars : Array[TyVarId] = Array::new()
   for v in ty_vars {
-    if not(contains_var_id(env_vars, v)) {
+    if !contains_var_id(env_vars, v) {
       gen_vars.push(v)
     }
   }

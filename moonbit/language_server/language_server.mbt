@@ -261,7 +261,7 @@ pub fn diagnostics_json_for(text : String) -> String {
   let mut out = "["
   let mut first = true
   for d in diags {
-    if not(first) {
+    if !first {
       out = out + ","
     }
     first = false

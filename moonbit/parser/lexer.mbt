@@ -104,7 +104,7 @@ fn Lexer::emit(self : Lexer, kind : @syntax.SyntaxKind, start : Int) -> Unit {
 
 ///|
 fn Lexer::lex_all(self : Lexer) -> Unit {
-  while not(self.at_end()) {
+  while !self.at_end() {
     self.lex_token()
   }
   self.emit(@syntax.SyntaxKind::Eof, self.pos)
@@ -130,7 +130,7 @@ fn Lexer::lex_token(self : Lexer) -> Unit {
     // Horizontal whitespace: space or tab
     0x20 | 0x09 => {
       let _ = self.advance()
-      while not(self.at_end()) {
+      while !self.at_end() {
         let c = self.peek()
         if c == 0x20 || c == 0x09 {
           let _ = self.advance()
@@ -307,7 +307,7 @@ fn Lexer::lex_token(self : Lexer) -> Unit {
       let _ = self.advance()
       let next = self.peek()
       if is_ascii_alpha(next) || next == 0x5F {
-        while not(self.at_end()) {
+        while !self.at_end() {
           let c = self.peek()
           if is_ascii_alnum(c) || c == 0x5F {
             let _ = self.advance()
@@ -355,7 +355,7 @@ fn Lexer::lex_token(self : Lexer) -> Unit {
 fn Lexer::lex_line_comment(self : Lexer, start : Int) -> Unit {
   let _ = self.advance() // first '-'
   let _ = self.advance() // second '-'
-  while not(self.at_end()) {
+  while !self.at_end() {
     let c = self.peek()
     if c == 0x0A || c == 0x0D {
       break
@@ -370,7 +370,7 @@ fn Lexer::lex_block_comment(self : Lexer, start : Int) -> Unit {
   let _ = self.advance() // '{'
   let _ = self.advance() // '-'
   let mut depth = 1
-  while not(self.at_end()) && depth > 0 {
+  while !self.at_end() && depth > 0 {
     if self.peek() == 0x7B && self.peek_at(1) == 0x2D {
       let _ = self.advance()
       let _ = self.advance()
@@ -389,7 +389,7 @@ fn Lexer::lex_block_comment(self : Lexer, start : Int) -> Unit {
 ///|
 fn Lexer::lex_string(self : Lexer, start : Int) -> Unit {
   let _ = self.advance() // opening '"'
-  while not(self.at_end()) {
+  while !self.at_end() {
     let c = self.peek()
     if c == 0x22 {
       let _ = self.advance()
@@ -397,7 +397,7 @@ fn Lexer::lex_string(self : Lexer, start : Int) -> Unit {
       return
     } else if c == 0x5C {
       let _ = self.advance()
-      if not(self.at_end()) {
+      if !self.at_end() {
         let _ = self.advance()
       }
     } else if c == 0x0A || c == 0x0D {
@@ -418,7 +418,7 @@ fn Lexer::lex_char(self : Lexer, start : Int) -> Unit {
   }
   if self.peek() == 0x5C {
     let _ = self.advance() // '\'
-    if not(self.at_end()) {
+    if !self.at_end() {
       let _ = self.advance()
     }
   } else if self.peek() == 0x27 {
@@ -428,7 +428,7 @@ fn Lexer::lex_char(self : Lexer, start : Int) -> Unit {
   } else {
     self.advance_utf8_char()
   }
-  if not(self.at_end()) && self.peek() == 0x27 {
+  if !self.at_end() && self.peek() == 0x27 {
     let _ = self.advance()
     self.emit(@syntax.SyntaxKind::CharLiteral, start)
   } else {
@@ -439,11 +439,11 @@ fn Lexer::lex_char(self : Lexer, start : Int) -> Unit {
 ///|
 fn Lexer::lex_number(self : Lexer, start : Int) -> Unit {
   let first = self.advance()
-  if first == 0x30 && not(self.at_end()) {
+  if first == 0x30 && !self.at_end() {
     let next = self.peek()
     if next == 0x78 || next == 0x58 {
       let _ = self.advance()
-      while not(self.at_end()) && is_hex_digit(self.peek()) {
+      while !self.at_end() && is_hex_digit(self.peek()) {
         let _ = self.advance()
       }
       self.emit(@syntax.SyntaxKind::IntLiteral, start)
@@ -451,7 +451,7 @@ fn Lexer::lex_number(self : Lexer, start : Int) -> Unit {
     }
     if next == 0x6F || next == 0x4F {
       let _ = self.advance()
-      while not(self.at_end()) && is_oct_digit(self.peek()) {
+      while !self.at_end() && is_oct_digit(self.peek()) {
         let _ = self.advance()
       }
       self.emit(@syntax.SyntaxKind::IntLiteral, start)
@@ -459,31 +459,31 @@ fn Lexer::lex_number(self : Lexer, start : Int) -> Unit {
     }
     if next == 0x62 || next == 0x42 {
       let _ = self.advance()
-      while not(self.at_end()) && is_bin_digit(self.peek()) {
+      while !self.at_end() && is_bin_digit(self.peek()) {
         let _ = self.advance()
       }
       self.emit(@syntax.SyntaxKind::IntLiteral, start)
       return
     }
   }
-  while not(self.at_end()) && is_ascii_digit(self.peek()) {
+  while !self.at_end() && is_ascii_digit(self.peek()) {
     let _ = self.advance()
   }
-  if not(self.at_end()) &&
+  if !self.at_end() &&
     self.peek() == 0x2E &&
     is_ascii_digit(self.peek_at(1)) {
     let _ = self.advance() // '.'
-    while not(self.at_end()) && is_ascii_digit(self.peek()) {
+    while !self.at_end() && is_ascii_digit(self.peek()) {
       let _ = self.advance()
     }
-    if not(self.at_end()) &&
+    if !self.at_end() &&
       (self.peek() == 0x65 || self.peek() == 0x45) {
       let _ = self.advance()
-      if not(self.at_end()) &&
+      if !self.at_end() &&
         (self.peek() == 0x2B || self.peek() == 0x2D) {
         let _ = self.advance()
       }
-      while not(self.at_end()) && is_ascii_digit(self.peek()) {
+      while !self.at_end() && is_ascii_digit(self.peek()) {
         let _ = self.advance()
       }
     }
@@ -496,7 +496,7 @@ fn Lexer::lex_number(self : Lexer, start : Int) -> Unit {
 ///|
 fn Lexer::lex_ident(self : Lexer, start : Int) -> Unit {
   let _ = self.advance() // first char already validated
-  while not(self.at_end()) && is_ident_continue(self.peek()) {
+  while !self.at_end() && is_ident_continue(self.peek()) {
     let _ = self.advance()
   }
   let text = self.source.substring(start=start, end=self.pos)
@@ -509,7 +509,7 @@ fn Lexer::lex_ident(self : Lexer, start : Int) -> Unit {
 ///|
 fn Lexer::lex_upper_ident(self : Lexer, start : Int) -> Unit {
   let _ = self.advance() // first char already validated
-  while not(self.at_end()) && is_ident_continue(self.peek()) {
+  while !self.at_end() && is_ident_continue(self.peek()) {
     let _ = self.advance()
   }
   self.emit(@syntax.SyntaxKind::UpperIdent, start)
@@ -524,7 +524,7 @@ fn Lexer::advance_utf8_char(self : Lexer) -> Unit {
   let c = self.source.unsafe_charcode_at(self.pos)
   self.pos = self.pos + 1
   // High surrogate: consume the trailing low surrogate too.
-  if c >= 0xD800 && c <= 0xDBFF && not(self.at_end()) {
+  if c >= 0xD800 && c <= 0xDBFF && !self.at_end() {
     self.pos = self.pos + 1
   }
 }

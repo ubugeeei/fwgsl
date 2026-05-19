@@ -59,7 +59,7 @@ fn diagnostics_to_json(
   let mut out = "["
   let mut first = true
   for diag in diags {
-    if not(first) {
+    if !first {
       out = out + ","
     }
     first = false
@@ -79,7 +79,7 @@ fn diagnostics_to_json(
       out = out + ",\"labels\":["
       let mut lfirst = true
       for label in diag.labels {
-        if not(lfirst) {
+        if !lfirst {
           out = out + ","
         }
         lfirst = false

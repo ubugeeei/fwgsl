@@ -191,7 +191,7 @@ fn WgslEmitter::emit_function(
   self.write("fn " + sanitize_identifier(f.name) + "(")
   let mut first = true
   for param in f.params {
-    if not(first) {
+    if !first {
       self.write(", ")
     }
     first = false
@@ -247,7 +247,7 @@ fn WgslEmitter::emit_entry_point(
   self.write("fn " + sanitize_identifier(ep.name) + "(")
   let mut first = true
   for triple in ep.builtins {
-    if not(first) {
+    if !first {
       self.write(", ")
     }
     first = false
@@ -258,7 +258,7 @@ fn WgslEmitter::emit_entry_point(
     )
   }
   for param in ep.params {
-    if not(first) {
+    if !first {
       self.write(", ")
     }
     first = false
@@ -391,7 +391,7 @@ fn WgslEmitter::emit_expr(self : WgslEmitter, expr : @mir.MirExpr) -> Unit {
       self.write("(")
       let mut first = true
       for arg in args {
-        if not(first) {
+        if !first {
           self.write(", ")
         }
         first = false
@@ -404,7 +404,7 @@ fn WgslEmitter::emit_expr(self : WgslEmitter, expr : @mir.MirExpr) -> Unit {
       self.write("(")
       let mut first = true
       for field in fields {
-        if not(first) {
+        if !first {
           self.write(", ")
         }
         first = false

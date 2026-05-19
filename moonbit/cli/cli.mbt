@@ -136,7 +136,7 @@ pub fn format_diagnostics(
   let mut out = ""
   let mut first = true
   for d in diags {
-    if not(first) {
+    if !first {
       out = out + "\n"
     }
     first = false
@@ -213,7 +213,7 @@ pub fn help_text() -> String {
   let mut out = ""
   let mut first = true
   for l in lines {
-    if not(first) {
+    if !first {
       out = out + "\n"
     }
     first = false

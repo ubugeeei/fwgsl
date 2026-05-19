@@ -33,7 +33,7 @@ pub fn format(source : String) -> String {
     }
     let text = tok.span.source_text(source)
     if tok.kind == @syntax.SyntaxKind::Whitespace {
-      if not(last_was_space) && not(last_was_newline) {
+      if !last_was_space && !last_was_newline {
         buf.push(" ")
         last_was_space = true
       }
