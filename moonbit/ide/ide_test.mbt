@@ -264,6 +264,49 @@ test "goto definition is None for keyword tokens" {
 }
 
 ///|
+test "references_at returns every Ident matching the cursor" {
+  // `scale` is defined on line 1 and called on line 2. Cursor on the
+  // second `scale` -> at least two locations (definition + call) when
+  // include_declaration is true.
+  let source = "scale x = x + 1\nuse x = scale x"
+  // Offset 24 lands on the call-site `scale`.
+  let refs = @ide.references_at(source, 24U, true)
+  assert_true(refs.length() >= 2)
+  let mut saw_def = false
+  let mut saw_use = false
+  for r in refs {
+    if r.span.start == 0U {
+      saw_def = true
+    }
+    if r.span.start == 24U {
+      saw_use = true
+    }
+  }
+  assert_true(saw_def)
+  assert_true(saw_use)
+}
+
+///|
+test "references_at honours include_declaration=false" {
+  let source = "scale x = x + 1\nuse x = scale x"
+  // Cursor on the definition `scale` (offset 0).
+  let with_decl = @ide.references_at(source, 0U, true)
+  let without_decl = @ide.references_at(source, 0U, false)
+  assert_true(with_decl.length() > without_decl.length())
+  for r in without_decl {
+    assert_true(r.span.start != 0U)
+  }
+}
+
+///|
+test "references_at returns empty array for non-identifier tokens" {
+  // Cursor on `=` -> not an identifier, nothing to find.
+  let source = "f x = y"
+  let refs = @ide.references_at(source, 4U, true)
+  assert_eq(refs.length(), 0)
+}
+
+///|
 test "token_at returns None for trivia" {
   // Offset 1 falls on whitespace.
   match @ide.token_at("a b", 1) {

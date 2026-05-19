@@ -115,11 +115,36 @@ test "editor_definition returns `[]` when nothing matches" {
 }
 
 ///|
-test "editor_references is currently an alias for editor_definition" {
+test "editor_references returns every match in a JSON array" {
+  // `scale` defined on line 1, used on line 2 column 9. Cursor at the
+  // call-site should return both the definition and the call.
   let source = "scale x = x + 1\nuse x = scale x"
-  let a = @wasm.editor_references(source, 2, 9, true)
-  let b = @wasm.editor_definition(source, 2, 9)
-  assert_eq(a, b)
+  let json = @wasm.editor_references(source, 2, 9, true)
+  assert_eq(json.unsafe_charcode_at(0), 0x5B) // '['
+  // Both ranges show up. The definition span is on line 1, the call
+  // is on line 2; both have `startLineNumber` entries.
+  assert_true(json.contains("\"startLineNumber\":1"))
+  assert_true(json.contains("\"startLineNumber\":2"))
+}
+
+///|
+test "editor_references with include_declaration=false drops the cursor token" {
+  let source = "scale x = x + 1\nuse x = scale x"
+  // Cursor on the definition `scale` (line 1, column 1).
+  let with_decl = @wasm.editor_references(source, 1, 1, true)
+  let without_decl = @wasm.editor_references(source, 1, 1, false)
+  // The without-declaration array should be strictly shorter (or
+  // equal if there were no other matches, but there's the call-site
+  // here so it's strictly shorter).
+  assert_true(with_decl.length() > without_decl.length())
+}
+
+///|
+test "editor_references returns [] for non-identifier cursor positions" {
+  // Cursor on `=` in `f x = y` -> not an identifier.
+  let source = "f x = y"
+  let json = @wasm.editor_references(source, 1, 5, true)
+  assert_eq(json, "[]")
 }
 
 ///|
