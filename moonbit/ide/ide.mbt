@@ -696,3 +696,107 @@ fn classify_semantic_token(
   }
   None
 }
+
+///|
+/// A single inlay hint. Position is a byte offset into the source.
+pub(all) struct InlayHint {
+  /// Byte offset at which the label should appear in the editor.
+  position : UInt
+  /// Text to display, e.g. ` : I32 -> I32`.
+  label : String
+} derive(Show, Eq)
+
+///|
+/// Compute inlay hints for `source`.
+///
+/// Today's rule set:
+///
+/// - Top-level function declarations without an accompanying type
+///   signature get a `: <inferredType>` hint just after the function
+///   name, so the editor can show what the inference engine settled on
+///   without forcing the user to write the signature themselves.
+///
+/// Returns hints in source order. Bindings that already carry an
+/// explicit `name : <type>` signature are skipped.
+pub fn inlay_hints(source : String) -> Array[InlayHint] {
+  let out : Array[InlayHint] = Array::new()
+  let parser = @parser.Parser::new(source)
+  let program = parser.parse_program()
+  let analyzer = @semantic.SemanticAnalyzer::new()
+  analyzer.analyze(program)
+  let env = analyzer.env()
+  // First pass: collect names that already have a type signature so we
+  // don't double up on hints for them.
+  let signed : Map[String, Bool] = Map::new()
+  for decl in program.decls {
+    match decl {
+      TypeSig(name, _, _) => signed[name] = true
+      _ => ()
+    }
+  }
+  for decl in program.decls {
+    match decl {
+      FunDecl(name, _, _, _, span) =>
+        emit_funcdecl_hint(name, span, signed, env, source, out)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+fn emit_funcdecl_hint(
+  name : String,
+  span : @span.Span,
+  signed : Map[String, Bool],
+  env : @typechecker.TypeEnv,
+  source : String,
+  out : Array[InlayHint]
+) -> Unit {
+  if signed.get(name) is Some(_) {
+    return
+  }
+  match env.lookup(name) {
+    None => ()
+    Some(scheme) => {
+      let name_end = name_end_offset(name, span, source)
+      let label = " : " + pretty_scheme(scheme)
+      out.push(InlayHint::{ position: name_end, label })
+    }
+  }
+}
+
+///|
+/// Byte offset just after the function name token. Walks forward from
+/// the decl's start span looking for the first identifier matching
+/// `name`. Falls back to the start of the span if nothing matches —
+/// the editor still gets a hint, just slightly offset.
+fn name_end_offset(name : String, span : @span.Span, source : String) -> UInt {
+  let nlen = name.length().reinterpret_as_uint()
+  let mut i = span.start
+  let end = span.end
+  while i + nlen <= end {
+    if substr_at(source, i, name) {
+      return i + nlen
+    }
+    i = i + 1U
+  }
+  span.start
+}
+
+///|
+fn substr_at(source : String, offset : UInt, needle : String) -> Bool {
+  let off = offset.reinterpret_as_int()
+  let nlen = needle.length()
+  if off + nlen > source.length() {
+    return false
+  }
+  let mut i = 0
+  while i < nlen {
+    if source.unsafe_charcode_at(off + i) != needle.unsafe_charcode_at(i) {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}

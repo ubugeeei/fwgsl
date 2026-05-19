@@ -103,7 +103,6 @@ test "format_document canonicalises whitespace" {
   assert_eq(out, "f x = x + 1\n")
 }
 
-///|
 test "code_actions_for proxies through to the IDE" {
   let actions = @language_server.code_actions_for("add x y = x + y", 0U)
   assert_eq(actions.length(), 1)
@@ -127,4 +126,25 @@ test "code_actions_for returns an empty list when nothing applies" {
     24U,
   )
   assert_eq(actions.length(), 0)
+}
+
+///|
+test "inlay_hints_for returns inferred type hints for unannotated decls" {
+  let hints = @language_server.inlay_hints_for("add x y = x + y")
+  // Only one decl, with no preceding TypeSig, so one hint.
+  assert_eq(hints.length(), 1)
+  let h = hints[0]
+  assert_eq(h.line, 0)
+  // Anchor lands right after `add`, i.e. column 3 (0-based).
+  assert_eq(h.character, 3)
+  assert_true(h.label.contains(":"))
+  assert_true(h.label.contains("->"))
+}
+
+///|
+test "inlay_hints_for skips decls that already have a signature" {
+  let hints = @language_server.inlay_hints_for(
+    "add : I32 -> I32 -> I32\nadd x y = x + y",
+  )
+  assert_eq(hints.length(), 0)
 }

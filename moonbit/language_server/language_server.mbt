@@ -195,7 +195,6 @@ pub fn format_document(text : String) -> String {
   @formatter.format(text)
 }
 
-// ---------------------------------------------------------------------------
 // Code actions
 // ---------------------------------------------------------------------------
 
@@ -244,6 +243,39 @@ pub fn code_actions_for(
     }
     out.push(
       LspCodeAction::{ title: a.title, kind: a.kind.lsp_str(), edits: lsp_edits },
+    )
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Inlay hints
+// ---------------------------------------------------------------------------
+
+///|
+/// LSP-shaped inlay hint. Mirrors the subset of `lsp-types::InlayHint`
+/// the transport layer needs to serialise the response for
+/// `textDocument/inlayHint`.
+pub(all) struct LspInlayHint {
+  /// `(line, character)` position to anchor the hint (zero-based, as
+  /// the LSP protocol expects).
+  line : Int
+  character : Int
+  label : String
+} derive(Show)
+
+///|
+/// Compute inlay hints for the document. Backs `textDocument/inlayHint`.
+pub fn inlay_hints_for(text : String) -> Array[LspInlayHint] {
+  let out : Array[LspInlayHint] = Array::new()
+  for h in @ide.inlay_hints(text) {
+    let (line, character) = offset_to_line_col(text, h.position)
+    out.push(
+      LspInlayHint::{
+        line: line - 1,
+        character: character - 1,
+        label: h.label,
+      },
     )
   }
   out
