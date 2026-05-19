@@ -112,6 +112,10 @@ test "LintRuleId::code returns kebab-case names" {
   assert_eq(@linter.LintRuleId::UnusedLet.code(), "unused-let")
   assert_eq(@linter.LintRuleId::UnusedWhere.code(), "unused-where")
   assert_eq(
+    @linter.LintRuleId::UnusedParameter.code(),
+    "unused-parameter",
+  )
+  assert_eq(
     @linter.LintRuleId::ShadowedBinding.code(),
     "shadowed-binding",
   )
@@ -185,6 +189,62 @@ test "shadowed-binding: leading-underscore names opt out" {
   for d in diags {
     match d.code {
       Some(c) => assert_false(c == "shadowed-binding")
+      None => ()
+    }
+  }
+}
+
+///|
+test "unused-parameter: flag a parameter never used in the body" {
+  let source = "f x y = x + 1"
+  let diags = @linter.lint(source)
+  let mut found = false
+  for d in diags {
+    match d.code {
+      Some(c) =>
+        if c == "unused-parameter" {
+          assert_true(d.message.contains("Unused function parameter"))
+          assert_true(d.message.contains("`y`"))
+          found = true
+        }
+      None => ()
+    }
+  }
+  assert_true(found)
+}
+
+///|
+test "unused-parameter: used parameters are not flagged" {
+  let source = "f x y = x + y"
+  let diags = @linter.lint(source)
+  for d in diags {
+    match d.code {
+      Some(c) => assert_false(c == "unused-parameter")
+      None => ()
+    }
+  }
+}
+
+///|
+test "unused-parameter: leading-underscore params opt out" {
+  let source = "f x _y = x + 1"
+  let diags = @linter.lint(source)
+  for d in diags {
+    match d.code {
+      Some(c) => assert_false(c == "unused-parameter")
+      None => ()
+    }
+  }
+}
+
+///|
+test "unused-parameter: a where binding referencing the param suppresses the warning" {
+  // `y` isn't used in the body directly but is used by the where clause.
+  let source = "f x y = z * 2 where\n  z = y + x"
+  let diags = @linter.lint(source)
+  for d in diags {
+    match d.code {
+      Some(c) => assert_false(c == "unused-parameter")
       None => ()
     }
   }

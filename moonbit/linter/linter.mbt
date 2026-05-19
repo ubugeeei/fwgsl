@@ -16,6 +16,7 @@
 pub(all) enum LintRuleId {
   UnusedLet
   UnusedWhere
+  UnusedParameter
   ShadowedBinding
   RedundantWildcard
 } derive(Eq, Show)
@@ -27,6 +28,7 @@ pub fn LintRuleId::code(self : LintRuleId) -> String {
   match self {
     UnusedLet => "unused-let"
     UnusedWhere => "unused-where"
+    UnusedParameter => "unused-parameter"
     ShadowedBinding => "shadowed-binding"
     RedundantWildcard => "redundant-wildcard"
   }
@@ -62,6 +64,7 @@ fn lint_decl(
   match decl {
     FunDecl(_, params, body, where_binds, _) => {
       lint_unused_where(where_binds, body, diags)
+      lint_unused_params(params, body, where_binds, diags)
       lint_expr(body, diags)
       for p in params {
         lint_pattern(p, diags)
@@ -88,6 +91,7 @@ fn lint_decl(
       lint_shadowing(body_with_wheres, scope, diags)
     }
     EntryPoint(_, _, params, body, _) => {
+      lint_unused_params(params, body, Array::new(), diags)
       lint_expr(body, diags)
       for p in params {
         lint_pattern(p, diags)
@@ -99,6 +103,51 @@ fn lint_decl(
       lint_shadowing(body, scope, diags)
     }
     _ => ()
+  }
+}
+
+///|
+/// Flag function parameters that aren't referenced anywhere in the
+/// body or in any `where` binding. Leading-underscore names opt out
+/// (the `_x` convention).
+fn lint_unused_params(
+  params : Array[@ast.Pat],
+  body : @ast.Expr,
+  where_binds : Array[(String, @ast.Expr)],
+  diags : Array[@diagnostics.Diagnostic]
+) -> Unit {
+  for pat in params {
+    let names : Array[String] = Array::new()
+    collect_pattern_names(pat, names)
+    for name in names {
+      if is_ignored(name) {
+        continue
+      }
+      let mut referenced = expr_references(body, name)
+      if !referenced {
+        for w in where_binds {
+          let (_, e) = w
+          if expr_references(e, name) {
+            referenced = true
+            break
+          }
+        }
+      }
+      if !referenced {
+        diags.push(
+          @diagnostics.Diagnostic::warning(
+            "Unused function parameter `" + name + "`",
+          )
+            .with_code(LintRuleId::UnusedParameter.code())
+            .with_label(
+              @diagnostics.Label::primary(pat.span(), "bound but never used"),
+            )
+            .with_help(
+              "rename it with a leading `_` to opt out, or drop the parameter entirely",
+            ),
+        )
+      }
+    }
   }
 }
 
