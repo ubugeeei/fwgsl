@@ -10,7 +10,7 @@ package below.
 | Package                     | Purpose                                                |
 | --------------------------- | ------------------------------------------------------ |
 | `moonbit/span`              | Source spans, atoms, `Spanned[T]`                      |
-| `moonbit/diagnostics`       | Builder-style structured diagnostics + renderer        |
+| `moonbit/diagnostics`       | Builder-style structured diagnostics + miette-style source-snippet renderer |
 | `moonbit/syntax`            | `SyntaxKind` enum, keyword resolver, classification    |
 | `moonbit/cst`               | Concrete syntax tree nodes (GreenToken / GreenNode)    |
 | `moonbit/ast`               | AST types (`Lit`, `Type`, `Pat`, `Expr`, `Decl`, ...)  |
@@ -21,11 +21,13 @@ package below.
 | `moonbit/hir`               | Desugared typed high-level IR                          |
 | `moonbit/mir`               | WGSL-shaped IR + the HIR -> MIR lowering pass          |
 | `moonbit/wgsl_codegen`      | Tree-walk emitter that turns MIR into WGSL text        |
-| `moonbit/ide`               | IDE-facing analyses (completions, hover, semantic tokens) shared with the LSP and playground |
-| `moonbit/language_server`   | LSP server (document store, publishDiagnostics, hover) |
-| `moonbit/wasm`              | wasm-gc entry points (`wasm_check` / `wasm_compile`) for the playground |
-| `moonbit/cli`               | CLI library; `moonbit/cli/cmd/main` is the binary      |
-| `moonbit/integration_tests` | End-to-end pipeline tests asserting WGSL output        |
+| `moonbit/formatter`         | Token-stream formatter shared by `fwgsl fmt` and `textDocument/formatting` |
+| `moonbit/linter`            | AST-walking lint rules (`unused-let`, `unused-where`, `redundant-wildcard`, `shadowed-binding`) |
+| `moonbit/ide`               | IDE-facing analyses (type-aware hover, env-aware completions, inlay hints, code actions, document symbols, semantic tokens, goto-definition) shared with the LSP and playground |
+| `moonbit/language_server`   | LSP server (document store, publishDiagnostics, hover, completions, inlay hints, code actions, document symbols, semantic tokens, formatting) |
+| `moonbit/wasm`              | wasm-gc entry points (`wasm_check` / `wasm_compile`) for the playground; emits real WGSL and includes lint warnings |
+| `moonbit/cli`               | CLI library + binary at `moonbit/cli/cmd/main` (`compile` / `check` / `fmt` / `version` / `help`, with `--source` / `--stdin` inputs) |
+| `moonbit/integration_tests` | End-to-end pipeline tests asserting WGSL output + diagnostic accuracy |
 
 ## Building
 
