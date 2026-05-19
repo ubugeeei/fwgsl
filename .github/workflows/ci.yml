@@ -29,7 +29,7 @@ jobs:
       # pattern when copying into `playground/pkg/`.
       - name: moon build (wasm-gc)
         run: |
-          moon build --target wasm-gc
+          moon build --target wasm-gc --release
           echo "=== _build tree ==="
           ls -la _build/ || true
           echo "=== all .wasm files ==="
