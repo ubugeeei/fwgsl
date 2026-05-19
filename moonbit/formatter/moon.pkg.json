@@ -1,0 +1,13 @@
+{
+  "name": "formatter",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/syntax",
+    "ubugeeei/fwgsl/parser"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/syntax",
+    "ubugeeei/fwgsl/parser"
+  ]
+}
