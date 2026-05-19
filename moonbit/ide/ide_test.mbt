@@ -470,6 +470,70 @@ test "InlayHint derives Show and Eq for round-tripping" {
 }
 
 ///|
+test "document_symbols emits one entry per top-level decl" {
+  let source = "add x y = x + y\nmain : I32\nmain = 1"
+  let syms = @ide.document_symbols(source)
+  assert_eq(syms.length(), 2)
+  // First is `add`, then `main`.
+  assert_eq(syms[0].name, "add")
+  assert_eq(syms[0].kind, @ide.SymbolKind::SymFunction)
+  assert_eq(syms[1].name, "main")
+  assert_eq(syms[1].kind, @ide.SymbolKind::SymFunction)
+}
+
+///|
+test "document_symbols nests constructors under their data decl" {
+  let source = "data Color = Red | Green | Blue"
+  let syms = @ide.document_symbols(source)
+  assert_eq(syms.length(), 1)
+  let s = syms[0]
+  assert_eq(s.name, "Color")
+  assert_eq(s.kind, @ide.SymbolKind::SymStruct)
+  match s.detail {
+    Some(d) => assert_true(d.contains("3 constructors"))
+    None => fail("expected detail on `Color`")
+  }
+  assert_eq(s.children.length(), 3)
+  assert_eq(s.children[0].name, "Red")
+  assert_eq(s.children[0].kind, @ide.SymbolKind::SymEnumMember)
+}
+
+///|
+test "document_symbols folds TypeSig into the matching FunDecl" {
+  // The outline shouldn't duplicate `add` when there's both a signature
+  // and a definition.
+  let source = "add : I32 -> I32 -> I32\nadd x y = x + y"
+  let syms = @ide.document_symbols(source)
+  assert_eq(syms.length(), 1)
+  assert_eq(syms[0].name, "add")
+  match syms[0].detail {
+    Some(d) => assert_true(d.contains("I32"))
+    None => fail("expected detail with inferred type")
+  }
+}
+
+///|
+test "document_symbols surfaces entry points" {
+  let source = "@compute\nmain x = x"
+  let syms = @ide.document_symbols(source)
+  let mut found = false
+  for s in syms {
+    if s.name == "main" && s.kind == @ide.SymbolKind::SymFunction {
+      found = true
+    }
+  }
+  assert_true(found)
+}
+
+///|
+test "SymbolKind::lsp_code returns the LSP-protocol integers" {
+  assert_eq(@ide.SymbolKind::SymFunction.lsp_code(), 12)
+  assert_eq(@ide.SymbolKind::SymStruct.lsp_code(), 23)
+  assert_eq(@ide.SymbolKind::SymEnumMember.lsp_code(), 22)
+  assert_eq(@ide.SymbolKind::SymTypeParameter.lsp_code(), 26)
+}
+
+///|
 test "CompletionItem::new wires the label and kind" {
   let it = @ide.CompletionItem::new("foo", @ide.CompletionKind::Function)
   assert_eq(it.label, "foo")
