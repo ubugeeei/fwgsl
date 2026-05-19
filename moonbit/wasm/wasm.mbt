@@ -1,4 +1,12 @@
 ///|
+/// MoonBit needs a `fn main` to actually link a package into a wasm
+/// binary. The playground only calls the named exports listed under
+/// `link.wasm-gc.exports`, so the entry point itself is a no-op.
+fn main {
+  ()
+}
+
+///|
 /// WASM bindings for the fwgsl playground.
 ///
 /// MoonBit compiles natively to `wasm-gc`, so the public functions here
