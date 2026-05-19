@@ -71,13 +71,14 @@ fn lint_decl(
         lint_expr(w_body, diags)
       }
       // Shadowed-binding rule: walk with the function params in scope.
+      // The `where` clauses are folded into a synthetic `Let` so the
+      // shadowing walk treats them the same as inline lets — the walk
+      // itself pushes / pops names, so we don't pre-push them here
+      // (doing so would make every `where` binding flag itself as a
+      // self-shadow when the walk re-pushes it).
       let scope : Array[String] = Array::new()
       for p in params {
         collect_pattern_names(p, scope)
-      }
-      for w in where_binds {
-        let (name, _) = w
-        scope.push(name)
       }
       let body_with_wheres = if where_binds.length() == 0 {
         body
