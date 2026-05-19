@@ -696,16 +696,3 @@ fn classify_semantic_token(
   }
   None
 }
-
-///|
-fn is_arrow_scheme(scheme : @typechecker.Scheme) -> Bool {
-  match scheme.ty {
-    Arrow(_, _) => true
-    Forall(_, inner) =>
-      match inner {
-        Arrow(_, _) => true
-        _ => false
-      }
-    _ => false
-  }
-}
