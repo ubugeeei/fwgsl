@@ -2,6 +2,7 @@
   "name": "main",
   "is-main": true,
   "import": [
-    "ubugeeei/fwgsl/cli"
+    "ubugeeei/fwgsl/cli",
+    "moonbitlang/core/env"
   ]
 }
