@@ -66,8 +66,8 @@ test "diagnostic_to_json renders severity and range" {
 test "diagnostics_json_for produces a JSON array" {
   let json = @language_server.diagnostics_json_for("f x = y")
   assert_true(json.length() >= 2)
-  assert_eq(json.charcode_at(0), 0x5B) // '['
-  assert_eq(json.charcode_at(json.length() - 1), 0x5D) // ']'
+  assert_eq(json.unsafe_charcode_at(0), 0x5B) // '['
+  assert_eq(json.unsafe_charcode_at(json.length() - 1), 0x5D) // ']'
 }
 
 ///|

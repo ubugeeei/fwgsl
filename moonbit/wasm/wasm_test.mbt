@@ -8,8 +8,8 @@ test "wasm_check on well-formed source returns empty array" {
 test "wasm_check returns a JSON array" {
   let json = @wasm.wasm_check("f x = y")
   // Starts with '[' and ends with ']'.
-  assert_eq(json.charcode_at(0), 0x5B)
-  assert_eq(json.charcode_at(json.length() - 1), 0x5D)
+  assert_eq(json.unsafe_charcode_at(0), 0x5B)
+  assert_eq(json.unsafe_charcode_at(json.length() - 1), 0x5D)
 }
 
 ///|
