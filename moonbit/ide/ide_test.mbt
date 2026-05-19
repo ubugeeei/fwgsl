@@ -292,7 +292,6 @@ test "semantic_tokens classifies keyword + operator + comment" {
   assert_true(com >= 1) // line comment
 }
 
-///|
 test "semantic_tokens classifies number literals" {
   let source = "f x = 42 + 3.14"
   let tokens = @ide.semantic_tokens(source)
@@ -372,6 +371,68 @@ test "semantic_tokens skips raw whitespace and newlines" {
     assert_false(text == "\n")
     assert_false(text == " ")
   }
+}
+
+///|
+test "code_actions_at offers `Add type signature` for an unannotated decl" {
+  let source = "add x y = x + y"
+  // Offset 0 lands on the `add` token.
+  let actions = @ide.code_actions_at(source, 0)
+  assert_eq(actions.length(), 1)
+  let a = actions[0]
+  assert_eq(a.kind, @ide.CodeActionKind::QuickFix)
+  assert_true(a.title.contains("Add type signature"))
+  assert_true(a.title.contains("`add`"))
+  assert_eq(a.edits.length(), 1)
+  let e = a.edits[0]
+  assert_eq(e.start, 0U)
+  assert_eq(e.end, 0U)
+  // The new text is `add : <type>\n`.
+  assert_true(e.new_text.contains("add : "))
+  assert_true(e.new_text.contains("->"))
+  // Ends with a newline so the original line stays intact.
+  let last = e.new_text.unsafe_charcode_at(e.new_text.length() - 1)
+  assert_eq(last, 0x0A)
+}
+
+///|
+test "code_actions_at skips decls that already have a signature" {
+  let source = "add : I32 -> I32 -> I32\nadd x y = x + y"
+  let actions = @ide.code_actions_at(source, 24)
+  assert_eq(actions.length(), 0)
+}
+
+///|
+test "code_actions_at returns nothing when no decl covers the offset" {
+  let source = "add x y = x + y"
+  // Offset past the end of the source.
+  let actions = @ide.code_actions_at(source, 999U)
+  assert_eq(actions.length(), 0)
+}
+
+///|
+test "code_actions_at preserves the decl's leading indentation" {
+  // The decl sits at column 2 (two spaces of indent). The inserted
+  // signature should match that indent so the edited output stays
+  // aligned.
+  let source = "  foo x = x"
+  let actions = @ide.code_actions_at(source, 2)
+  assert_eq(actions.length(), 1)
+  let e = actions[0].edits[0]
+  // Insertion happens at the line start, before the indent.
+  assert_eq(e.start, 0U)
+  assert_eq(e.end, 0U)
+  let nl = e.new_text.unsafe_charcode_at(0)
+  let nl2 = e.new_text.unsafe_charcode_at(1)
+  // First two chars are the preserved indent.
+  assert_eq(nl, 0x20)
+  assert_eq(nl2, 0x20)
+}
+
+///|
+test "CodeActionKind::lsp_str returns the LSP-protocol strings" {
+  assert_eq(@ide.CodeActionKind::QuickFix.lsp_str(), "quickfix")
+  assert_eq(@ide.CodeActionKind::Refactor.lsp_str(), "refactor")
 }
 
 ///|

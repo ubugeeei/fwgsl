@@ -189,6 +189,60 @@ pub fn format_document(text : String) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Code actions
+// ---------------------------------------------------------------------------
+
+///|
+/// A single LSP-shaped text edit, with `(line, character)` positions.
+pub(all) struct LspTextEdit {
+  start_line : Int
+  start_character : Int
+  end_line : Int
+  end_character : Int
+  new_text : String
+} derive(Show)
+
+///|
+/// LSP-shaped code action ready for serialisation to a
+/// `textDocument/codeAction` response.
+pub(all) struct LspCodeAction {
+  title : String
+  /// LSP `CodeActionKind` string (`"quickfix"`, `"refactor"`, ...).
+  kind : String
+  edits : Array[LspTextEdit]
+} derive(Show)
+
+///|
+/// Compute code actions for the document at offset `offset`. Backs
+/// `textDocument/codeAction`.
+pub fn code_actions_for(
+  text : String,
+  offset : UInt
+) -> Array[LspCodeAction] {
+  let out : Array[LspCodeAction] = Array::new()
+  for a in @ide.code_actions_at(text, offset) {
+    let lsp_edits : Array[LspTextEdit] = Array::new()
+    for e in a.edits {
+      let (sl, sc) = offset_to_line_col(text, e.start)
+      let (el, ec) = offset_to_line_col(text, e.end)
+      lsp_edits.push(
+        LspTextEdit::{
+          start_line: sl - 1,
+          start_character: sc - 1,
+          end_line: el - 1,
+          end_character: ec - 1,
+          new_text: e.new_text,
+        },
+      )
+    }
+    out.push(
+      LspCodeAction::{ title: a.title, kind: a.kind.lsp_str(), edits: lsp_edits },
+    )
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
 // JSON-RPC serialisation helpers
 // ---------------------------------------------------------------------------
 

@@ -464,6 +464,136 @@ fn skip_trivia_from(tokens : Array[@parser.Token], from : Int) -> Int {
 }
 
 ///|
+/// A single edit that an editor should apply to a source buffer.
+pub(all) struct TextEdit {
+  /// Byte offset (inclusive) where the edit starts.
+  start : UInt
+  /// Byte offset (exclusive) where the edit ends.
+  end : UInt
+  /// Replacement text. The empty string means "delete the range".
+  new_text : String
+} derive(Show, Eq)
+
+///|
+pub(all) enum CodeActionKind {
+  /// A `quickfix.*` action — tied to a diagnostic that the action resolves.
+  QuickFix
+  /// A `refactor.*` action — improves the code without fixing an error.
+  Refactor
+} derive(Eq, Show)
+
+///|
+pub fn CodeActionKind::lsp_str(self : CodeActionKind) -> String {
+  match self {
+    QuickFix => "quickfix"
+    Refactor => "refactor"
+  }
+}
+
+///|
+/// A code action the editor can offer the user. A single action may carry
+/// multiple text edits, but the typical "add type signature" case has
+/// exactly one.
+pub(all) struct CodeAction {
+  title : String
+  kind : CodeActionKind
+  edits : Array[TextEdit]
+} derive(Show)
+
+///|
+/// Compute code actions available at byte offset `offset` in `source`.
+///
+/// First action: for a `FunDecl` under the cursor that lacks an explicit
+/// `<name> : <type>` signature, propose inserting one above the decl
+/// using the inferred type from the semantic env.
+pub fn code_actions_at(source : String, offset : UInt) -> Array[CodeAction] {
+  let actions : Array[CodeAction] = Array::new()
+  let parser = @parser.Parser::new(source)
+  let program = parser.parse_program()
+  let analyzer = @semantic.SemanticAnalyzer::new()
+  analyzer.analyze(program)
+  let signed : Map[String, Bool] = Map::new()
+  for decl in program.decls {
+    match decl {
+      TypeSig(name, _, _) => signed[name] = true
+      _ => ()
+    }
+  }
+  let env = analyzer.env()
+  for decl in program.decls {
+    match decl {
+      FunDecl(name, _, _, _, span) =>
+        if span_contains_offset(span, offset) && signed.get(name) is None {
+          match env.lookup(name) {
+            Some(scheme) =>
+              actions.push(
+                build_add_signature_action(name, scheme, span, source),
+              )
+            None => ()
+          }
+        }
+      _ => ()
+    }
+  }
+  actions
+}
+
+///|
+fn span_contains_offset(span : @span.Span, offset : UInt) -> Bool {
+  offset >= span.start && offset <= span.end
+}
+
+///|
+/// Build a `quickfix.add-type-signature` action that inserts
+/// `<name> : <type>\n` immediately before `decl_span.start`. The
+/// insertion preserves the leading indentation of the decl line.
+fn build_add_signature_action(
+  name : String,
+  scheme : @typechecker.Scheme,
+  decl_span : @span.Span,
+  source : String
+) -> CodeAction {
+  let indent = leading_indent_for(decl_span.start, source)
+  let line = indent + name + " : " + pretty_scheme(scheme) + "\n"
+  let edit = TextEdit::{
+    start: decl_span.start - indent.length().reinterpret_as_uint(),
+    end: decl_span.start - indent.length().reinterpret_as_uint(),
+    new_text: line,
+  }
+  let edits : Array[TextEdit] = Array::new()
+  edits.push(edit)
+  CodeAction::{
+    title: "Add type signature for `" + name + "`",
+    kind: QuickFix,
+    edits,
+  }
+}
+
+///|
+/// Walk back from `offset` to the previous newline (or the start of the
+/// document) and return the run of horizontal whitespace immediately
+/// after it — the indentation of the line `offset` sits on.
+fn leading_indent_for(offset : UInt, source : String) -> String {
+  let off = offset.reinterpret_as_int()
+  let mut line_start = off
+  while line_start > 0 {
+    if source.unsafe_charcode_at(line_start - 1) == 0x0A {
+      break
+    }
+    line_start = line_start - 1
+  }
+  let mut i = line_start
+  while i < off {
+    let c = source.unsafe_charcode_at(i)
+    if c != 0x20 && c != 0x09 {
+      break
+    }
+    i = i + 1
+  }
+  source.substring(start=line_start, end=i)
+}
+
+///|
 /// Compute semantic tokens for the entire document.
 ///
 /// Classifies each token with the LSP semantic-token kind editors use to
