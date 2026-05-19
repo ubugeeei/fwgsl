@@ -336,26 +336,116 @@ fn skip_trivia_from(tokens : Array[@parser.Token], from : Int) -> Int {
 ///|
 /// Compute semantic tokens for the entire document.
 ///
-/// The Rust crate emits a much richer stream; this placeholder turns the
-/// raw lexer output into a coarse `keyword | operator | comment` colouring
-/// so the LSP can already show *something*.
+/// Classifies each token with the LSP semantic-token kind editors use to
+/// drive themed highlighting:
+///
+/// - `TokKeyword` — language keywords (`let`, `data`, ...).
+/// - `TokOperator` — punctuator operators (`+`, `==`, `->`, ...).
+/// - `TokDecorator` — the `@` plus the identifier that follows
+///   (`@compute`, `@workgroup_size`).
+/// - `TokType` — `UpperIdent` (data types and constructors).
+/// - `TokFunction` — `Ident` bound to an arrow type in the semantic env.
+/// - `TokVariable` — every other `Ident`.
+/// - `TokNumber` — int / float literals.
+/// - `TokString` — string / char literals.
+/// - `TokComment` — line / block comments.
+///
+/// Falls back to omitting the token when none of the above apply, so the
+/// stream stays compact.
 pub fn semantic_tokens(source : String) -> Array[SemanticToken] {
   let out : Array[SemanticToken] = Array::new()
-  for tok in @parser.lex(source) {
-    let kind : SemanticTokenKind? = if tok.kind.is_keyword() {
-      Some(TokKeyword)
-    } else if tok.kind.is_operator() {
-      Some(TokOperator)
-    } else if tok.kind == @syntax.SyntaxKind::LineComment ||
-      tok.kind == @syntax.SyntaxKind::BlockComment {
-      Some(TokComment)
-    } else {
-      None
+  let tokens = @parser.lex(source)
+  let env = analyze(source).env()
+  let mut prev_non_trivia : @syntax.SyntaxKind? = None
+  let mut i = 0
+  let n = tokens.length()
+  while i < n {
+    let tok = tokens[i]
+    if tok.kind == @syntax.SyntaxKind::Eof {
+      break
     }
-    match kind {
+    if tok.kind.is_trivia() &&
+      tok.kind != @syntax.SyntaxKind::LineComment &&
+      tok.kind != @syntax.SyntaxKind::BlockComment {
+      i = i + 1
+      continue
+    }
+    let classified = classify_semantic_token(
+      tok,
+      source,
+      env,
+      prev_non_trivia,
+    )
+    match classified {
       Some(k) => out.push(SemanticToken::{ kind: k, span: tok.span })
       None => ()
     }
+    prev_non_trivia = Some(tok.kind)
+    i = i + 1
   }
   out
+}
+
+///|
+fn classify_semantic_token(
+  tok : @parser.Token,
+  source : String,
+  env : @typechecker.TypeEnv,
+  prev : @syntax.SyntaxKind?
+) -> SemanticTokenKind? {
+  let kind = tok.kind
+  if kind == @syntax.SyntaxKind::At {
+    return Some(TokDecorator)
+  }
+  if kind.is_keyword() {
+    return Some(TokKeyword)
+  }
+  if kind.is_operator() {
+    return Some(TokOperator)
+  }
+  if kind == @syntax.SyntaxKind::LineComment ||
+    kind == @syntax.SyntaxKind::BlockComment {
+    return Some(TokComment)
+  }
+  if kind == @syntax.SyntaxKind::IntLiteral || kind == @syntax.SyntaxKind::FloatLiteral {
+    return Some(TokNumber)
+  }
+  if kind == @syntax.SyntaxKind::StringLiteral || kind == @syntax.SyntaxKind::CharLiteral {
+    return Some(TokString)
+  }
+  if kind == @syntax.SyntaxKind::UpperIdent {
+    return Some(TokType)
+  }
+  if kind == @syntax.SyntaxKind::Ident {
+    // `@<name>` attribute lookups: the identifier immediately after an
+    // `@` is part of the decorator.
+    match prev {
+      Some(At) => return Some(TokDecorator)
+      _ => ()
+    }
+    let name = tok.span.source_text(source)
+    match env.lookup(name) {
+      Some(scheme) =>
+        if is_arrow_scheme(scheme) {
+          return Some(TokFunction)
+        } else {
+          return Some(TokVariable)
+        }
+      None => return Some(TokVariable)
+    }
+  }
+  None
+}
+
+///|
+fn is_arrow_scheme(scheme : @typechecker.Scheme) -> Bool {
+  match scheme.ty {
+    Arrow(_, _) => true
+    Forall(_, inner) =>
+      match inner {
+        Arrow(_, _) => true
+        _ => false
+      }
+    _ => false
+  }
 }
