@@ -1,21 +1,42 @@
 {
   "name": "wasm",
   "import": [
+    "ubugeeei/fwgsl/span",
     "ubugeeei/fwgsl/diagnostics",
     "ubugeeei/fwgsl/parser",
     "ubugeeei/fwgsl/semantic",
     "ubugeeei/fwgsl/ast_lowering",
     "ubugeeei/fwgsl/mir",
     "ubugeeei/fwgsl/wgsl_codegen",
-    "ubugeeei/fwgsl/linter"
+    "ubugeeei/fwgsl/formatter",
+    "ubugeeei/fwgsl/linter",
+    "ubugeeei/fwgsl/ide"
   ],
   "test-import": [
+    "ubugeeei/fwgsl/span",
     "ubugeeei/fwgsl/diagnostics",
     "ubugeeei/fwgsl/parser",
     "ubugeeei/fwgsl/semantic",
     "ubugeeei/fwgsl/ast_lowering",
     "ubugeeei/fwgsl/mir",
     "ubugeeei/fwgsl/wgsl_codegen",
-    "ubugeeei/fwgsl/linter"
-  ]
+    "ubugeeei/fwgsl/formatter",
+    "ubugeeei/fwgsl/linter",
+    "ubugeeei/fwgsl/ide"
+  ],
+  "link": {
+    "wasm-gc": {
+      "exports": [
+        "wasm_check",
+        "wasm_compile",
+        "compile",
+        "format",
+        "editor_completions",
+        "editor_hover",
+        "editor_definition",
+        "editor_references"
+      ],
+      "use-js-builtin-string": true
+    }
+  }
 }

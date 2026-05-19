@@ -1,13 +1,28 @@
 ///|
 /// WASM bindings for the fwgsl playground.
 ///
-/// In the Rust workspace `fwgsl_wasm` uses `wasm-bindgen` to expose the
-/// compiler to a JavaScript host. MoonBit compiles natively to wasm-gc,
-/// so the equivalent is to export plain MoonBit functions and have the
-/// JavaScript host call them through the wasm-gc ABI.
+/// MoonBit compiles natively to `wasm-gc`, so the public functions here
+/// are listed in `moon.pkg.json` under `link.wasm-gc.exports` to surface
+/// them to the JavaScript host. `link.wasm-gc.use-js-builtin-string`
+/// makes MoonBit `String` values pass to / from JS as native JS strings
+/// without manual marshaling.
 ///
-/// - `wasm_check(source)` -> JSON array of diagnostics.
-/// - `wasm_compile(source)` -> JSON object with `diagnostics` and `wgsl`.
+/// Public exports:
+///
+/// - `wasm_check(source)` -> JSON array of diagnostics (legacy alias).
+/// - `wasm_compile(source)` -> JSON object with `diagnostics` and `wgsl`
+///    (legacy alias).
+/// - `compile(source)` -> identical to `wasm_compile` — the playground
+///    calls this name.
+/// - `format(source)` -> reformatted source (the token-stream formatter).
+/// - `editor_completions(source, line, column)` -> JSON array of
+///    completion items.
+/// - `editor_hover(source, line, column)` -> JSON object with `contents`
+///    and `range`, or `null`.
+/// - `editor_definition(source, line, column)` -> JSON array of
+///    `{ range }` locations.
+/// - `editor_references(source, line, column, includeDeclaration)` ->
+///    JSON array of `{ range }` locations.
 
 ///|
 /// Run parser + semantic diagnostics and return them as a JSON array.
@@ -176,4 +191,216 @@ fn hex_byte(b : Int) -> String {
   let hi = (b / 16) % 16
   let lo = b % 16
   hex.unsafe_substring(start=hi, end=hi + 1) + hex.unsafe_substring(start=lo, end=lo + 1)
+}
+
+// ---------------------------------------------------------------------------
+// Playground-facing exports
+// ---------------------------------------------------------------------------
+//
+// The playground (`playground/app.js`) calls these directly. Names are
+// short on purpose — `compile(source)`, `format(source)`,
+// `editor_completions(source, line, column)`, etc. The legacy
+// `wasm_check` / `wasm_compile` entry points remain for backward
+// compatibility.
+
+///|
+/// Compile alias for the playground. Same shape as `wasm_compile`:
+/// JSON object with `diagnostics` and `wgsl`.
+pub fn compile(source : String) -> String {
+  wasm_compile(source)
+}
+
+///|
+/// Reformat source with the token-stream formatter. Backs the
+/// playground's "Format" button and the LSP `textDocument/formatting`
+/// request.
+pub fn format(source : String) -> String {
+  @formatter.format(source)
+}
+
+///|
+/// Editor completion list for `source` at `(line, column)` (both
+/// 1-based, matching Monaco's positions). Returns a JSON array of
+/// completion items shaped like `{ label, kind, detail?, range }`.
+pub fn editor_completions(
+  source : String,
+  line : Int,
+  column : Int
+) -> String {
+  let offset = line_col_to_offset(source, line, column)
+  let items : Array[String] = Array::new()
+  for it in @ide.completions_at(source, offset) {
+    items.push(completion_item_to_json(it, line, column))
+  }
+  join_json_array(items)
+}
+
+///|
+/// Editor hover at `(line, column)`. Returns a JSON object
+/// `{ contents, range }` or the string `"null"`.
+pub fn editor_hover(source : String, line : Int, column : Int) -> String {
+  let offset = line_col_to_offset(source, line, column)
+  match @ide.hover_at(source, offset) {
+    None => "null"
+    Some(info) => {
+      let range = span_to_monaco_range(source, info.span)
+      "{\"contents\":" +
+      json_string(info.contents) +
+      ",\"range\":" +
+      range +
+      "}"
+    }
+  }
+}
+
+///|
+/// Editor goto-definition at `(line, column)`. Returns a JSON array
+/// of `{ range }` locations (empty array when nothing matches).
+pub fn editor_definition(
+  source : String,
+  line : Int,
+  column : Int
+) -> String {
+  let offset = line_col_to_offset(source, line, column)
+  match @ide.goto_definition_at(source, offset) {
+    None => "[]"
+    Some(target) => {
+      let range = span_to_monaco_range(source, target.span)
+      "[{\"range\":" + range + "}]"
+    }
+  }
+}
+
+///|
+/// Editor find-references at `(line, column)`. The current IDE layer
+/// only provides goto-definition, so for now we return a single entry
+/// pointing at the definition (which is what most editors do as a
+/// fallback). Empty array when nothing matches.
+pub fn editor_references(
+  source : String,
+  line : Int,
+  column : Int,
+  _include_declaration : Bool
+) -> String {
+  editor_definition(source, line, column)
+}
+
+///|
+/// Convert a 1-based `(line, column)` pair into a byte offset for use
+/// with the byte-offset-based IDE APIs.
+fn line_col_to_offset(source : String, line : Int, column : Int) -> UInt {
+  if line <= 0 || column <= 0 {
+    return 0U
+  }
+  let target_line = line - 1
+  let target_col = column - 1
+  let len = source.length()
+  let mut i = 0
+  let mut cur_line = 0
+  let mut cur_col = 0
+  while i < len {
+    if cur_line == target_line && cur_col == target_col {
+      break
+    }
+    let c = source.unsafe_charcode_at(i)
+    if c == 0x0A {
+      if cur_line == target_line {
+        // Asked for a column past the end of this line; clamp here.
+        break
+      }
+      cur_line = cur_line + 1
+      cur_col = 0
+    } else {
+      cur_col = cur_col + 1
+    }
+    i = i + 1
+  }
+  i.reinterpret_as_uint()
+}
+
+///|
+/// Render `(@span.Span)` as a Monaco-shaped `{ startLineNumber, startColumn,
+/// endLineNumber, endColumn }` JSON object (both 1-based).
+fn span_to_monaco_range(source : String, span : @span.Span) -> String {
+  let (sl, sc) = offset_to_line_col(source, span.start)
+  let (el, ec) = offset_to_line_col(source, span.end)
+  "{\"startLineNumber\":" +
+  sl.to_string() +
+  ",\"startColumn\":" +
+  sc.to_string() +
+  ",\"endLineNumber\":" +
+  el.to_string() +
+  ",\"endColumn\":" +
+  ec.to_string() +
+  "}"
+}
+
+///|
+fn offset_to_line_col(source : String, offset : UInt) -> (Int, Int) {
+  let target = offset.reinterpret_as_int()
+  let mut line = 1
+  let mut col = 1
+  let mut i = 0
+  let len = source.length()
+  while i < len && i < target {
+    let c = source.unsafe_charcode_at(i)
+    if c == 0x0A {
+      line = line + 1
+      col = 1
+    } else {
+      col = col + 1
+    }
+    i = i + 1
+  }
+  (line, col)
+}
+
+///|
+fn completion_item_to_json(
+  it : @ide.CompletionItem,
+  line : Int,
+  column : Int
+) -> String {
+  let kind_num = match it.kind {
+    Keyword => 17 // monaco.languages.CompletionItemKind.Keyword
+    Function => 1 // CompletionItemKind.Function -> Method (closest)
+    Constructor => 2 // CompletionItemKind.Constructor -> Function
+    Type => 14 // CompletionItemKind.Class
+    Variable => 4 // CompletionItemKind.Variable
+    Attribute => 5 // CompletionItemKind.Property
+  }
+  let range = "{\"startLineNumber\":" +
+    line.to_string() +
+    ",\"startColumn\":" +
+    column.to_string() +
+    ",\"endLineNumber\":" +
+    line.to_string() +
+    ",\"endColumn\":" +
+    column.to_string() +
+    "}"
+  let mut out = "{\"label\":" +
+    json_string(it.label) +
+    ",\"kind\":" +
+    kind_num.to_string() +
+    ",\"range\":" +
+    range
+  match it.detail {
+    Some(d) => out = out + ",\"detail\":" + json_string(d)
+    None => ()
+  }
+  out + "}"
+}
+
+///|
+fn join_json_array(items : Array[String]) -> String {
+  let mut out = "["
+  let mut first = true
+  for item in items {
+    if !first {
+      out = out + ","
+    }
+    first = false
+    out = out + item
+  }
+  out + "]"
 }
