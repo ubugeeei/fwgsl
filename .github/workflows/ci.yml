@@ -24,9 +24,16 @@ jobs:
       # Build the wasm-gc target so the playground's deploy step in
       # `pages.yml` can rely on the linked artifact existing. Catches
       # link / export configuration errors at PR time instead of at
-      # deploy time.
-      - name: moon build (wasm-gc)
-        run: moon build --target wasm-gc
+      # deploy time. The artifact discovery `find` lives here too so
+      # the path is logged in PR runs; pages.yml uses the same
+      # pattern when copying into `playground/pkg/`.
+      - name: moon build (wasm-gc release)
+        run: |
+          moon build --target wasm-gc --release
+          # The playground deploy in `pages.yml` expects this artifact;
+          # assert it exists so config drift fails the gating check
+          # instead of the post-merge deploy.
+          test -f _build/wasm-gc/release/build/wasm/wasm.wasm
 
   playground-artifact:
     name: Playground artifact

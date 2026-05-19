@@ -27,17 +27,24 @@ jobs:
 
       - name: Build playground wasm
         run: |
-          moon build --target wasm-gc
-          # `moonbit/wasm` is configured with `link.wasm-gc.exports` in
-          # its `moon.pkg.json`, so `moon build --target wasm-gc` drops
-          # the linked artifact at
+          # `moonbit/wasm` is configured with `link.wasm-gc.exports`
+          # and `is-main: true`, so `moon build --target wasm-gc
+          # --release` drops the linked artifact at
           # `_build/wasm-gc/release/build/wasm/wasm.wasm`. Surface it
           # under `playground/pkg/fwgsl_wasm_bg.wasm`, which the
           # hand-written JS shim in `playground/pkg/fwgsl_wasm.js`
           # `fetch`es at runtime.
+          set -euxo pipefail
+          moon build --target wasm-gc --release
+          WASM=_build/wasm-gc/release/build/wasm/wasm.wasm
+          if [ ! -f "$WASM" ]; then
+            echo "Expected $WASM to exist after moon build --release"
+            echo "Available .wasm artifacts:"
+            find _build -name '*.wasm' || true
+            exit 1
+          fi
           mkdir -p playground/pkg
-          cp _build/wasm-gc/release/build/wasm/wasm.wasm \
-             playground/pkg/fwgsl_wasm_bg.wasm
+          cp "$WASM" playground/pkg/fwgsl_wasm_bg.wasm
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

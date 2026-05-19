@@ -121,3 +121,19 @@ test "editor_references is currently an alias for editor_definition" {
   let b = @wasm.editor_definition(source, 2, 9)
   assert_eq(a, b)
 }
+
+///|
+test "wasm_check diagnostic JSON includes 1-based line / col" {
+  // `y` lives at offset 6 of `f x = y` -> column 7 on line 1.
+  let json = @wasm.wasm_check("f x = y")
+  assert_true(json.contains("\"line\":1"))
+  assert_true(json.contains("\"col\":7"))
+}
+
+///|
+test "wasm_check diagnostic line / col tracks newlines" {
+  // The error reference `y` is on line 2.
+  let source = "f x =\n  y"
+  let json = @wasm.wasm_check(source)
+  assert_true(json.contains("\"line\":2"))
+}

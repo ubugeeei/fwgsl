@@ -1,5 +1,6 @@
 {
   "name": "wasm",
+  "is-main": true,
   "import": [
     "ubugeeei/fwgsl/span",
     "ubugeeei/fwgsl/diagnostics",
