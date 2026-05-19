@@ -27,15 +27,13 @@ jobs:
       # deploy time. The artifact discovery `find` lives here too so
       # the path is logged in PR runs; pages.yml uses the same
       # pattern when copying into `playground/pkg/`.
-      - name: moon build (wasm-gc)
+      - name: moon build (wasm-gc release)
         run: |
           moon build --target wasm-gc --release
-          echo "=== _build tree ==="
-          ls -la _build/ || true
-          echo "=== all .wasm files ==="
-          find _build -name '*.wasm' || true
-          echo "=== all .core files ==="
-          find _build -name '*.core' || true
+          # The playground deploy in `pages.yml` expects this artifact;
+          # assert it exists so config drift fails the gating check
+          # instead of the post-merge deploy.
+          test -f _build/wasm-gc/release/build/wasm/wasm.wasm
 
   playground-artifact:
     name: Playground artifact
