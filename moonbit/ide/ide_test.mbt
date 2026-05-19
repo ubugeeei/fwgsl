@@ -21,14 +21,49 @@ test "completions returns keyword list" {
 }
 
 ///|
-test "hover and goto are None until name resolution lands" {
-  match @ide.hover_at("main = 1", 0) {
-    None => ()
-    Some(_) => fail("expected None hover")
+test "hover identifies kinds" {
+  // Hovering on `let` -> keyword.
+  match @ide.hover_at("let x = 1 in x", 1) {
+    Some(h) => assert_true(h.contents.contains("keyword `let`"))
+    None => fail("expected hover on `let`")
   }
-  match @ide.goto_definition_at("main = 1", 0) {
+  // Hovering on identifier.
+  match @ide.hover_at("main = 1", 0) {
+    Some(h) => assert_true(h.contents.contains("identifier `main`"))
+    None => fail("expected hover on identifier")
+  }
+  // Hovering past the end of the document is None.
+  match @ide.hover_at("main = 1", 999) {
     None => ()
-    Some(_) => fail("expected None goto target")
+    Some(_) => fail("expected None hover past EOF")
+  }
+}
+
+///|
+test "goto definition jumps to the function name" {
+  let source = "scale x = x + 1\nuse x = scale x"
+  // Hover on the second `scale` (after `=`).
+  let offset_of_use : UInt = 24
+  match @ide.goto_definition_at(source, offset_of_use) {
+    Some(target) => assert_eq(target.span.start, 0U)
+    None => fail("expected goto target")
+  }
+}
+
+///|
+test "goto definition is None for keyword tokens" {
+  match @ide.goto_definition_at("let x = 1 in x", 0) {
+    None => ()
+    Some(_) => fail("expected None for keyword")
+  }
+}
+
+///|
+test "token_at returns None for trivia" {
+  // Offset 1 falls on whitespace.
+  match @ide.token_at("a b", 1) {
+    None => ()
+    Some(_) => fail("expected None for whitespace")
   }
 }
 

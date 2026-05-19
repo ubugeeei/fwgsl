@@ -84,19 +84,126 @@ pub fn completions_at(
 }
 
 ///|
+/// Find the lexer token whose span contains `offset`.
+///
+/// Returns `None` if the offset is past the end of the source or only
+/// lands on trivia (whitespace / newlines). Comments are kept because
+/// hovering over a comment is a useful signal for the user.
+pub fn token_at(source : String, offset : UInt) -> @parser.Token? {
+  for tok in @parser.lex(source) {
+    if tok.kind == @syntax.SyntaxKind::Eof {
+      break
+    }
+    if tok.span.contains(offset) {
+      if tok.kind == @syntax.SyntaxKind::Whitespace ||
+        tok.kind == @syntax.SyntaxKind::Newline {
+        continue
+      }
+      return Some(tok)
+    }
+  }
+  None
+}
+
+///|
 /// Compute the hover summary for the symbol under `offset`.
 ///
-/// Placeholder: returns `None` until name resolution is wired up.
-pub fn hover_at(_source : String, _offset : UInt) -> HoverInfo? {
-  None
+/// Returns a brief, kind-aware label so the LSP can already show
+/// something useful while full type resolution is still landing.
+pub fn hover_at(source : String, offset : UInt) -> HoverInfo? {
+  match token_at(source, offset) {
+    None => None
+    Some(tok) => {
+      let text = tok.span.source_text(source)
+      let label = if tok.kind.is_keyword() {
+        "keyword `" + text + "`"
+      } else if tok.kind == @syntax.SyntaxKind::Ident {
+        "identifier `" + text + "`"
+      } else if tok.kind == @syntax.SyntaxKind::UpperIdent {
+        "constructor or type `" + text + "`"
+      } else if tok.kind.is_literal() {
+        "literal `" + text + "`"
+      } else if tok.kind.is_operator() {
+        "operator `" + text + "`"
+      } else if tok.kind == @syntax.SyntaxKind::LineComment ||
+        tok.kind == @syntax.SyntaxKind::BlockComment {
+        "comment"
+      } else {
+        tok.kind.display()
+      }
+      Some(HoverInfo::{ contents: label, span: tok.span })
+    }
+  }
 }
 
 ///|
 /// Resolve a goto-definition request.
 ///
-/// Placeholder: returns `None` until name resolution is wired up.
-pub fn goto_definition_at(_source : String, _offset : UInt) -> GotoTarget? {
-  None
+/// Looks up the first declaration that matches the identifier under
+/// `offset`. Returns `None` for non-identifier tokens or when no
+/// matching definition is found in the same source. Full cross-module
+/// resolution lands once the module system does.
+pub fn goto_definition_at(source : String, offset : UInt) -> GotoTarget? {
+  match token_at(source, offset) {
+    None => None
+    Some(tok) => {
+      let kind = tok.kind
+      if kind != @syntax.SyntaxKind::Ident &&
+        kind != @syntax.SyntaxKind::UpperIdent {
+        return None
+      }
+      let name = tok.span.source_text(source)
+      // Walk the token stream for the first declaration that introduces
+      // a matching name: `<name> :`, `<name> =`, `<name> x =`,
+      // `data <Name>`, or `type <Name>`.
+      let tokens = @parser.lex(source)
+      let mut i = 0
+      let n = tokens.length()
+      while i < n {
+        let t = tokens[i]
+        if t.kind == @syntax.SyntaxKind::Eof {
+          break
+        }
+        if (t.kind == @syntax.SyntaxKind::KwData ||
+          t.kind == @syntax.SyntaxKind::KwType) &&
+          i + 2 < n {
+          let next = skip_trivia_from(tokens, i + 1)
+          if next < n {
+            let candidate = tokens[next]
+            if candidate.kind == @syntax.SyntaxKind::UpperIdent &&
+              candidate.span.source_text(source) == name {
+              return Some(GotoTarget::{ span: candidate.span })
+            }
+          }
+        }
+        if t.kind == @syntax.SyntaxKind::Ident &&
+          t.span.source_text(source) == name {
+          let next = skip_trivia_from(tokens, i + 1)
+          if next < n {
+            let nk = tokens[next].kind
+            if nk == @syntax.SyntaxKind::Colon ||
+              nk == @syntax.SyntaxKind::Equals ||
+              nk == @syntax.SyntaxKind::Ident ||
+              nk == @syntax.SyntaxKind::Underscore {
+              return Some(GotoTarget::{ span: t.span })
+            }
+          }
+        }
+        i = i + 1
+      }
+      None
+    }
+  }
+}
+
+///|
+fn skip_trivia_from(tokens : Array[@parser.Token], from : Int) -> Int {
+  let mut i = from
+  let n = tokens.length()
+  while i < n && tokens[i].kind.is_trivia() {
+    i = i + 1
+  }
+  i
 }
 
 ///|
