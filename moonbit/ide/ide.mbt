@@ -65,22 +65,152 @@ pub(all) struct SemanticToken {
 ///|
 /// Compute completion items for a given source position.
 ///
-/// Placeholder implementation: returns the static keyword list so the
-/// downstream packages can already wire up an IDE without depending on
-/// the still-incomplete inference engine.
+/// Returns three groups, in this order: language keywords, in-scope value
+/// bindings (builtins + top-level definitions in `source`), and known
+/// type constructors (data types + constructors). Each value carries a
+/// `detail` line with its pretty-printed type so the editor can show the
+/// signature in the completion popup. The client is responsible for
+/// filtering by prefix.
 pub fn completions_at(
-  _source : String,
+  source : String,
   _offset : UInt
 ) -> Array[CompletionItem] {
   let items : Array[CompletionItem] = Array::new()
-  for kw in [
-      "let", "in", "where", "data", "type", "case", "of", "match", "if",
-      "then", "else", "do", "forall", "infixl", "infixr", "infix", "deriving",
-      "class", "instance", "import", "module",
-    ] {
+  for kw in keyword_completions() {
     items.push(CompletionItem::new(kw, Keyword))
   }
+  let analyzer = analyze(source)
+  let env = analyzer.env()
+  // Bindings: builtins + top-level definitions. Classify as Function when
+  // the scheme's underlying type is an arrow, Variable otherwise. Skip
+  // constructors and operators here — they get dedicated handling below.
+  env.bindings.each(fn(name, scheme) {
+    if is_operator_name(name) {
+      return
+    }
+    if analyzer.constructors().get(name) is Some(_) {
+      return
+    }
+    let kind = if is_arrow_scheme(scheme) { Function } else { Variable }
+    let detail = ": " + pretty_scheme(scheme)
+    items.push(
+      CompletionItem::{
+        label: name,
+        kind,
+        detail: Some(detail),
+        documentation: None,
+        snippet: None,
+      },
+    )
+  })
+  // Constructors registered by `data` declarations and the builtin
+  // prelude (Some / None / Ok / Err / Pair).
+  analyzer.constructors().each(fn(name, info) {
+    let scheme = constructor_scheme(info)
+    let detail = "constructor of " + info.type_name + " : " + pretty_scheme(scheme)
+    items.push(
+      CompletionItem::{
+        label: name,
+        kind: Constructor,
+        detail: Some(detail),
+        documentation: None,
+        snippet: None,
+      },
+    )
+  })
+  // Data type names (Option, Result, Pair, plus any `data` decls).
+  analyzer.data_types().each(fn(name, info) {
+    let detail = "data type" +
+      (if info.type_params.length() == 0 {
+        ""
+      } else {
+        " of arity " + info.type_params.length().to_string()
+      })
+    items.push(
+      CompletionItem::{
+        label: name,
+        kind: Type,
+        detail: Some(detail),
+        documentation: None,
+        snippet: None,
+      },
+    )
+  })
   items
+}
+
+///|
+/// The reserved-word completion seed. Exposed so tests and downstream
+/// tooling can assert the exact list without duplicating the literal.
+pub fn keyword_completions() -> Array[String] {
+  [
+    "let", "in", "where", "data", "type", "case", "of", "match", "if",
+    "then", "else", "do", "forall", "infixl", "infixr", "infix", "deriving",
+    "class", "instance", "import", "module",
+  ]
+}
+
+///|
+/// Build the function type a constructor takes when used as a value
+/// (`Some : a -> Option a`, `None : Option a`, `Pair : a -> b -> Pair a b`).
+fn constructor_scheme(
+  info : @typechecker.ConstructorInfo
+) -> @typechecker.Scheme {
+  let body = match info.fields {
+    Empty => info.result_ty
+    Positional(field_tys) => arrow_fold_constructors(field_tys, info.result_ty)
+    RecordFields(record_fields) => {
+      let tys : Array[@typechecker.Ty] = Array::new()
+      for r in record_fields {
+        let (_, ty) = r
+        tys.push(ty)
+      }
+      arrow_fold_constructors(tys, info.result_ty)
+    }
+  }
+  @typechecker.Scheme::poly(info.scheme_vars, body)
+}
+
+///|
+fn arrow_fold_constructors(
+  fields : Array[@typechecker.Ty],
+  result_ty : @typechecker.Ty
+) -> @typechecker.Ty {
+  let mut ty = result_ty
+  let mut i = fields.length() - 1
+  while i >= 0 {
+    ty = @typechecker.Ty::arrow(fields[i], ty)
+    i = i - 1
+  }
+  ty
+}
+
+///|
+fn is_arrow_scheme(scheme : @typechecker.Scheme) -> Bool {
+  match scheme.ty {
+    Arrow(_, _) => true
+    Forall(_, inner) =>
+      match inner {
+        Arrow(_, _) => true
+        _ => false
+      }
+    _ => false
+  }
+}
+
+///|
+fn is_operator_name(name : String) -> Bool {
+  // The semantic analyser registers binary operators (`+`, `-`, `==`,
+  // `&&`, etc.) directly in the type env. Skip them in identifier
+  // completions — editors don't want them in the same dropdown.
+  if name.length() == 0 {
+    return false
+  }
+  let c = name.unsafe_charcode_at(0)
+  let is_letter = (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)
+  let is_dollar = c == 0x24
+  let is_underscore = c == 0x5F
+  !(is_letter || is_dollar || is_underscore)
 }
 
 ///|

@@ -1,23 +1,135 @@
 ///|
-test "completions returns keyword list" {
+test "completions include every reserved keyword" {
   let items = @ide.completions_at("", 0)
-  assert_true(items.length() >= 10)
-  let mut saw_let = false
-  let mut saw_match = false
-  for it in items {
-    if it.label == "let" {
-      saw_let = true
+  for kw in @ide.keyword_completions() {
+    let mut found = false
+    for it in items {
+      if it.label == kw && it.kind == @ide.CompletionKind::Keyword {
+        found = true
+        break
+      }
     }
-    if it.label == "match" {
-      saw_match = true
+    if !found {
+      fail("missing keyword `" + kw + "`")
     }
   }
-  assert_true(saw_let)
-  assert_true(saw_match)
-  // Every item is of kind Keyword for the placeholder.
+}
+
+///|
+test "completions include in-scope bindings with their inferred type" {
+  let source = "add : I32 -> I32 -> I32\nadd x y = x + y"
+  let items = @ide.completions_at(source, 0)
+  let mut found_add = false
   for it in items {
-    assert_eq(it.kind, @ide.CompletionKind::Keyword)
+    if it.label == "add" {
+      assert_eq(it.kind, @ide.CompletionKind::Function)
+      match it.detail {
+        Some(d) => {
+          assert_true(d.contains("I32"))
+          assert_true(d.contains("->"))
+        }
+        None => fail("expected detail on `add`")
+      }
+      found_add = true
+    }
   }
+  assert_true(found_add)
+}
+
+///|
+test "completions include polymorphic builtins" {
+  let items = @ide.completions_at("", 0)
+  let mut found_id = false
+  let mut found_fmap = false
+  for it in items {
+    if it.label == "id" {
+      found_id = true
+      assert_eq(it.kind, @ide.CompletionKind::Function)
+      match it.detail {
+        Some(d) => assert_true(d.contains("a -> a"))
+        None => fail("expected detail on `id`")
+      }
+    }
+    if it.label == "fmap" {
+      found_fmap = true
+    }
+  }
+  assert_true(found_id)
+  assert_true(found_fmap)
+}
+
+///|
+test "completions include builtin constructors and data types" {
+  let items = @ide.completions_at("", 0)
+  let mut found_some = false
+  let mut found_option = false
+  let mut found_pair = false
+  for it in items {
+    if it.label == "Some" {
+      found_some = true
+      assert_eq(it.kind, @ide.CompletionKind::Constructor)
+      match it.detail {
+        Some(d) => {
+          assert_true(d.contains("Option"))
+          assert_true(d.contains("constructor of Option"))
+        }
+        None => fail("expected detail on `Some`")
+      }
+    }
+    if it.label == "Option" {
+      found_option = true
+      assert_eq(it.kind, @ide.CompletionKind::Type)
+    }
+    if it.label == "Pair" {
+      found_pair = true
+    }
+  }
+  assert_true(found_some)
+  assert_true(found_option)
+  assert_true(found_pair)
+}
+
+///|
+test "completions exclude binary operators from the identifier list" {
+  // `+`, `-`, `==`, `&&` etc. live in the env but are not appropriate as
+  // identifier completions — editors filter them by prefix anyway.
+  let items = @ide.completions_at("", 0)
+  for it in items {
+    let lbl = it.label
+    assert_false(lbl == "+")
+    assert_false(lbl == "==")
+    assert_false(lbl == "&&")
+    assert_false(lbl == "/=")
+  }
+}
+
+///|
+test "completions surface user-declared constructors" {
+  let source = "data Shape = Circle I32 | Square I32"
+  let items = @ide.completions_at(source, 0)
+  let mut found_shape = false
+  let mut found_circle = false
+  let mut found_square = false
+  for it in items {
+    if it.label == "Shape" {
+      found_shape = true
+      assert_eq(it.kind, @ide.CompletionKind::Type)
+    }
+    if it.label == "Circle" {
+      found_circle = true
+      assert_eq(it.kind, @ide.CompletionKind::Constructor)
+      match it.detail {
+        Some(d) => assert_true(d.contains("Shape"))
+        None => fail("expected detail on `Circle`")
+      }
+    }
+    if it.label == "Square" {
+      found_square = true
+    }
+  }
+  assert_true(found_shape)
+  assert_true(found_circle)
+  assert_true(found_square)
 }
 
 ///|
