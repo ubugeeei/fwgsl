@@ -176,9 +176,9 @@ pub fn Parser::parse_program(self : Parser) -> @ast.Program {
   let decls : Array[@ast.Decl] = Array::new()
   while true {
     self.skip_trivia()
-    while self.eat(@syntax.SyntaxKind::LayoutSemicolon)
-      || self.eat(@syntax.SyntaxKind::LayoutBraceClose)
-      || self.eat(@syntax.SyntaxKind::LayoutBraceOpen) {
+    while self.eat(@syntax.SyntaxKind::LayoutSemicolon) ||
+      self.eat(@syntax.SyntaxKind::LayoutBraceClose) ||
+      self.eat(@syntax.SyntaxKind::LayoutBraceOpen) {
       self.skip_trivia()
     }
     if self.at_end() {
@@ -254,12 +254,12 @@ fn Parser::parse_attributed_decl(self : Parser) -> @ast.Decl {
   let name = self.text_of(name_tok)
   self.skip_trivia()
   let params : Array[@ast.Pat] = Array::new()
-  while not(self.at(@syntax.SyntaxKind::Equals))
-    && not(self.at_end())
-    && self.consume_fuel() {
+  while not(self.at(@syntax.SyntaxKind::Equals)) &&
+    not(self.at_end()) &&
+    self.consume_fuel() {
     let k = self.peek_non_trivia()
-    if k == @syntax.SyntaxKind::LayoutSemicolon
-      || k == @syntax.SyntaxKind::LayoutBraceClose {
+    if k == @syntax.SyntaxKind::LayoutSemicolon ||
+      k == @syntax.SyntaxKind::LayoutBraceClose {
       break
     }
     let p = self.parse_pat_atom()
@@ -294,13 +294,13 @@ fn Parser::parse_fun_decl(
 ) -> @ast.Decl {
   let params : Array[@ast.Pat] = Array::new()
   self.skip_trivia()
-  while not(self.at(@syntax.SyntaxKind::Equals))
-    && not(self.at(@syntax.SyntaxKind::Pipe))
-    && not(self.at_end())
-    && self.consume_fuel() {
+  while not(self.at(@syntax.SyntaxKind::Equals)) &&
+    not(self.at(@syntax.SyntaxKind::Pipe)) &&
+    not(self.at_end()) &&
+    self.consume_fuel() {
     let k = self.peek_non_trivia()
-    if k == @syntax.SyntaxKind::LayoutSemicolon
-      || k == @syntax.SyntaxKind::LayoutBraceClose {
+    if k == @syntax.SyntaxKind::LayoutSemicolon ||
+      k == @syntax.SyntaxKind::LayoutBraceClose {
       break
     }
     let p = self.parse_pat_atom()
@@ -470,19 +470,19 @@ fn Parser::parse_con_decl(self : Parser) -> @ast.ConDecl {
     let tys : Array[@ast.Type] = Array::new()
     while not(self.at_end()) && self.consume_fuel() {
       let k = self.peek_non_trivia()
-      let stop = k == @syntax.SyntaxKind::Pipe
-        || k == @syntax.SyntaxKind::Eof
-        || k == @syntax.SyntaxKind::LayoutSemicolon
-        || k == @syntax.SyntaxKind::LayoutBraceClose
-        || k == @syntax.SyntaxKind::KwData
-        || k == @syntax.SyntaxKind::KwWhere
-        || k == @syntax.SyntaxKind::Newline
+      let stop = k == @syntax.SyntaxKind::Pipe ||
+        k == @syntax.SyntaxKind::Eof ||
+        k == @syntax.SyntaxKind::LayoutSemicolon ||
+        k == @syntax.SyntaxKind::LayoutBraceClose ||
+        k == @syntax.SyntaxKind::KwData ||
+        k == @syntax.SyntaxKind::KwWhere ||
+        k == @syntax.SyntaxKind::Newline
       if stop {
         break
       }
-      let accept = k == @syntax.SyntaxKind::UpperIdent
-        || k == @syntax.SyntaxKind::Ident
-        || k == @syntax.SyntaxKind::LParen
+      let accept = k == @syntax.SyntaxKind::UpperIdent ||
+        k == @syntax.SyntaxKind::Ident ||
+        k == @syntax.SyntaxKind::LParen
       if not(accept) {
         break
       }
@@ -760,9 +760,9 @@ fn Parser::parse_paren_expr(self : Parser) -> @ast.Expr {
       return @ast.Expr::OpSection(op, span)
     }
     let op = self.text_of(op_tok)
-    while not(self.at(@syntax.SyntaxKind::RParen))
-      && not(self.at_end())
-      && self.consume_fuel() {
+    while not(self.at(@syntax.SyntaxKind::RParen)) &&
+      not(self.at_end()) &&
+      self.consume_fuel() {
       let _ = self.bump()
     }
     let _ = self.eat(@syntax.SyntaxKind::RParen)
@@ -867,11 +867,11 @@ fn Parser::parse_match_scrutinee(self : Parser) -> @ast.Expr {
   while true {
     self.skip_trivia()
     let k = self.peek_non_trivia()
-    if k == @syntax.SyntaxKind::Pipe
-      || k == @syntax.SyntaxKind::Eof
-      || k == @syntax.SyntaxKind::LayoutBraceOpen
-      || k == @syntax.SyntaxKind::LayoutSemicolon
-      || k == @syntax.SyntaxKind::LayoutBraceClose {
+    if k == @syntax.SyntaxKind::Pipe ||
+      k == @syntax.SyntaxKind::Eof ||
+      k == @syntax.SyntaxKind::LayoutBraceOpen ||
+      k == @syntax.SyntaxKind::LayoutSemicolon ||
+      k == @syntax.SyntaxKind::LayoutBraceClose {
       break
     }
     if not(is_atom_start(k)) {
@@ -1016,9 +1016,9 @@ fn Parser::parse_lambda(self : Parser) -> @ast.Expr {
   let _ = self.expect(@syntax.SyntaxKind::Backslash)
   self.skip_trivia()
   let params : Array[@ast.Pat] = Array::new()
-  while not(self.at(@syntax.SyntaxKind::Arrow))
-    && not(self.at_end())
-    && self.consume_fuel() {
+  while not(self.at(@syntax.SyntaxKind::Arrow)) &&
+    not(self.at_end()) &&
+    self.consume_fuel() {
     let p = self.parse_pat_atom()
     params.push(p)
     self.skip_trivia()
@@ -1207,10 +1207,10 @@ fn Parser::parse_type_app(self : Parser) -> @ast.Type {
   while true {
     self.skip_trivia()
     let next = self.peek_non_trivia()
-    let accept = next == @syntax.SyntaxKind::UpperIdent
-      || next == @syntax.SyntaxKind::Ident
-      || next == @syntax.SyntaxKind::IntLiteral
-      || next == @syntax.SyntaxKind::LParen
+    let accept = next == @syntax.SyntaxKind::UpperIdent ||
+      next == @syntax.SyntaxKind::Ident ||
+      next == @syntax.SyntaxKind::IntLiteral ||
+      next == @syntax.SyntaxKind::LParen
     if accept {
       let arg = self.parse_type_atom()
       let span = ty.span().merge(arg.span())
@@ -1357,17 +1357,17 @@ fn is_operator_token(kind : @syntax.SyntaxKind) -> Bool {
 
 ///|
 fn parse_int_literal(text : String) -> Int64 {
-  if text.length() >= 2
-    && text.unsafe_charcode_at(0) == 0x30
-    && (text.unsafe_charcode_at(1) == 0x78 || text.unsafe_charcode_at(1) == 0x58) {
+  if text.length() >= 2 &&
+    text.unsafe_charcode_at(0) == 0x30 &&
+    (text.unsafe_charcode_at(1) == 0x78 || text.unsafe_charcode_at(1) == 0x58) {
     parse_int_in_radix(text.substring(start=2, end=text.length()), 16)
-  } else if text.length() >= 2
-    && text.unsafe_charcode_at(0) == 0x30
-    && (text.unsafe_charcode_at(1) == 0x6F || text.unsafe_charcode_at(1) == 0x4F) {
+  } else if text.length() >= 2 &&
+    text.unsafe_charcode_at(0) == 0x30 &&
+    (text.unsafe_charcode_at(1) == 0x6F || text.unsafe_charcode_at(1) == 0x4F) {
     parse_int_in_radix(text.substring(start=2, end=text.length()), 8)
-  } else if text.length() >= 2
-    && text.unsafe_charcode_at(0) == 0x30
-    && (text.unsafe_charcode_at(1) == 0x62 || text.unsafe_charcode_at(1) == 0x42) {
+  } else if text.length() >= 2 &&
+    text.unsafe_charcode_at(0) == 0x30 &&
+    (text.unsafe_charcode_at(1) == 0x62 || text.unsafe_charcode_at(1) == 0x42) {
     parse_int_in_radix(text.substring(start=2, end=text.length()), 2)
   } else {
     parse_int_in_radix(text, 10)

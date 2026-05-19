@@ -135,8 +135,8 @@ fn LayoutResolver::resolve(self : LayoutResolver) -> Unit {
   match self.next_non_trivia_index(0) {
     Some(first_idx) => {
       let first_kind = self.tokens[first_idx].kind
-      if first_kind != @syntax.SyntaxKind::KwModule
-        && first_kind != @syntax.SyntaxKind::Eof {
+      if first_kind != @syntax.SyntaxKind::KwModule &&
+        first_kind != @syntax.SyntaxKind::Eof {
         let col = self.line_map.column(self.tokens[first_idx].span.start)
         let offset = self.tokens[first_idx].span.start
         self.indent_stack.push(col)
