@@ -373,7 +373,6 @@ test "semantic_tokens skips raw whitespace and newlines" {
   }
 }
 
-///|
 test "code_actions_at offers `Add type signature` for an unannotated decl" {
   let source = "add x y = x + y"
   // Offset 0 lands on the `add` token.
@@ -433,6 +432,41 @@ test "code_actions_at preserves the decl's leading indentation" {
 test "CodeActionKind::lsp_str returns the LSP-protocol strings" {
   assert_eq(@ide.CodeActionKind::QuickFix.lsp_str(), "quickfix")
   assert_eq(@ide.CodeActionKind::Refactor.lsp_str(), "refactor")
+}
+
+///|
+test "inlay_hints suggests inferred type for unannotated decl" {
+  let hints = @ide.inlay_hints("add x y = x + y")
+  assert_eq(hints.length(), 1)
+  let h = hints[0]
+  // Anchored at byte offset 3, immediately after `add`.
+  assert_eq(h.position, 3U)
+  assert_true(h.label.contains(":"))
+  // The inferred type is an arrow.
+  assert_true(h.label.contains("->"))
+}
+
+///|
+test "inlay_hints skips decls with an explicit signature" {
+  let source = "add : I32 -> I32 -> I32\nadd x y = x + y"
+  let hints = @ide.inlay_hints(source)
+  assert_eq(hints.length(), 0)
+}
+
+///|
+test "inlay_hints handles multiple decls in source order" {
+  let source = "foo x = x\nbar y = y + 1"
+  let hints = @ide.inlay_hints(source)
+  assert_eq(hints.length(), 2)
+  // `foo` hint comes before `bar`.
+  assert_true(hints[0].position < hints[1].position)
+}
+
+///|
+test "InlayHint derives Show and Eq for round-tripping" {
+  let a = @ide.InlayHint::{ position: 3U, label: " : a -> a" }
+  let b = @ide.InlayHint::{ position: 3U, label: " : a -> a" }
+  assert_eq(a, b)
 }
 
 ///|
