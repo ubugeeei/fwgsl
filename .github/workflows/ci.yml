@@ -21,6 +21,12 @@ jobs:
         run: moon check
       - name: moon test
         run: moon test
+      # Build the wasm-gc target so the playground's deploy step in
+      # `pages.yml` can rely on the linked artifact existing. Catches
+      # link / export configuration errors at PR time instead of at
+      # deploy time.
+      - name: moon build (wasm-gc)
+        run: moon build --target wasm-gc
 
   playground-artifact:
     name: Playground artifact

@@ -20,14 +20,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The playground's WASM bindings now come from `moonbit/wasm` and
-      # target `wasm-gc`. The JS-import shim that wraps the moonbit-built
-      # `.wasm` is still being wired up (the playground currently expects
-      # the old `wasm-pack` output under `playground/pkg/`); until that
-      # bridge lands we publish the playground HTML / JS as-is so the
-      # marketing page stays online. The previous Rust/wasm-pack build
-      # step always failed silently after the migration in #4 and is
-      # removed here.
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Build playground wasm
+        run: |
+          moon build --target wasm-gc
+          # `moonbit/wasm` is configured with `link.wasm-gc.exports` in
+          # its `moon.pkg.json`, so `moon build --target wasm-gc` drops
+          # the linked artifact at
+          # `_build/wasm-gc/release/build/wasm/wasm.wasm`. Surface it
+          # under `playground/pkg/fwgsl_wasm_bg.wasm`, which the
+          # hand-written JS shim in `playground/pkg/fwgsl_wasm.js`
+          # `fetch`es at runtime.
+          mkdir -p playground/pkg
+          cp _build/wasm-gc/release/build/wasm/wasm.wasm \
+             playground/pkg/fwgsl_wasm_bg.wasm
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
