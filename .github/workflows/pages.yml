@@ -28,16 +28,27 @@ jobs:
       - name: Build playground wasm
         run: |
           moon build --target wasm-gc
-          # `moonbit/wasm` is configured with `link.wasm-gc.exports` in
-          # its `moon.pkg.json`, so `moon build --target wasm-gc` drops
-          # the linked artifact at
-          # `_build/wasm-gc/release/build/wasm/wasm.wasm`. Surface it
-          # under `playground/pkg/fwgsl_wasm_bg.wasm`, which the
-          # hand-written JS shim in `playground/pkg/fwgsl_wasm.js`
-          # `fetch`es at runtime.
+          # `moonbit/wasm` is configured with `link.wasm-gc.exports`,
+          # so `moon build --target wasm-gc` drops a linked artifact
+          # somewhere under `_build/wasm-gc/release/`. The exact path
+          # depends on the moonbit toolchain version, so we discover
+          # it dynamically and fail loud if we can't find it.
+          set -euxo pipefail
           mkdir -p playground/pkg
-          cp _build/wasm-gc/release/build/wasm/wasm.wasm \
-             playground/pkg/fwgsl_wasm_bg.wasm
+          # List candidates for the build log so the path is easy to
+          # debug from a CI run.
+          find _build/wasm-gc/release -name '*.wasm' || true
+          WASM=$(find _build/wasm-gc/release -name '*.wasm' \
+                  -path '*/wasm/*' | head -1)
+          if [ -z "$WASM" ]; then
+            WASM=$(find _build/wasm-gc/release -name 'wasm.wasm' | head -1)
+          fi
+          if [ -z "$WASM" ]; then
+            echo "No wasm artifact found under _build/wasm-gc/release"
+            exit 1
+          fi
+          echo "Using $WASM"
+          cp "$WASM" playground/pkg/fwgsl_wasm_bg.wasm
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
