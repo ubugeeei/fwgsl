@@ -84,7 +84,7 @@ pub fn TypeEnv::free_vars(self : TypeEnv) -> Array[TyVarId] {
   let vars : Array[TyVarId] = Array::new()
   self.bindings.each(fn(_, scheme) {
     for v in scheme.ty.free_vars() {
-      if not(contains_var_id(scheme.vars, v)) {
+      if !contains_var_id(scheme.vars, v) {
         vars.push(v)
       }
     }

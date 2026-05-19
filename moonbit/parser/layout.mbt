@@ -114,7 +114,7 @@ fn LayoutResolver::next_non_trivia_index(
   let mut i = from
   let len = self.tokens.length()
   while i < len {
-    if not(self.tokens[i].kind.is_trivia()) {
+    if !self.tokens[i].kind.is_trivia() {
       return Some(i)
     }
     i = i + 1
@@ -148,7 +148,7 @@ fn LayoutResolver::resolve(self : LayoutResolver) -> Unit {
     }
     None => ()
   }
-  while not(self.at_end()) {
+  while !self.at_end() {
     let kind = self.peek_kind()
     match kind {
       Newline => {
@@ -217,7 +217,7 @@ fn LayoutResolver::resolve(self : LayoutResolver) -> Unit {
         self.pos = self.pos + 1
       }
       _ => {
-        if not(kind.is_trivia()) && self.suppress_next_semi {
+        if !kind.is_trivia() && self.suppress_next_semi {
           self.suppress_next_semi = false
         }
         self.output.push(self.tokens[self.pos])

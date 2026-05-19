@@ -1339,10 +1339,10 @@ pub fn is_swizzle(field : String) -> Bool {
     let c = field.unsafe_charcode_at(i)
     let xyzw = c == 0x78 || c == 0x79 || c == 0x7A || c == 0x77
     let rgba = c == 0x72 || c == 0x67 || c == 0x62 || c == 0x61
-    if not(xyzw) {
+    if !xyzw {
       all_xyzw = false
     }
-    if not(rgba) {
+    if !rgba {
       all_rgba = false
     }
     i = i + 1

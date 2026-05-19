@@ -65,7 +65,7 @@ fn Parser::at_end(self : Parser) -> Bool {
 ///|
 fn Parser::bump(self : Parser) -> Token {
   let tok = self.current_token()
-  if not(self.at_end()) {
+  if !self.at_end() {
     self.pos = self.pos + 1
   }
   tok
@@ -110,7 +110,7 @@ fn Parser::peek_non_trivia(self : Parser) -> @syntax.SyntaxKind {
   let len = self.tokens.length()
   while i < len {
     let kind = self.tokens[i].kind
-    if not(kind.is_trivia()) {
+    if !kind.is_trivia() {
       return kind
     }
     i = i + 1
@@ -184,7 +184,7 @@ pub fn Parser::parse_program(self : Parser) -> @ast.Program {
     if self.at_end() {
       break
     }
-    if not(self.consume_fuel()) {
+    if !self.consume_fuel() {
       break
     }
     match self.parse_decl() {
@@ -254,8 +254,8 @@ fn Parser::parse_attributed_decl(self : Parser) -> @ast.Decl {
   let name = self.text_of(name_tok)
   self.skip_trivia()
   let params : Array[@ast.Pat] = Array::new()
-  while not(self.at(@syntax.SyntaxKind::Equals)) &&
-    not(self.at_end()) &&
+  while !self.at(@syntax.SyntaxKind::Equals) &&
+    !self.at_end() &&
     self.consume_fuel() {
     let k = self.peek_non_trivia()
     if k == @syntax.SyntaxKind::LayoutSemicolon ||
@@ -294,9 +294,9 @@ fn Parser::parse_fun_decl(
 ) -> @ast.Decl {
   let params : Array[@ast.Pat] = Array::new()
   self.skip_trivia()
-  while not(self.at(@syntax.SyntaxKind::Equals)) &&
-    not(self.at(@syntax.SyntaxKind::Pipe)) &&
-    not(self.at_end()) &&
+  while !self.at(@syntax.SyntaxKind::Equals) &&
+    !self.at(@syntax.SyntaxKind::Pipe) &&
+    !self.at_end() &&
     self.consume_fuel() {
     let k = self.peek_non_trivia()
     if k == @syntax.SyntaxKind::LayoutSemicolon ||
@@ -388,7 +388,7 @@ fn Parser::parse_where_binds_into(
     if self.at_layout_end() || self.at_end() {
       break
     }
-    if not(self.consume_fuel()) {
+    if !self.consume_fuel() {
       break
     }
     if self.at(@syntax.SyntaxKind::Ident) {
@@ -460,7 +460,7 @@ fn Parser::parse_con_decl(self : Parser) -> @ast.ConDecl {
       let ty = self.parse_type_atom()
       flds.push((field_name, ty))
       self.skip_trivia()
-      if not(self.eat(@syntax.SyntaxKind::Comma)) {
+      if !self.eat(@syntax.SyntaxKind::Comma) {
         break
       }
     }
@@ -468,7 +468,7 @@ fn Parser::parse_con_decl(self : Parser) -> @ast.ConDecl {
     @ast.ConFields::RecordFields(flds)
   } else {
     let tys : Array[@ast.Type] = Array::new()
-    while not(self.at_end()) && self.consume_fuel() {
+    while !self.at_end() && self.consume_fuel() {
       let k = self.peek_non_trivia()
       let stop = k == @syntax.SyntaxKind::Pipe ||
         k == @syntax.SyntaxKind::Eof ||
@@ -483,7 +483,7 @@ fn Parser::parse_con_decl(self : Parser) -> @ast.ConDecl {
       let accept = k == @syntax.SyntaxKind::UpperIdent ||
         k == @syntax.SyntaxKind::Ident ||
         k == @syntax.SyntaxKind::LParen
-      if not(accept) {
+      if !accept {
         break
       }
       self.skip_trivia()
@@ -544,7 +544,7 @@ fn Parser::parse_attribute(self : Parser) -> @ast.Attribute {
       let arg_tok = self.bump()
       args.push(self.text_of(arg_tok))
       self.skip_trivia()
-      if not(self.eat(@syntax.SyntaxKind::Comma)) {
+      if !self.eat(@syntax.SyntaxKind::Comma) {
         break
       }
     }
@@ -595,7 +595,7 @@ fn Parser::parse_expr_bp(self : Parser, min_bp : Int) -> @ast.Expr {
     _ => self.parse_atom()
   }
   while true {
-    if not(self.consume_fuel()) {
+    if !self.consume_fuel() {
       break
     }
     self.skip_trivia()
@@ -760,8 +760,8 @@ fn Parser::parse_paren_expr(self : Parser) -> @ast.Expr {
       return @ast.Expr::OpSection(op, span)
     }
     let op = self.text_of(op_tok)
-    while not(self.at(@syntax.SyntaxKind::RParen)) &&
-      not(self.at_end()) &&
+    while !self.at(@syntax.SyntaxKind::RParen) &&
+      !self.at_end() &&
       self.consume_fuel() {
       let _ = self.bump()
     }
@@ -793,7 +793,7 @@ fn Parser::parse_vec_lit(self : Parser) -> @ast.Expr {
   let _ = self.expect(@syntax.SyntaxKind::LBracket)
   self.skip_trivia()
   let elems : Array[@ast.Expr] = Array::new()
-  if not(self.at(@syntax.SyntaxKind::RBracket)) && not(self.at_end()) {
+  if !self.at(@syntax.SyntaxKind::RBracket) && !self.at_end() {
     elems.push(self.parse_expr())
     self.skip_trivia()
     while self.eat(@syntax.SyntaxKind::Comma) {
@@ -841,10 +841,10 @@ fn Parser::parse_match(self : Parser) -> @ast.Expr {
     if self.at_end() {
       break
     }
-    if not(self.consume_fuel()) {
+    if !self.consume_fuel() {
       break
     }
-    if not(self.at(@syntax.SyntaxKind::Pipe)) {
+    if !self.at(@syntax.SyntaxKind::Pipe) {
       break
     }
     let _ = self.bump()
@@ -874,10 +874,10 @@ fn Parser::parse_match_scrutinee(self : Parser) -> @ast.Expr {
       k == @syntax.SyntaxKind::LayoutBraceClose {
       break
     }
-    if not(is_atom_start(k)) {
+    if !is_atom_start(k) {
       break
     }
-    if not(self.consume_fuel()) {
+    if !self.consume_fuel() {
       break
     }
     self.skip_trivia()
@@ -925,7 +925,7 @@ fn Parser::parse_let(self : Parser) -> @ast.Expr {
     if self.at(@syntax.SyntaxKind::KwIn) || self.at_layout_end() || self.at_end() {
       break
     }
-    if not(self.consume_fuel()) {
+    if !self.consume_fuel() {
       break
     }
     if self.at(@syntax.SyntaxKind::Ident) {
@@ -962,7 +962,7 @@ fn Parser::parse_do(self : Parser) -> @ast.Expr {
     if self.at_layout_end() || self.at_end() {
       break
     }
-    if not(self.consume_fuel()) {
+    if !self.consume_fuel() {
       break
     }
     let stmt_start = self.current_span().start
@@ -1016,8 +1016,8 @@ fn Parser::parse_lambda(self : Parser) -> @ast.Expr {
   let _ = self.expect(@syntax.SyntaxKind::Backslash)
   self.skip_trivia()
   let params : Array[@ast.Pat] = Array::new()
-  while not(self.at(@syntax.SyntaxKind::Arrow)) &&
-    not(self.at_end()) &&
+  while !self.at(@syntax.SyntaxKind::Arrow) &&
+    !self.at_end() &&
     self.consume_fuel() {
     let p = self.parse_pat_atom()
     params.push(p)
@@ -1171,7 +1171,7 @@ fn Parser::parse_record_pat(
       fields.push((field_name, None))
     }
     self.skip_trivia()
-    if not(self.eat(@syntax.SyntaxKind::Comma)) {
+    if !self.eat(@syntax.SyntaxKind::Comma) {
       break
     }
   }
