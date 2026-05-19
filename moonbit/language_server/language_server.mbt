@@ -146,7 +146,7 @@ fn offset_to_line_col(source : String, offset : UInt) -> (Int, Int) {
   let mut i = 0
   let len = source.length()
   while i < len && i < target {
-    let c = source.charcode_at(i)
+    let c = source.unsafe_charcode_at(i)
     if c == 0x0A {
       line = line + 1
       col = 1
@@ -217,7 +217,7 @@ fn json_string(s : String) -> String {
   let mut out = "\""
   let mut i = 0
   while i < len {
-    let c = s.charcode_at(i)
+    let c = s.unsafe_charcode_at(i)
     if c == 0x22 {
       out = out + "\\\""
     } else if c == 0x5C {
