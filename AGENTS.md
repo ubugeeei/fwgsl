@@ -1,5 +1,5 @@
 Web GPU 上で動作する純粋関数型 fwgsl を実装してください．
-実装言語は Rust で，Oxc の設計にインスパイアされた Arena Allocation で高速なコンパイル/ツールチェインを目指します．
+実装言語は MoonBit です．`wasm-gc` ターゲットに直接コンパイルできるので、CLI / LSP / Web Playground が一つの GC 管理コードベースを共有します．
 コンパイルターゲットは wgsl です．
 
 言語機能としては，
