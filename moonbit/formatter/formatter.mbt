@@ -74,6 +74,6 @@ pub fn format(source : String) -> String {
       out.unsafe_charcode_at(end - 2) == 0x0A {
       end = end - 1
     }
-    out.substring(start=0, end=end)
+    out.unsafe_substring(start=0, end=end)
   }
 }
