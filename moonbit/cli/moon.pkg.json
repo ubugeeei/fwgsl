@@ -9,7 +9,8 @@
     "ubugeeei/fwgsl/ast_lowering",
     "ubugeeei/fwgsl/mir",
     "ubugeeei/fwgsl/wgsl_codegen",
-    "ubugeeei/fwgsl/formatter"
+    "ubugeeei/fwgsl/formatter",
+    "ubugeeei/fwgsl/linter"
   ],
   "test-import": [
     "ubugeeei/fwgsl/span",
@@ -20,6 +21,7 @@
     "ubugeeei/fwgsl/ast_lowering",
     "ubugeeei/fwgsl/mir",
     "ubugeeei/fwgsl/wgsl_codegen",
-    "ubugeeei/fwgsl/formatter"
+    "ubugeeei/fwgsl/formatter",
+    "ubugeeei/fwgsl/linter"
   ]
 }

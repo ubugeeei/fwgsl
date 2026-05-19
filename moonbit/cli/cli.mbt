@@ -25,10 +25,14 @@ pub(all) struct CompileResult {
 }
 
 ///|
-/// Run only the front half (parse + semantic) of the pipeline.
+/// Run only the front half (parse + semantic) of the pipeline, plus the
+/// AST-walking linter.
 ///
-/// Returns the diagnostics produced by the parser and semantic analyser
-/// combined so callers can render them with `format_diagnostic`.
+/// Returns parser errors, semantic errors, and lint warnings combined so
+/// callers can render them with `format_diagnostic`. The lint warnings
+/// are appended after the parser / semantic diagnostics so an editor or
+/// CI script can rely on the order ("compile errors first, style
+/// concerns after").
 pub fn check_source(source : String) -> Array[@diagnostics.Diagnostic] {
   let parser = @parser.Parser::new(source)
   let program = parser.parse_program()
@@ -39,6 +43,9 @@ pub fn check_source(source : String) -> Array[@diagnostics.Diagnostic] {
     diags.push(d)
   }
   for d in analyzer.diagnostics().all() {
+    diags.push(d)
+  }
+  for d in @linter.lint_program(program) {
     diags.push(d)
   }
   diags

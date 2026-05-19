@@ -93,6 +93,10 @@ pub(all) enum LspSeverity {
 
 ///|
 /// Compute publishDiagnostics payload for a document.
+///
+/// Includes parser errors, semantic errors, and lint warnings; lint
+/// warnings come last so a UI grouping by severity keeps the more
+/// important compile errors at the top.
 pub fn compute_diagnostics(text : String) -> Array[LspDiagnostic] {
   let parser = @parser.Parser::new(text)
   let program = parser.parse_program()
@@ -103,6 +107,9 @@ pub fn compute_diagnostics(text : String) -> Array[LspDiagnostic] {
     out.push(to_lsp_diagnostic(d, text))
   }
   for d in analyzer.diagnostics().all() {
+    out.push(to_lsp_diagnostic(d, text))
+  }
+  for d in @linter.lint_program(program) {
     out.push(to_lsp_diagnostic(d, text))
   }
   out
