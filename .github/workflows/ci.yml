@@ -30,8 +30,12 @@ jobs:
       - name: moon build (wasm-gc)
         run: |
           moon build --target wasm-gc
-          echo "=== wasm artifacts ==="
-          find _build/wasm-gc/release -name '*.wasm' || true
+          echo "=== _build tree ==="
+          ls -la _build/ || true
+          echo "=== all .wasm files ==="
+          find _build -name '*.wasm' || true
+          echo "=== all .core files ==="
+          find _build -name '*.core' || true
 
   playground-artifact:
     name: Playground artifact
