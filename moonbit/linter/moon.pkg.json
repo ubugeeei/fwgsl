@@ -1,0 +1,15 @@
+{
+  "name": "linter",
+  "import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/parser"
+  ],
+  "test-import": [
+    "ubugeeei/fwgsl/span",
+    "ubugeeei/fwgsl/diagnostics",
+    "ubugeeei/fwgsl/ast",
+    "ubugeeei/fwgsl/parser"
+  ]
+}
