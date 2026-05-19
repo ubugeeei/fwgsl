@@ -5,6 +5,52 @@ test "check_source returns no diagnostics on well-formed input" {
 }
 
 ///|
+test "check_source surfaces lint warnings alongside compile diagnostics" {
+  // `let y = ... in x` flags an unused-let warning from the linter,
+  // even though parser + semantic are happy.
+  let diags = check_source("f x = let y = x + 1 in x")
+  let mut warnings = 0
+  let mut found_unused_let = false
+  for d in diags {
+    if d.severity == @diagnostics.Severity::Warning {
+      warnings = warnings + 1
+    }
+    match d.code {
+      Some(c) => if c == "unused-let" {
+        found_unused_let = true
+      }
+      None => ()
+    }
+  }
+  assert_true(warnings >= 1)
+  assert_true(found_unused_let)
+}
+
+///|
+test "check_source orders compile errors before lint warnings" {
+  // `f x = let y = x in z` has both an unused-let warning and an
+  // unbound-variable error. The error should come first so an editor
+  // that stops rendering at the first severity-Error keeps the more
+  // important diagnostic visible.
+  let diags = check_source("f x = let y = x in z")
+  let mut first_error_idx : Int = -1
+  let mut first_warning_idx : Int = -1
+  let mut i = 0
+  for d in diags {
+    if d.severity == @diagnostics.Severity::Error && first_error_idx < 0 {
+      first_error_idx = i
+    }
+    if d.severity == @diagnostics.Severity::Warning && first_warning_idx < 0 {
+      first_warning_idx = i
+    }
+    i = i + 1
+  }
+  assert_true(first_error_idx >= 0)
+  assert_true(first_warning_idx >= 0)
+  assert_true(first_error_idx < first_warning_idx)
+}
+
+///|
 test "compile_source emits WGSL for a trivial program" {
   let source = "main : I32 -> I32\nmain x = x + 1"
   let result = compile_source(source)

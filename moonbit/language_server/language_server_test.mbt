@@ -43,6 +43,20 @@ test "compute_diagnostics on well-formed source is empty" {
 }
 
 ///|
+test "compute_diagnostics includes lint warnings" {
+  let diags = @language_server.compute_diagnostics(
+    "f x = let y = x + 1 in x",
+  )
+  let mut warnings = 0
+  for d in diags {
+    if d.severity == @language_server.LspSeverity::WarningSev {
+      warnings = warnings + 1
+    }
+  }
+  assert_true(warnings >= 1)
+}
+
+///|
 test "diagnostic_to_json renders severity and range" {
   let d = @language_server.LspDiagnostic::{
     message: "oops",
