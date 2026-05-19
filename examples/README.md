@@ -3,28 +3,17 @@
 This directory is split into two kinds of examples:
 
 - Root-level `.fwgsl` files are small canonical examples for the current compiler.
-- [`shadorial/`](/Users/nishimura/projects/oss/ubugeeei/fwgsl/examples/shadorial) contains larger shader sketches and tutorial-style samples.
+- [`shadorial/`](./shadorial) contains larger shader sketches and tutorial-style samples.
 
 ## Quick Use
 
-Compile a known end-to-end example:
+The library's `@cli.compile_source` / `@cli.check_source` entry points drive every example. From a MoonBit shell, you can run a sample inline:
 
 ```sh
-cargo run -p fwgsl_cli -- compile examples/hello.fwgsl
+moon test ubugeeei/fwgsl/integration_tests   # exercises the canonical programs
 ```
 
-Type-check a richer type-system example:
-
-```sh
-cargo run -p fwgsl_cli -- check examples/generic-data.fwgsl
-```
-
-Check the newer builtins and tensor-oriented surface:
-
-```sh
-cargo run -p fwgsl_cli -- check examples/option-result.fwgsl
-cargo run -p fwgsl_cli -- check examples/prelude-utils.fwgsl
-```
+For an interactive feel, paste a sample into the [playground](../playground/) and watch the WGSL output update live.
 
 ## Canonical Examples
 

@@ -111,7 +111,7 @@ main idx =
   in doubled
 ```
 
-For small verified sample programs, see [examples/README.md](/Users/nishimura/projects/oss/ubugeeei/fwgsl/examples/README.md).
+For small verified sample programs, see [examples/README.md](examples/README.md).
 
 ## Tooling Experience
 
