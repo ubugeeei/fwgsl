@@ -4,9 +4,7 @@
 
 It targets the space between ML/Haskell ergonomics and GPU reality: algebraic data types, pattern matching, Hindley-Milner inference, shader entry-point attributes, and a toolchain that aims to feel like a modern programming language rather than a shader macro layer.
 
-Written in Rust, the compiler is structured as a fast multi-crate pipeline and is heavily inspired by arena-oriented compiler design in projects like [Oxc](https://github.com/oxc-project/oxc).
-
-> **MoonBit port in progress.** The whole compiler is being rewritten in [MoonBit](https://www.moonbitlang.com/) so the playground, LSP, and CLI can share a single garbage-collected codebase that compiles natively to WebAssembly. Sixteen packages already live under `moonbit/`; see [#4](https://github.com/ubugeeei/fwgsl/issues/4) for the migration plan and `moonbit/README.md` for layout.
+Written in [MoonBit](https://www.moonbitlang.com/), the compiler is a multi-package pipeline that targets `wasm-gc` natively so the CLI, LSP, and web playground all share one garbage-collected codebase. Sources live under `moonbit/`; see `moonbit/README.md` for the per-package layout. The migration from the original Rust implementation is tracked by [#4](https://github.com/ubugeeei/fwgsl/issues/4) and has now completed.
 
 ## Highlights
 
@@ -141,7 +139,6 @@ Current editor feedback includes:
 Run it locally with:
 
 ```sh
-mise run wasm
 mise run playground
 ```
 
@@ -149,26 +146,25 @@ mise run playground
 
 Requirements:
 
-- [Rust](https://rustup.rs/)
-- [mise](https://mise.jdx.dev/)
+- [MoonBit](https://www.moonbitlang.com/) — install with `curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash`
+- [mise](https://mise.jdx.dev/) (optional, for the wrapper tasks)
 
 Common commands:
 
 ```sh
-# Build the workspace
-mise run build
+# Type-check the whole MoonBit workspace
+moon check          # or: mise run check
+
+# Build everything
+moon build          # or: mise run build
 
 # Run the full test suite
-mise run test
+moon test           # or: mise run test
 
-# Run formatting and linting tasks
-mise run fmt
-mise run lint
+# Format MoonBit sources
+moon fmt            # or: mise run fmt
 
-# Compile a file through the CLI
-mise run cli -- compile examples/hello.fwgsl
-
-# Start the playground dev server
+# Start the playground dev server (no rebuild)
 mise run dev
 ```
 
@@ -205,30 +201,27 @@ WGSL Codegen
 
 ## Repository Layout
 
-The Rust workspace is the current source of truth; the MoonBit port mirrors
-it package-for-package. Each row in the table below maps a Rust crate
-(`crates/<name>`) to its MoonBit counterpart (`moonbit/<name>`).
+Every compiler stage lives under `moonbit/`:
 
-| Crate | Purpose | MoonBit package |
-|-------|---------|-----------------|
-| `fwgsl_allocator` | Arena allocation helpers | — (not needed under wasm-gc) |
-| `fwgsl_span` | Source spans, atoms, and source metadata | `moonbit/span` |
-| `fwgsl_diagnostics` | Structured diagnostics with labels and help text | `moonbit/diagnostics` |
-| `fwgsl_syntax` | `SyntaxKind` definitions for tokens and syntax nodes | `moonbit/syntax` |
-| `fwgsl_cst` | Concrete syntax tree (placeholder) | `moonbit/cst` |
-| `fwgsl_ast` | AST type definitions | `moonbit/ast` |
-| `fwgsl_parser` | Hand-written lexer, layout resolver, parser | `moonbit/parser` |
-| `fwgsl_ast_lowering` | AST -> HIR lowering with inference | `moonbit/ast_lowering` |
-| `fwgsl_typechecker` | Types, schemes, substitutions, unification, inference engine | `moonbit/typechecker` |
-| `fwgsl_semantic` | Semantic analysis, environment building, constructor/type registration | `moonbit/semantic` |
-| `fwgsl_hir` | Desugared typed high-level IR | `moonbit/hir` |
-| `fwgsl_mir` | Lowered WGSL-oriented IR + HIR -> MIR lowering | `moonbit/mir` |
-| `fwgsl_wgsl_codegen` | MIR to WGSL text emitter | `moonbit/wgsl_codegen` |
-| `fwgsl_ide` | IDE-facing analyses shared with the LSP and playground | `moonbit/ide` |
-| `fwgsl_language_server` | LSP server implementation | `moonbit/language_server` |
-| `fwgsl_wasm` | WASM bindings for the playground | `moonbit/wasm` |
-| `fwgsl_cli` | CLI entry point | `moonbit/cli` (+ `moonbit/cli/cmd/main`) |
-| `fwgsl_integration_tests` | End-to-end compiler pipeline tests | `moonbit/integration_tests` |
+| Package | Purpose |
+|---------|---------|
+| `moonbit/span` | Source spans, atoms, and source metadata |
+| `moonbit/diagnostics` | Structured diagnostics with labels and help text |
+| `moonbit/syntax` | `SyntaxKind` definitions for tokens and syntax nodes |
+| `moonbit/cst` | Concrete syntax tree |
+| `moonbit/ast` | AST type definitions |
+| `moonbit/parser` | Hand-written lexer, layout resolver, parser |
+| `moonbit/typechecker` | Types, schemes, substitutions, unification, inference engine |
+| `moonbit/semantic` | Semantic analysis, environment building, constructor / type registration |
+| `moonbit/ast_lowering` | AST -> HIR lowering with full Hindley-Milner inference |
+| `moonbit/hir` | Desugared typed high-level IR |
+| `moonbit/mir` | Lowered WGSL-oriented IR plus the HIR -> MIR pass |
+| `moonbit/wgsl_codegen` | MIR to WGSL text emitter |
+| `moonbit/ide` | IDE-facing analyses shared with the LSP and playground |
+| `moonbit/language_server` | LSP server implementation (publishDiagnostics, hover, completion, semantic tokens) |
+| `moonbit/wasm` | wasm-gc bindings for the playground (`wasm_check` / `wasm_compile`) |
+| `moonbit/cli` | CLI library + `moonbit/cli/cmd/main` binary entry point |
+| `moonbit/integration_tests` | End-to-end pipeline tests asserting WGSL output |
 
 ## Language Design Direction
 
