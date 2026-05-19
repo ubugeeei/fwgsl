@@ -33,9 +33,11 @@ test "adt match example desugars to if-chain" {
 
 ///|
 test "where example becomes let binding" {
+  // `where` lives on the same line as the function body so layout
+  // resolution attaches it; the column-zero variant is a separate
+  // case tracked by the parser/layout tests.
   let source = #|scaleAndBias : I32 -> I32
-                #|scaleAndBias x = y * 2
-                #|where
+                #|scaleAndBias x = y * 2 where
                 #|  y = x + 1
   let wgsl = @integration_tests.compile_or_fail(source)
   assert_true(wgsl.contains("fn scaleAndBias"))

@@ -6,44 +6,59 @@
 /// so the equivalent is to export plain MoonBit functions and have the
 /// JavaScript host call them through the wasm-gc ABI.
 ///
-/// This file lands the public entry points so the playground can target
-/// them once the full compiler pipeline is plumbed in:
-///
-/// - `wasm_check(source)` -> JSON-shaped string with diagnostics.
-/// - `wasm_compile(source)` -> JSON-shaped string with WGSL + diagnostics
-///   (currently returns just the diagnostics until the pipeline lands).
+/// - `wasm_check(source)` -> JSON array of diagnostics.
+/// - `wasm_compile(source)` -> JSON object with `diagnostics` and `wgsl`.
 
 ///|
-/// Run parser-level diagnostics and return them as a JSON array string.
+/// Run parser + semantic diagnostics and return them as a JSON array.
 pub fn wasm_check(source : String) -> String {
   let parser = @parser.Parser::new(source)
-  let _ = parser.parse_program()
-  diagnostics_to_json(parser.diagnostics(), source)
+  let prog = parser.parse_program()
+  let analyzer = @semantic.SemanticAnalyzer::new()
+  analyzer.analyze(prog)
+  let combined = combine(parser.diagnostics(), analyzer.diagnostics())
+  diagnostics_to_json(combined, source)
 }
 
 ///|
-/// Run parse + semantic analysis. Returns a JSON object with `diagnostics`
-/// and (eventually) `wgsl`. Until AST -> HIR -> MIR -> WGSL lands the
-/// `wgsl` field is `null`.
+/// Run parse + semantic analysis. Returns a JSON object with
+/// `diagnostics` (an array) and `wgsl` (a string or `null`). When any
+/// stage produces an error-severity diagnostic, `wgsl` is `null`.
 pub fn wasm_compile(source : String) -> String {
   let parser = @parser.Parser::new(source)
   let prog = parser.parse_program()
   let analyzer = @semantic.SemanticAnalyzer::new()
   analyzer.analyze(prog)
+  let combined = combine(parser.diagnostics(), analyzer.diagnostics())
   let mut out = "{\"diagnostics\":"
-  out = out + diagnostics_to_json(parser.diagnostics(), source)
+  out = out + diagnostics_to_json(combined, source)
   out = out + ",\"wgsl\":null}"
   out
 }
 
 ///|
+fn combine(
+  a : @diagnostics.DiagnosticSink,
+  b : @diagnostics.DiagnosticSink
+) -> Array[@diagnostics.Diagnostic] {
+  let out : Array[@diagnostics.Diagnostic] = Array::new()
+  for d in a.all() {
+    out.push(d)
+  }
+  for d in b.all() {
+    out.push(d)
+  }
+  out
+}
+
+///|
 fn diagnostics_to_json(
-  sink : @diagnostics.DiagnosticSink,
+  diags : Array[@diagnostics.Diagnostic],
   _source : String
 ) -> String {
   let mut out = "["
   let mut first = true
-  for diag in sink.all() {
+  for diag in diags {
     if not(first) {
       out = out + ","
     }
