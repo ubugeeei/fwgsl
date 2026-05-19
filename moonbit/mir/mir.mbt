@@ -67,7 +67,7 @@ pub fn MirType::display(self : MirType) -> String {
 }
 
 ///|
-impl Show for MirType with output(self, logger) {
+pub impl Show for MirType with output(self, logger) {
   logger.write_string(self.display())
 }
 

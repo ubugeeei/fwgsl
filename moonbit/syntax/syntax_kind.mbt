@@ -423,6 +423,6 @@ pub fn SyntaxKind::display(self : SyntaxKind) -> String {
 }
 
 ///|
-impl Show for SyntaxKind with output(self, logger) {
+pub impl Show for SyntaxKind with output(self, logger) {
   logger.write_string(self.display())
 }

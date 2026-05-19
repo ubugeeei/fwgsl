@@ -8,7 +8,7 @@
 
 ///|
 pub struct AstLowering {
-  mut env : @typechecker.TypeEnv
+  env : @typechecker.TypeEnv
   engine : @typechecker.InferEngine
   constructors : Map[String, @typechecker.ConstructorInfo]
   data_types : Map[String, @semantic.DataTypeInfo]
