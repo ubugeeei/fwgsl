@@ -19,19 +19,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build WASM
-        run: |
-          cd crates/fwgsl_wasm
-          wasm-pack build --target web --out-dir ../../playground/pkg
-        continue-on-error: true
-
+      # The playground's WASM bindings now come from `moonbit/wasm` and
+      # target `wasm-gc`. The JS-import shim that wraps the moonbit-built
+      # `.wasm` is still being wired up (the playground currently expects
+      # the old `wasm-pack` output under `playground/pkg/`); until that
+      # bridge lands we publish the playground HTML / JS as-is so the
+      # marketing page stays online. The previous Rust/wasm-pack build
+      # step always failed silently after the migration in #4 and is
+      # removed here.
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
