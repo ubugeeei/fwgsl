@@ -800,3 +800,176 @@ fn substr_at(source : String, offset : UInt, needle : String) -> Bool {
   }
   true
 }
+
+///|
+/// The kind of a `DocumentSymbol`. Mirrors the LSP `SymbolKind` enum,
+/// limited to the variants fwgsl actually produces today.
+pub(all) enum SymbolKind {
+  /// Top-level function declarations and entry points.
+  SymFunction
+  /// `data` declarations.
+  SymStruct
+  /// Individual constructors inside a `data` declaration.
+  SymEnumMember
+  /// `type` aliases.
+  SymTypeParameter
+} derive(Eq, Show)
+
+///|
+/// Numeric value matching the LSP protocol's `SymbolKind`. Used by the
+/// language-server proxy when serialising the response.
+pub fn SymbolKind::lsp_code(self : SymbolKind) -> Int {
+  match self {
+    SymFunction => 12 // SymbolKind.Function
+    SymStruct => 23 // SymbolKind.Struct
+    SymEnumMember => 22 // SymbolKind.EnumMember
+    SymTypeParameter => 26 // SymbolKind.TypeParameter
+  }
+}
+
+///|
+/// A single document symbol entry. The LSP supports nested symbols
+/// (e.g. constructors live under their `data` parent); we mirror that
+/// hierarchy here.
+pub(all) struct DocumentSymbol {
+  /// Name shown in the outline.
+  name : String
+  /// Optional secondary text (the pretty-printed type for functions,
+  /// the constructor count for data types).
+  detail : String?
+  kind : SymbolKind
+  /// Span of the entire declaration.
+  span : @span.Span
+  /// Span the editor should highlight when the symbol is selected
+  /// (usually the name token).
+  selection_span : @span.Span
+  children : Array[DocumentSymbol]
+} derive(Show)
+
+///|
+/// Compute the document symbol outline for `source`.
+///
+/// Top-level entries:
+///
+/// - `FunDecl` and `EntryPoint` -> `SymFunction` with the inferred
+///   scheme as the detail line.
+/// - `DataDecl` -> `SymStruct`, with the constructors nested
+///   underneath as `SymEnumMember` children.
+/// - `TypeAlias` -> `SymTypeParameter`.
+///
+/// `TypeSig` rows are folded into their matching `FunDecl` entry
+/// rather than surfaced separately, so the outline stays the same
+/// whether or not the user wrote an explicit signature.
+pub fn document_symbols(source : String) -> Array[DocumentSymbol] {
+  let parser = @parser.Parser::new(source)
+  let program = parser.parse_program()
+  let analyzer = @semantic.SemanticAnalyzer::new()
+  analyzer.analyze(program)
+  let env = analyzer.env()
+  let out : Array[DocumentSymbol] = Array::new()
+  let seen : Map[String, Bool] = Map::new()
+  for decl in program.decls {
+    match decl {
+      FunDecl(name, _, _, _, span) => {
+        if seen.get(name) is Some(_) {
+          continue
+        }
+        seen[name] = true
+        let detail = match env.lookup(name) {
+          Some(scheme) => Some(": " + pretty_scheme(scheme))
+          None => None
+        }
+        out.push(
+          DocumentSymbol::{
+            name,
+            detail,
+            kind: SymFunction,
+            span,
+            selection_span: name_token_span(name, span, source),
+            children: Array::new(),
+          },
+        )
+      }
+      EntryPoint(_, name, _, _, span) => {
+        if seen.get(name) is Some(_) {
+          continue
+        }
+        seen[name] = true
+        let detail = match env.lookup(name) {
+          Some(scheme) => Some(": " + pretty_scheme(scheme))
+          None => None
+        }
+        out.push(
+          DocumentSymbol::{
+            name,
+            detail,
+            kind: SymFunction,
+            span,
+            selection_span: name_token_span(name, span, source),
+            children: Array::new(),
+          },
+        )
+      }
+      DataDecl(name, _, ctors, span) => {
+        let children : Array[DocumentSymbol] = Array::new()
+        for con in ctors {
+          children.push(
+            DocumentSymbol::{
+              name: con.name,
+              detail: None,
+              kind: SymEnumMember,
+              span: con.span,
+              selection_span: con.span,
+              children: Array::new(),
+            },
+          )
+        }
+        let arity = ctors.length().to_string()
+        out.push(
+          DocumentSymbol::{
+            name,
+            detail: Some(arity + " constructor" + (if ctors.length() == 1 { "" } else { "s" })),
+            kind: SymStruct,
+            span,
+            selection_span: name_token_span(name, span, source),
+            children,
+          },
+        )
+      }
+      TypeAlias(name, _, _, span) =>
+        out.push(
+          DocumentSymbol::{
+            name,
+            detail: Some("type alias"),
+            kind: SymTypeParameter,
+            span,
+            selection_span: name_token_span(name, span, source),
+            children: Array::new(),
+          },
+        )
+      TypeSig(_, _, _) => ()
+    }
+  }
+  out
+}
+
+///|
+/// Best-effort span for the name token inside a decl: the first
+/// occurrence of `name` inside `decl_span`. Falls back to the decl
+/// span itself when the name isn't found (e.g. parser recovery).
+fn name_token_span(
+  name : String,
+  decl_span : @span.Span,
+  source : String
+) -> @span.Span {
+  let nlen = name.length().reinterpret_as_uint()
+  let mut i = decl_span.start
+  let end = decl_span.end
+  while i + nlen <= end {
+    if substr_at(source, i, name) {
+      return @span.Span::new(i, i + nlen)
+    }
+    i = i + 1U
+  }
+  decl_span
+}

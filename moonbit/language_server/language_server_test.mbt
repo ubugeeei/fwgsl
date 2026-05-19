@@ -148,3 +148,22 @@ test "inlay_hints_for skips decls that already have a signature" {
   )
   assert_eq(hints.length(), 0)
 }
+
+///|
+test "document_symbols_for returns one symbol per top-level decl" {
+  let syms = @language_server.document_symbols_for(
+    "data Color = Red | Green | Blue\nmain x = x",
+  )
+  assert_eq(syms.length(), 2)
+  let color = syms[0]
+  assert_eq(color.name, "Color")
+  // SymbolKind.Struct = 23
+  assert_eq(color.kind, 23)
+  assert_eq(color.children.length(), 3)
+  // First constructor at line 0.
+  assert_eq(color.children[0].name, "Red")
+  let main = syms[1]
+  assert_eq(main.name, "main")
+  // SymbolKind.Function = 12
+  assert_eq(main.kind, 12)
+}

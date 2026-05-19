@@ -282,6 +282,69 @@ pub fn inlay_hints_for(text : String) -> Array[LspInlayHint] {
 }
 
 // ---------------------------------------------------------------------------
+// Document symbols
+// ---------------------------------------------------------------------------
+
+///|
+/// LSP-shaped document symbol. Mirrors `lsp-types::DocumentSymbol`
+/// closely enough for a JSON-RPC transport to serialise the response
+/// for `textDocument/documentSymbol`.
+pub(all) struct LspDocumentSymbol {
+  name : String
+  detail : String?
+  /// LSP `SymbolKind` integer value.
+  kind : Int
+  start_line : Int
+  start_character : Int
+  end_line : Int
+  end_character : Int
+  selection_start_line : Int
+  selection_start_character : Int
+  selection_end_line : Int
+  selection_end_character : Int
+  children : Array[LspDocumentSymbol]
+} derive(Show)
+
+///|
+/// Compute the outline for `text`. Backs `textDocument/documentSymbol`.
+pub fn document_symbols_for(text : String) -> Array[LspDocumentSymbol] {
+  let out : Array[LspDocumentSymbol] = Array::new()
+  for s in @ide.document_symbols(text) {
+    out.push(to_lsp_document_symbol(s, text))
+  }
+  out
+}
+
+///|
+fn to_lsp_document_symbol(
+  s : @ide.DocumentSymbol,
+  source : String
+) -> LspDocumentSymbol {
+  let (sl, sc) = offset_to_line_col(source, s.span.start)
+  let (el, ec) = offset_to_line_col(source, s.span.end)
+  let (ssl, ssc) = offset_to_line_col(source, s.selection_span.start)
+  let (sel, sec) = offset_to_line_col(source, s.selection_span.end)
+  let children : Array[LspDocumentSymbol] = Array::new()
+  for c in s.children {
+    children.push(to_lsp_document_symbol(c, source))
+  }
+  LspDocumentSymbol::{
+    name: s.name,
+    detail: s.detail,
+    kind: s.kind.lsp_code(),
+    start_line: sl - 1,
+    start_character: sc - 1,
+    end_line: el - 1,
+    end_character: ec - 1,
+    selection_start_line: ssl - 1,
+    selection_start_character: ssc - 1,
+    selection_end_line: sel - 1,
+    selection_end_character: sec - 1,
+    children,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // JSON-RPC serialisation helpers
 // ---------------------------------------------------------------------------
 
