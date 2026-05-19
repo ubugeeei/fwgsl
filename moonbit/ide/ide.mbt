@@ -108,32 +108,159 @@ pub fn token_at(source : String, offset : UInt) -> @parser.Token? {
 ///|
 /// Compute the hover summary for the symbol under `offset`.
 ///
-/// Returns a brief, kind-aware label so the LSP can already show
-/// something useful while full type resolution is still landing.
+/// For identifiers, the contents are the binding's inferred type scheme
+/// (`<name> : <type>`) looked up in the semantic environment after a full
+/// parse + analyse pass. Tokens that don't carry a binding (keywords,
+/// literals, operators, comments) fall back to a brief kind-aware label.
 pub fn hover_at(source : String, offset : UInt) -> HoverInfo? {
   match token_at(source, offset) {
     None => None
     Some(tok) => {
       let text = tok.span.source_text(source)
-      let label = if tok.kind.is_keyword() {
-        "keyword `" + text + "`"
-      } else if tok.kind == @syntax.SyntaxKind::Ident {
-        "identifier `" + text + "`"
-      } else if tok.kind == @syntax.SyntaxKind::UpperIdent {
-        "constructor or type `" + text + "`"
-      } else if tok.kind.is_literal() {
-        "literal `" + text + "`"
-      } else if tok.kind.is_operator() {
-        "operator `" + text + "`"
-      } else if tok.kind == @syntax.SyntaxKind::LineComment ||
-        tok.kind == @syntax.SyntaxKind::BlockComment {
-        "comment"
+      let typed = if tok.kind == @syntax.SyntaxKind::Ident ||
+        tok.kind == @syntax.SyntaxKind::UpperIdent {
+        lookup_type(source, text)
       } else {
-        tok.kind.display()
+        None
+      }
+      let label = match typed {
+        Some(ty_str) => text + " : " + ty_str
+        None => default_hover_label(tok, text)
       }
       Some(HoverInfo::{ contents: label, span: tok.span })
     }
   }
+}
+
+///|
+fn default_hover_label(tok : @parser.Token, text : String) -> String {
+  if tok.kind.is_keyword() {
+    "keyword `" + text + "`"
+  } else if tok.kind == @syntax.SyntaxKind::Ident {
+    "identifier `" + text + "`"
+  } else if tok.kind == @syntax.SyntaxKind::UpperIdent {
+    "constructor or type `" + text + "`"
+  } else if tok.kind.is_literal() {
+    "literal `" + text + "`"
+  } else if tok.kind.is_operator() {
+    "operator `" + text + "`"
+  } else if tok.kind == @syntax.SyntaxKind::LineComment ||
+    tok.kind == @syntax.SyntaxKind::BlockComment {
+    "comment"
+  } else {
+    tok.kind.display()
+  }
+}
+
+///|
+/// Parse `source`, run the semantic analyser, look `name` up in the type
+/// environment, and pretty-print the scheme. Returns `None` if the name
+/// isn't bound — falls back to the kind-aware label in that case.
+fn lookup_type(source : String, name : String) -> String? {
+  let analyzer = analyze(source)
+  match analyzer.env().lookup(name) {
+    Some(scheme) => Some(pretty_scheme(scheme))
+    None => None
+  }
+}
+
+///|
+/// Render a `Scheme` for hover. Drops the `forall a b.` prefix because
+/// the type variables already show up inline (and hover panes are short).
+pub fn pretty_scheme(scheme : @typechecker.Scheme) -> String {
+  pretty_type(scheme.ty)
+}
+
+///|
+/// Render a `Ty` in the right-associative arrow form (`a -> b -> c`)
+/// instead of `Ty::display`'s fully-parenthesised `(a -> (b -> c))`.
+///
+/// Type variables come out as letters (`a`, `b`, ...) when there are at
+/// most 26 of them — much friendlier in a hover popup than `t12`.
+pub fn pretty_type(ty : @typechecker.Ty) -> String {
+  let env = TyVarNames::new()
+  render_ty(ty, 0, env)
+}
+
+///|
+priv struct TyVarNames {
+  names : Map[UInt, String]
+  mut next : Int
+}
+
+///|
+fn TyVarNames::new() -> TyVarNames {
+  TyVarNames::{ names: Map::new(), next: 0 }
+}
+
+///|
+fn TyVarNames::name_for(self : TyVarNames, v : UInt) -> String {
+  match self.names.get(v) {
+    Some(s) => s
+    None => {
+      let s = letter_name(self.next)
+      self.names[v] = s
+      self.next = self.next + 1
+      s
+    }
+  }
+}
+
+///|
+fn letter_name(i : Int) -> String {
+  if i < 26 {
+    let letters = "abcdefghijklmnopqrstuvwxyz"
+    letters.substring(start=i, end=i + 1)
+  } else {
+    "t" + i.to_string()
+  }
+}
+
+///|
+/// `prec` controls when we add parentheses:
+///   0 = top level
+///   1 = right-hand side of an arrow (no parens needed for `a -> b -> c`)
+///   2 = left-hand side of an arrow (parenthesise nested arrows)
+///   3 = type-application argument (parenthesise everything compound)
+fn render_ty(
+  ty : @typechecker.Ty,
+  prec : Int,
+  env : TyVarNames
+) -> String {
+  match ty {
+    Var(v) => env.name_for(v)
+    Con(name) => name
+    Nat(n) => n.to_string()
+    Error => "<error>"
+    Arrow(from, to) => {
+      let inner = render_ty(from, 2, env) +
+        " -> " +
+        render_ty(to, 1, env)
+      if prec >= 2 {
+        "(" + inner + ")"
+      } else {
+        inner
+      }
+    }
+    App(f, a) => {
+      let inner = render_ty(f, 2, env) + " " + render_ty(a, 3, env)
+      if prec >= 3 {
+        "(" + inner + ")"
+      } else {
+        inner
+      }
+    }
+    Forall(_, body) => render_ty(body, prec, env)
+  }
+}
+
+///|
+fn analyze(source : String) -> @semantic.SemanticAnalyzer {
+  let parser = @parser.Parser::new(source)
+  let program = parser.parse_program()
+  let analyzer = @semantic.SemanticAnalyzer::new()
+  analyzer.analyze(program)
+  analyzer
 }
 
 ///|

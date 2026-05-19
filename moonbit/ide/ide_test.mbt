@@ -27,16 +27,105 @@ test "hover identifies kinds" {
     Some(h) => assert_true(h.contents.contains("keyword `let`"))
     None => fail("expected hover on `let`")
   }
-  // Hovering on identifier.
-  match @ide.hover_at("main = 1", 0) {
-    Some(h) => assert_true(h.contents.contains("identifier `main`"))
-    None => fail("expected hover on identifier")
-  }
   // Hovering past the end of the document is None.
   match @ide.hover_at("main = 1", 999) {
     None => ()
     Some(_) => fail("expected None hover past EOF")
   }
+}
+
+///|
+test "hover falls back to kind label for unbound identifiers" {
+  // `xyz` is not declared and not a builtin, so the semantic env can't
+  // type it — we fall through to the kind-aware label.
+  match @ide.hover_at("xyz", 0) {
+    Some(h) => assert_true(h.contents.contains("identifier `xyz`"))
+    None => fail("expected hover on `xyz`")
+  }
+}
+
+///|
+test "hover renders the inferred type for a top-level binding" {
+  let source = "add : I32 -> I32 -> I32\nadd x y = x + y"
+  // Hover on the `add` reference inside the definition (right side).
+  match @ide.hover_at(source, 24) {
+    Some(h) => {
+      assert_true(h.contents.contains("add : "))
+      assert_true(h.contents.contains("I32"))
+      // The pretty-printed arrow type should be right-associative, with
+      // no fully-parenthesised inner arrow.
+      assert_true(h.contents.contains("->"))
+      // Sanity: the falling-back label is not used here.
+      assert_false(h.contents.contains("identifier `add`"))
+    }
+    None => fail("expected hover on `add`")
+  }
+}
+
+///|
+test "hover renders polymorphic builtins with letter type variables" {
+  // `id` is a builtin with scheme `a -> a`. Hovering on the bare token
+  // should render that type, not `t0 -> t0`.
+  match @ide.hover_at("id", 0) {
+    Some(h) => {
+      assert_true(h.contents.contains("id : "))
+      assert_true(h.contents.contains("a -> a"))
+    }
+    None => fail("expected hover on `id`")
+  }
+}
+
+///|
+test "hover renders a constructor type" {
+  // `Some` is a builtin constructor with scheme `a -> Option a`.
+  match @ide.hover_at("Some", 0) {
+    Some(h) => {
+      assert_true(h.contents.contains("Some : "))
+      assert_true(h.contents.contains("Option"))
+    }
+    None => fail("expected hover on `Some`")
+  }
+}
+
+///|
+test "pretty_type right-associates arrows" {
+  let t = @typechecker.Ty::arrow(
+    @typechecker.Ty::i32(),
+    @typechecker.Ty::arrow(@typechecker.Ty::i32(), @typechecker.Ty::i32()),
+  )
+  assert_eq(@ide.pretty_type(t), "I32 -> I32 -> I32")
+}
+
+///|
+test "pretty_type parenthesises arrow on the left of an arrow" {
+  let inner = @typechecker.Ty::arrow(
+    @typechecker.Ty::i32(),
+    @typechecker.Ty::i32(),
+  )
+  let t = @typechecker.Ty::arrow(inner, @typechecker.Ty::i32())
+  assert_eq(@ide.pretty_type(t), "(I32 -> I32) -> I32")
+}
+
+///|
+test "pretty_type parenthesises type applications inside an application" {
+  let opt_a = @typechecker.Ty::app(
+    @typechecker.Ty::Con("Option"),
+    @typechecker.Ty::Var(0),
+  )
+  let opt_opt = @typechecker.Ty::app(@typechecker.Ty::Con("Option"), opt_a)
+  assert_eq(@ide.pretty_type(opt_opt), "Option (Option a)")
+}
+
+///|
+test "pretty_scheme drops the forall prefix" {
+  let scheme = @typechecker.Scheme::poly(
+    [0U, 1U],
+    @typechecker.Ty::arrow(
+      @typechecker.Ty::Var(0),
+      @typechecker.Ty::arrow(@typechecker.Ty::Var(1), @typechecker.Ty::Var(0)),
+    ),
+  )
+  assert_eq(@ide.pretty_scheme(scheme), "a -> b -> a")
 }
 
 ///|
