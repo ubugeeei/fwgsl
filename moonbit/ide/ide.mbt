@@ -464,6 +464,53 @@ fn skip_trivia_from(tokens : Array[@parser.Token], from : Int) -> Int {
 }
 
 ///|
+/// Resolve a find-references request.
+///
+/// Walks every token and returns every `Ident` / `UpperIdent` whose
+/// source text matches the identifier under `offset`. When
+/// `include_declaration` is `false`, the token directly under
+/// `offset` is omitted from the result (mirrors the LSP option).
+///
+/// Single-file only — cross-file references will land alongside the
+/// module system.
+pub fn references_at(
+  source : String,
+  offset : UInt,
+  include_declaration : Bool
+) -> Array[GotoTarget] {
+  let out : Array[GotoTarget] = Array::new()
+  match token_at(source, offset) {
+    None => return out
+    Some(tok) => {
+      let kind = tok.kind
+      if kind != @syntax.SyntaxKind::Ident &&
+        kind != @syntax.SyntaxKind::UpperIdent {
+        return out
+      }
+      let name = tok.span.source_text(source)
+      let tokens = @parser.lex(source)
+      for t in tokens {
+        if t.kind == @syntax.SyntaxKind::Eof {
+          break
+        }
+        if t.kind != @syntax.SyntaxKind::Ident &&
+          t.kind != @syntax.SyntaxKind::UpperIdent {
+          continue
+        }
+        if t.span.source_text(source) != name {
+          continue
+        }
+        if !include_declaration && t.span.start == tok.span.start {
+          continue
+        }
+        out.push(GotoTarget::{ span: t.span })
+      }
+    }
+  }
+  out
+}
+
+///|
 /// A single edit that an editor should apply to a source buffer.
 pub(all) struct TextEdit {
   /// Byte offset (inclusive) where the edit starts.

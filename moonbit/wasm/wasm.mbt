@@ -292,17 +292,25 @@ pub fn editor_definition(
 }
 
 ///|
-/// Editor find-references at `(line, column)`. The current IDE layer
-/// only provides goto-definition, so for now we return a single entry
-/// pointing at the definition (which is what most editors do as a
-/// fallback). Empty array when nothing matches.
+/// Editor find-references at `(line, column)`. Returns every
+/// `Ident` / `UpperIdent` whose source text matches the identifier
+/// under the cursor as a JSON array of `{ range }` locations.
+/// `include_declaration` toggles whether the token under the cursor
+/// itself is part of the result, matching the LSP option of the
+/// same name.
 pub fn editor_references(
   source : String,
   line : Int,
   column : Int,
-  _include_declaration : Bool
+  include_declaration : Bool
 ) -> String {
-  editor_definition(source, line, column)
+  let offset = line_col_to_offset(source, line, column)
+  let items : Array[String] = Array::new()
+  for target in @ide.references_at(source, offset, include_declaration) {
+    let range = span_to_monaco_range(source, target.span)
+    items.push("{\"range\":" + range + "}")
+  }
+  join_json_array(items)
 }
 
 ///|
