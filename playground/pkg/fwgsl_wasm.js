@@ -31,11 +31,14 @@ async function _instantiate() {
     }
     // `builtins: ['js-string']` enables the JS String Builtins proposal
     // for this module so MoonBit's `String` type maps to native JS
-    // strings.
+    // strings. `importedStringConstants: '_'` matches the namespace
+    // moonbit's wasm-gc emitter uses for string-constant imports —
+    // confirmed by inspecting the generated wasm (the first failing
+    // import was `"_"`).
     const { instance } = await WebAssembly.instantiateStreaming(
         response,
         {},
-        { builtins: ['js-string'], importedStringConstants: 'moonbit:string-constants' },
+        { builtins: ['js-string'], importedStringConstants: '_' },
     );
     return instance.exports;
 }
