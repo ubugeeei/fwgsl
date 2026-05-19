@@ -42,12 +42,57 @@ All notable changes to `fwgsl` are recorded here.
 ### Linter
 
 - New `moonbit/linter` package (#52 → #53). `LintRuleId` enum
-  (`UnusedLet`, `UnusedWhere`, `ShadowedBinding`,
-  `RedundantWildcard`) with kebab-case `code()` names. `lint`
-  re-parses; `lint_program` works on an already-parsed AST.
-- Rules: `unused-let`, `unused-where`, `redundant-wildcard` (#52 →
-  #53), `shadowed-binding` (#69 → #70). Identifiers with a
-  leading `_` opt out of the unused / shadow checks.
+  (`UnusedLet`, `UnusedWhere`, `UnusedParameter`,
+  `ShadowedBinding`, `RedundantWildcard`) with kebab-case
+  `code()` names. `lint` re-parses; `lint_program` works on an
+  already-parsed AST.
+- Rules: `unused-let`, `unused-where`, `redundant-wildcard` (#52
+  → #53), `shadowed-binding` (#69 → #70), `unused-parameter`
+  (#90). Identifiers with a leading `_` opt out of the unused /
+  shadow checks.
+
+### Playground
+
+- Added the moonbit-built wasm bridge that the playground had
+  been missing since the Rust workspace was removed (#82 → #83,
+  #84 → #85). `moonbit/wasm` now exports `compile`, `format`,
+  `editor_completions`, `editor_hover`, `editor_definition`,
+  `editor_references` directly to JS via
+  `link.wasm-gc.exports` + `use-js-builtin-string`. CI builds
+  the wasm and ships `playground/pkg/fwgsl_wasm_bg.wasm`; the
+  hand-written `fwgsl_wasm.js` shim `WebAssembly.instantiate`s
+  with the JS String Builtins proposal so MoonBit `String`
+  values pass to / from JS as native JS strings.
+- `wasm_compile` now actually runs the AST lowering / MIR /
+  WGSL-codegen pipeline; previous build always returned
+  `"wgsl":null` (#77 → #78). Lint warnings ride along in the
+  diagnostics list.
+- Diagnostic JSON gained `line` / `col` (1-based) so the
+  playground's Monaco markers land at the right line instead of
+  always line 1 (#86).
+- Fixed the `importedStringConstants` namespace name (`'_'`)
+  the shim passes to `WebAssembly.instantiate` (#87) — the
+  previous value rejected at load, falling silently through to
+  the JS mock.
+- `editor_references` is a real walker now instead of an alias
+  for goto-definition (#89 → #90).
+
+### Toolchain
+
+- Replaced `mise.toml` with a Nix flake (`flake.nix`) +
+  `justfile`. `nix develop` (or `direnv allow` via the new
+  `.envrc`) drops you into a shell with Node 22, Python 3,
+  `just`, `curl`, and `git`, plus a hook that runs the official
+  MoonBit installer on first entry. `just check` / `just build`
+  / `just test` / `just fmt` / `just playground` / `just dev`
+  cover everything the old `mise run …` tasks did (#88).
+- New `just build-playground` recipe runs the wasm-gc build and
+  copies the linked artifact into `playground/pkg/` so local
+  playground iteration doesn't need CI (#88).
+- Document symbols outline added (#67 → #68); CI workflows
+  build `--target wasm-gc --release` on every PR so the
+  playground deploy doesn't fail post-merge (#84 → #85,
+  #86).
 
 ### Diagnostics
 
