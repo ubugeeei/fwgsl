@@ -2,6 +2,73 @@
 
 All notable changes to `fwgsl` are recorded here.
 
+## [Unreleased]
+
+### CLI
+
+- `fwgsl` now does real argv-driven dispatch (#47). Subcommands:
+  `compile`, `check`, `fmt`, `version`, `help` (with `-h` / `-V`
+  aliases). Inputs come from `<file>`, `--source <text>`, or
+  `--stdin`. The library `run_command(cmd, source, label) ->
+  (String, Int)` returns ready-to-print stdout plus an exit code
+  (`0` ok, `1` for any error-severity diagnostic, `2` for usage
+  errors).
+- `fwgsl check` now surfaces lint warnings alongside parser and
+  semantic diagnostics, ordered errors-first (#65 → #66).
+
+### Language Server / IDE
+
+- **Hover** now renders the inferred type scheme for identifiers
+  and constructors (`add : I32 -> I32 -> I32`, `id : a -> a`,
+  `Some : a -> Option a`) instead of the lexer-only label (#49).
+- **Completions** now include in-scope value bindings (Function /
+  Variable, classified by whether the scheme is an arrow),
+  constructors (`Some`, `Ok`, user `data` decls), and data type
+  names, alongside the existing keyword list (#57 → #58).
+- **Semantic tokens** now distinguish types, functions, variables,
+  decorators (`@compute`), numbers, and strings rather than only
+  keyword / operator / comment (#59 → #60).
+- **Inlay hints** for top-level decls without an explicit type
+  signature, anchored just after the function name (#61 → #62).
+- **Code actions**: first action `Add type signature for X`, with
+  preserved indentation (#63 → #64).
+- **Document symbols** outline (`textDocument/documentSymbol`)
+  with `Function` / `Struct` / `EnumMember` / `TypeParameter`
+  kinds; constructors nest under their data declaration (#67 →
+  #68).
+- `compute_diagnostics` includes lint warnings on top of parser /
+  semantic errors (#65 → #66).
+
+### Linter
+
+- New `moonbit/linter` package (#52 → #53). `LintRuleId` enum
+  (`UnusedLet`, `UnusedWhere`, `ShadowedBinding`,
+  `RedundantWildcard`) with kebab-case `code()` names. `lint`
+  re-parses; `lint_program` works on an already-parsed AST.
+- Rules: `unused-let`, `unused-where`, `redundant-wildcard` (#52 →
+  #53), `shadowed-binding` (#69 → #70). Identifiers with a
+  leading `_` opt out of the unused / shadow checks.
+
+### Diagnostics
+
+- `render` now embeds a `miette`-style source-line excerpt with a
+  caret pointing at the offending span (#75). Multi-token spans
+  get a wider caret. The gutter width adapts to the line number.
+- Nine new end-to-end tests pin down span accuracy, help-text
+  presence, type-mismatch reporting, parser-error shape, multi-
+  error pipelines, error labels, and clean-source silence (#50 →
+  #51).
+
+### Housekeeping
+
+- `not(expr)` -> `!expr` across every package: 66 call sites in
+  #54 → #55, plus the three stragglers in the new linter package
+  in #71 → #72.
+- `String::substring(start=, end=)` -> `String::unsafe_substring`
+  across every package: ~36 call sites (#71 → #72).
+- README and `examples/README.md` scrub stale `crates/fwgsl_*`
+  paths and absolute developer-machine paths (#56, #74).
+
 ## [0.1.0-moonbit] — 2026-05-19
 
 ### Changed
