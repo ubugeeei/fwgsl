@@ -88,3 +88,29 @@ test "format_document canonicalises whitespace" {
   let out = @language_server.format_document("f    x  =  x  +  1")
   assert_eq(out, "f x = x + 1\n")
 }
+
+///|
+test "code_actions_for proxies through to the IDE" {
+  let actions = @language_server.code_actions_for("add x y = x + y", 0U)
+  assert_eq(actions.length(), 1)
+  let a = actions[0]
+  assert_eq(a.kind, "quickfix")
+  assert_true(a.title.contains("Add type signature"))
+  assert_eq(a.edits.length(), 1)
+  let e = a.edits[0]
+  // Insertion at the very start of the document — line 0, column 0.
+  assert_eq(e.start_line, 0)
+  assert_eq(e.start_character, 0)
+  assert_eq(e.end_line, 0)
+  assert_eq(e.end_character, 0)
+  assert_true(e.new_text.contains("add : "))
+}
+
+///|
+test "code_actions_for returns an empty list when nothing applies" {
+  let actions = @language_server.code_actions_for(
+    "add : I32 -> I32 -> I32\nadd x y = x + y",
+    24U,
+  )
+  assert_eq(actions.length(), 0)
+}
