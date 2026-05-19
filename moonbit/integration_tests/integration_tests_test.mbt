@@ -187,8 +187,8 @@ test "unknown constructor in a match arm produces a diagnostic" {
   assert_true(r.has_errors)
   let mut found = false
   for d in r.diagnostics {
-    if d.message.contains("Unknown constructor")
-      && d.message.contains("Triangle") {
+    if d.message.contains("Unknown constructor") &&
+      d.message.contains("Triangle") {
       found = true
       break
     }
