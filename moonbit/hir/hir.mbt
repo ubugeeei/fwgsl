@@ -154,3 +154,8 @@ pub fn HirExpr::ty(self : HirExpr) -> @typechecker.Ty {
     FieldAccess(_, _, ty, _) => ty
   }
 }
+
+///|
+pub impl Show for BinOp with output(self, logger) {
+  logger.write_string(self.to_wgsl_str())
+}
