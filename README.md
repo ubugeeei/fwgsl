@@ -34,10 +34,13 @@ The repository contains both implemented features and planned language goals. Th
 | WGSL code generation | Implemented | AST -> HIR -> MIR -> WGSL pipeline works end-to-end |
 | LSP | Implemented | Diagnostics, hover, completion, goto-definition, semantic tokens |
 | Playground | Implemented | Monaco editor, live diagnostics, hover/completion, WGSL output, WebGPU preview |
+| CLI | Implemented | Argv dispatch with `compile` / `check` / `fmt` / `version` / `help`, `--source` and `--stdin` inputs |
+| Formatter | Implemented | Token-stream formatter that canonicalises whitespace; CST-based reformatting is the next step |
 | Type classes | In progress | Surface direction is decided, full resolution is not merged yet |
 | Kinds / HKT | In progress | Next major type-system layer |
 | Algebraic effects | Planned | Will require syntax, typing, and handler-aware IR |
-| Formatter / linter / LSP code actions | Planned | CST-based tooling is part of the roadmap |
+| Linter | Planned | AST-walking lint rule framework with first rules (unused bindings, redundant wildcards) |
+| LSP code actions / inlay hints | Planned | Quick-fix-style edits and inferred-type hints on the LSP surface |
 | Modules / bundler / web playground polish | Planned | Base structure exists, full system is not complete |
 
 ## What It Looks Like
@@ -218,7 +221,8 @@ Every compiler stage lives under `moonbit/`:
 | `moonbit/mir` | Lowered WGSL-oriented IR plus the HIR -> MIR pass |
 | `moonbit/wgsl_codegen` | MIR to WGSL text emitter |
 | `moonbit/ide` | IDE-facing analyses shared with the LSP and playground |
-| `moonbit/language_server` | LSP server implementation (publishDiagnostics, hover, completion, semantic tokens) |
+| `moonbit/language_server` | LSP server implementation (publishDiagnostics, hover, completion, semantic tokens, formatting) |
+| `moonbit/formatter` | Token-stream formatter shared by the CLI's `fwgsl fmt` and the LSP's `textDocument/formatting` |
 | `moonbit/wasm` | wasm-gc bindings for the playground (`wasm_check` / `wasm_compile`) |
 | `moonbit/cli` | CLI library + `moonbit/cli/cmd/main` binary entry point |
 | `moonbit/integration_tests` | End-to-end pipeline tests asserting WGSL output |
@@ -260,8 +264,9 @@ The next major areas are:
 2. Type class declaration and instance resolution.
 3. Algebraic effects and handler-aware intermediate representations.
 4. Module system and bundling.
-5. CST-based formatter and lint rule framework.
-6. LSP upgrades such as inlay hints, code actions, and more structural navigation.
+5. CST-based formatter (the token-stream pass under `moonbit/formatter` is the starter; full structural reformatting is the follow-up).
+6. Linter scaffolding plus first lint rules (unused bindings, redundant wildcards, eventually exhaustiveness and shadowing).
+7. LSP upgrades such as inlay hints, code actions, and more structural navigation.
 
 ## WGSL Constraints
 
@@ -279,12 +284,12 @@ WGSL is intentionally restrictive. `fwgsl` exists to bridge that gap.
 
 A good starting point is usually one of:
 
-- Parser and diagnostics improvements in `crates/fwgsl_parser`
-- Semantic/type-system work in `crates/fwgsl_semantic` and `crates/fwgsl_typechecker`
-- WGSL lowering/codegen in `crates/fwgsl_mir` and `crates/fwgsl_wgsl_codegen`
-- Editor experience in `crates/fwgsl_language_server` and `playground/`
+- Parser and diagnostics improvements in `moonbit/parser` and `moonbit/diagnostics`
+- Semantic/type-system work in `moonbit/semantic` and `moonbit/typechecker`
+- WGSL lowering/codegen in `moonbit/mir` and `moonbit/wgsl_codegen`
+- Editor experience in `moonbit/ide`, `moonbit/language_server`, and `playground/`
 
-This repository uses `mise` for task entry points and keeps the workspace split into small crates.
+This repository uses `mise` for task entry points and keeps the workspace split into small MoonBit packages under `moonbit/`.
 
 ## License
 
